@@ -125,10 +125,15 @@ impl Render for SettingsWindowView {
                             .items_center()
                             .gap_3()
                             .child(
-                                svg()
-                                    .path("icons/app-icon.svg")
+                                div()
                                     .size_8()
-                                    .rounded_lg(),
+                                    .rounded_lg()
+                                    .overflow_hidden()
+                                    .child(
+                                        svg()
+                                            .path("icons/app-icon.svg")
+                                            .size_full(),
+                                    ),
                             )
                             .child(
                                 div()
@@ -154,7 +159,7 @@ impl Render for SettingsWindowView {
                     // Sidebar with SVG vector icons (Zero Emojis)
                     .child(
                         div()
-                            .w(px(160.0))
+                            .w(px(180.0))
                             .flex_shrink_0()
                             .py_4()
                             .px_3()
@@ -243,6 +248,9 @@ impl Render for SettingsWindowView {
                                     .bg(theme.bg_surface)
                                     .child(
                                         div()
+                                            .flex_1()
+                                            .min_w(px(0.0))
+                                            .mr_4()
                                             .text_xs()
                                             .text_color(theme.accent)
                                             .child(
@@ -253,6 +261,7 @@ impl Render for SettingsWindowView {
                                     )
                                     .child(
                                         div()
+                                            .flex_shrink_0()
                                             .flex()
                                             .gap_3()
                                             .child(
@@ -310,8 +319,8 @@ impl SettingsWindowView {
         let save_dir = self.config.save_directory.display().to_string();
         let detected = detect_system_language();
         let auto_desc = match detected {
-            AppLanguage::Ru => "Авто (Системный: Русский)",
-            AppLanguage::En => "Auto (System: English)",
+            AppLanguage::Ru => "Авто (Система: RU)",
+            AppLanguage::En => "Auto (System: EN)",
         };
 
         div()
@@ -356,6 +365,7 @@ impl SettingsWindowView {
                         div()
                             .flex()
                             .items_center()
+                            .flex_wrap()
                             .gap_2()
                             .child(render_language_chip(
                                 "lang-auto",
@@ -448,6 +458,8 @@ impl SettingsWindowView {
                             .child(
                                 div()
                                     .flex_1()
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
                                     .px_3()
                                     .py_1p5()
                                     .rounded_md()
@@ -461,6 +473,7 @@ impl SettingsWindowView {
                             .child(
                                 div()
                                     .id("btn-open-folder")
+                                    .flex_shrink_0()
                                     .flex()
                                     .items_center()
                                     .gap_1p5()
@@ -684,6 +697,9 @@ impl SettingsWindowView {
                             })
                             .child(
                                 div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .mr_4()
                                     .flex()
                                     .flex_col()
                                     .gap_0p5()
@@ -703,6 +719,7 @@ impl SettingsWindowView {
                             )
                             .child(
                                 div()
+                                    .flex_shrink_0()
                                     .flex()
                                     .items_center()
                                     .gap_2()
@@ -942,6 +959,9 @@ fn render_toggle(
         .py_1()
         .child(
             div()
+                .flex_1()
+                .min_w(px(0.0))
+                .mr_4()
                 .flex()
                 .flex_col()
                 .gap_0p5()
@@ -961,6 +981,7 @@ fn render_toggle(
         .child(
             div()
                 .id(id)
+                .flex_shrink_0()
                 .w(px(38.0))
                 .h(px(22.0))
                 .p_0p5()

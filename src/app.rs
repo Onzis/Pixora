@@ -279,7 +279,7 @@ impl PixoraApp {
 
     pub fn open_settings_window(cx: &mut App) {
         let config = AppConfig::load();
-        let bounds = Bounds::centered(None, size(px(720.0), px(560.0)), cx);
+        let bounds = Bounds::centered(None, size(px(800.0), px(580.0)), cx);
 
         let window_options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
