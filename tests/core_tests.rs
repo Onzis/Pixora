@@ -1,0 +1,333 @@
+use gpui::{Bounds, point, px, rgb, size};
+use image::{Rgba, RgbaImage};
+use pixora::config::AppConfig;
+use pixora::editor::annotations::Annotation;
+use pixora::editor::canvas::render_annotations_to_image;
+use pixora::editor::history::EditHistory;
+use pixora::image::crop::crop_rgba;
+use pixora::image::processing::{apply_blur, apply_pixelate};
+use pixora::overlay::selection::{ResizeHandle, SelectionState};
+
+#[test]
+fn test_config_defaults_and_serialization() {
+    let config = AppConfig::default();
+    assert!(config.auto_copy_to_clipboard);
+    assert!(config.show_dimensions);
+    assert!(config.show_magnifier);
+
+    let json = serde_json::to_string(&config).expect("Must serialize to JSON");
+    let deserialized: AppConfig = serde_json::from_str(&json).expect("Must deserialize from JSON");
+    assert_eq!(config.filename_prefix, deserialized.filename_prefix);
+    assert_eq!(config.default_stroke_width, deserialized.default_stroke_width);
+}
+
+#[test]
+fn test_selection_normalization_and_handles() {
+    // Normalization of inverted drag (dragging up-left)
+    let sel = SelectionState::new(200.0, 300.0, -100.0, -50.0);
+    assert_eq!(sel.x(), 100.0);
+    assert_eq!(sel.y(), 250.0);
+    assert_eq!(sel.width(), 100.0);
+    assert_eq!(sel.height(), 50.0);
+    assert!(sel.is_active);
+
+    // Contains test
+    assert!(sel.contains(point(px(150.0), px(275.0))));
+    assert!(!sel.contains(point(px(50.0), px(50.0))));
+
+    // Hit test top-left handle
+    let handle = sel.hit_test_handle(point(px(100.0), px(250.0)), px(8.0));
+    assert_eq!(handle, Some(ResizeHandle::TopLeft));
+
+    // Hit test bottom-right handle
+    let handle_br = sel.hit_test_handle(point(px(200.0), px(300.0)), px(8.0));
+    assert_eq!(handle_br, Some(ResizeHandle::BottomRight));
+}
+
+#[test]
+fn test_edit_history_undo_redo() {
+    let mut history = EditHistory::new();
+    assert!(!history.can_undo());
+    assert!(!history.can_redo());
+
+    let ann1 = Annotation::Line {
+        from: point(px(10.0), px(10.0)),
+        to: point(px(50.0), px(50.0)),
+        color: rgb(0xFF0000),
+        width: 3.0,
+    };
+
+    history.push_annotation(ann1);
+    assert_eq!(history.annotations.len(), 1);
+    assert!(history.can_undo());
+    assert!(!history.can_redo());
+
+    let ann2 = Annotation::Rectangle {
+        bounds: Bounds {
+            origin: point(px(20.0), px(20.0)),
+            size: size(px(40.0), px(40.0)),
+        },
+        color: rgb(0x00FF00),
+        width: 2.0,
+        filled: false,
+    };
+    history.push_annotation(ann2);
+    assert_eq!(history.annotations.len(), 2);
+
+    // Undo second annotation
+    assert!(history.undo());
+    assert_eq!(history.annotations.len(), 1);
+    assert!(history.can_redo());
+
+    // Redo second annotation
+    assert!(history.redo());
+    assert_eq!(history.annotations.len(), 2);
+    assert!(!history.can_redo());
+}
+
+#[test]
+fn test_crop_rgba() {
+    let mut img = RgbaImage::new(100, 100);
+    img.put_pixel(10, 10, Rgba([255, 0, 0, 255]));
+
+    let cropped = crop_rgba(&img, 5, 5, 20, 20).expect("Valid crop");
+    assert_eq!(cropped.width(), 20);
+    assert_eq!(cropped.height(), 20);
+    assert_eq!(*cropped.get_pixel(5, 5), Rgba([255, 0, 0, 255]));
+
+    // Out of bounds crop returns None
+    assert!(crop_rgba(&img, 200, 200, 50, 50).is_none());
+}
+
+#[test]
+fn test_apply_pixelate_and_blur() {
+    let mut img = RgbaImage::new(50, 50);
+    for y in 0..50 {
+        for x in 0..50 {
+            img.put_pixel(x, y, Rgba([(x * 5) as u8, (y * 5) as u8, 128, 255]));
+        }
+    }
+
+    // Apply pixelate
+    apply_pixelate(&mut img, 10, 10, 20, 20, 5);
+    // Inside block, pixels should be uniform
+    let p1 = *img.get_pixel(11, 11);
+    let p2 = *img.get_pixel(12, 12);
+    assert_eq!(p1, p2);
+
+    // Apply blur without panics
+    apply_blur(&mut img, 5, 5, 30, 30, 4);
+    assert_eq!(img.width(), 50);
+    assert_eq!(img.height(), 50);
+}
+
+#[test]
+fn test_render_all_annotations_to_image() {
+    let mut img = RgbaImage::new(200, 200);
+
+    let annotations = vec![
+        Annotation::Pencil {
+            points: vec![point(px(10.0), px(10.0)), point(px(30.0), px(30.0))],
+            color: rgb(0xFF453A),
+            width: 3.0,
+        },
+        Annotation::Marker {
+            points: vec![point(px(15.0), px(15.0)), point(px(45.0), px(15.0))],
+            color: rgb(0xFFD60A),
+            width: 8.0,
+        },
+        Annotation::Arrow {
+            from: point(px(50.0), px(50.0)),
+            to: point(px(100.0), px(100.0)),
+            color: rgb(0x8174FF),
+            width: 4.0,
+        },
+        Annotation::Rectangle {
+            bounds: Bounds {
+                origin: point(px(60.0), px(60.0)),
+                size: size(px(40.0), px(40.0)),
+            },
+            color: rgb(0x30D158),
+            width: 2.0,
+            filled: true,
+        },
+        Annotation::Ellipse {
+            bounds: Bounds {
+                origin: point(px(120.0), px(120.0)),
+                size: size(px(50.0), px(30.0)),
+            },
+            color: rgb(0x0A84FF),
+            width: 2.0,
+            filled: false,
+        },
+        Annotation::NumberBadge {
+            center: point(px(160.0), px(50.0)),
+            number: 1,
+            color: rgb(0x8174FF),
+            radius: 12.0,
+        },
+        Annotation::Text {
+            origin: point(px(20.0), px(160.0)),
+            text: "PIXORA 2026".to_string(),
+            color: rgb(0xFFFFFF),
+            font_size: 16.0,
+        },
+        Annotation::Blur {
+            bounds: Bounds {
+                origin: point(px(10.0), px(70.0)),
+                size: size(px(30.0), px(30.0)),
+            },
+            radius: 5,
+        },
+        Annotation::Pixelate {
+            bounds: Bounds {
+                origin: point(px(70.0), px(10.0)),
+                size: size(px(30.0), px(30.0)),
+            },
+            block_size: 6,
+        },
+    ];
+
+    render_annotations_to_image(&mut img, &annotations, 0.0, 0.0);
+    assert_eq!(img.width(), 200);
+    assert_eq!(img.height(), 200);
+}
+
+#[test]
+fn test_parse_hex_color() {
+    use pixora::overlay::toolbar::parse_hex_color;
+
+    let red = parse_hex_color("#FF0000").expect("Valid hex #FF0000");
+    assert_eq!(red, rgb(0xFF0000));
+
+    let green = parse_hex_color("00FF00").expect("Valid hex 00FF00");
+    assert_eq!(green, rgb(0x00FF00));
+
+    let purple = parse_hex_color("#8174FF").expect("Valid hex #8174FF");
+    assert_eq!(purple, rgb(0x8174FF));
+
+    assert!(parse_hex_color("invalid").is_none());
+    assert!(parse_hex_color("#123").is_none());
+    assert!(parse_hex_color("#GGFFFF").is_none());
+}
+
+#[test]
+fn test_svg_asset_source_loads_all_icons() {
+    use gpui::AssetSource;
+    use pixora::assets::PixoraAssets;
+
+    let assets = PixoraAssets;
+    let list = assets.list("").expect("List icons");
+    assert_eq!(list.len(), 27);
+
+    for path in list {
+        let content = assets.load(&path).expect("Load svg").expect("Found icon");
+        let s = std::str::from_utf8(&content).expect("Valid UTF-8 SVG");
+        assert!(s.starts_with("<svg"), "Icon {} must start with <svg", path);
+        assert!(s.ends_with("</svg>"), "Icon {} must end with </svg>", path);
+    }
+}
+
+#[test]
+fn test_toolbar_position_boundaries_and_clamping() {
+    use pixora::overlay::toolbar::{calculate_toolbar_position, TOOLBAR_WIDTH};
+
+    let screen = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: size(px(1920.0), px(1080.0)),
+    };
+
+    // Case 1: Selection at far right edge (where toolbar was previously cut off)
+    let sel_right = Bounds {
+        origin: point(px(1500.0), px(100.0)),
+        size: size(px(420.0), px(300.0)),
+    };
+    let pos = calculate_toolbar_position(sel_right, screen, TOOLBAR_WIDTH, 48.0);
+    let right_edge = f32::from(pos.x) + TOOLBAR_WIDTH;
+    assert!(
+        right_edge <= 1920.0 - 12.0,
+        "Toolbar right edge ({}) must not exceed screen width with margin (1908)",
+        right_edge
+    );
+    assert!(f32::from(pos.x) >= 12.0, "Toolbar left edge must be >= 12px");
+
+    // Case 2: Fullscreen selection
+    let sel_full = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: size(px(1920.0), px(1080.0)),
+    };
+    let pos_full = calculate_toolbar_position(sel_full, screen, TOOLBAR_WIDTH, 96.0);
+    let bottom_edge = f32::from(pos_full.y) + 96.0;
+    assert!(
+        bottom_edge <= 1080.0 - 12.0,
+        "Toolbar bottom edge ({}) must fit inside screen",
+        bottom_edge
+    );
+
+    // Case 3: Narrow selection (toolbar is centered on selection)
+    let sel_narrow = Bounds {
+        origin: point(px(500.0), px(200.0)),
+        size: size(px(100.0), px(100.0)),
+    };
+    let pos_narrow = calculate_toolbar_position(sel_narrow, screen, TOOLBAR_WIDTH, 48.0);
+    assert!(f32::from(pos_narrow.x) >= 12.0);
+    assert!(f32::from(pos_narrow.x) + TOOLBAR_WIDTH <= 1908.0);
+}
+
+#[test]
+fn test_hotkey_string_parsing() {
+    use pixora::shortcuts::hotkeys::parse_hotkey_string;
+
+    // Default region capture: PrintScreen
+    let (mods, vk) = parse_hotkey_string("PrintScreen").expect("Parse PrintScreen");
+    assert_eq!(vk, 0x2C); // VK_SNAPSHOT
+    assert_eq!(mods & 0x4000, 0x4000); // MOD_NOREPEAT
+
+    // Fullscreen capture: Shift + PrintScreen
+    let (mods_fs, vk_fs) = parse_hotkey_string("Shift + PrintScreen").expect("Parse Shift+PrintScreen");
+    assert_eq!(vk_fs, 0x2C);
+    assert_ne!(mods_fs & 0x0004, 0); // MOD_SHIFT
+
+    // Window capture: Alt + PrintScreen
+    let (mods_win, vk_win) = parse_hotkey_string("Alt + PrintScreen").expect("Parse Alt+PrintScreen");
+    assert_eq!(vk_win, 0x2C);
+    assert_ne!(mods_win & 0x0001, 0); // MOD_ALT
+
+    // Custom: Ctrl + Shift + A
+    let (mods_custom, vk_custom) = parse_hotkey_string("Ctrl + Shift + A").expect("Parse Ctrl+Shift+A");
+    assert_eq!(vk_custom, 'A' as u32);
+    assert_ne!(mods_custom & 0x0002, 0); // MOD_CONTROL
+    assert_ne!(mods_custom & 0x0004, 0); // MOD_SHIFT
+}
+
+#[test]
+fn test_hsv_and_rgb_conversions() {
+    use pixora::overlay::toolbar::{hsv_to_rgb, rgb_to_hsv, HUE_STOPS};
+
+    assert_eq!(HUE_STOPS.len(), 24);
+
+    // Primary Colors
+    assert_eq!(hsv_to_rgb(0.0, 1.0, 1.0), (255, 0, 0));
+    assert_eq!(hsv_to_rgb(120.0, 1.0, 1.0), (0, 255, 0));
+    assert_eq!(hsv_to_rgb(240.0, 1.0, 1.0), (0, 0, 255));
+
+    // Secondary Colors
+    assert_eq!(hsv_to_rgb(60.0, 1.0, 1.0), (255, 255, 0));
+    assert_eq!(hsv_to_rgb(180.0, 1.0, 1.0), (0, 255, 255));
+    assert_eq!(hsv_to_rgb(300.0, 1.0, 1.0), (255, 0, 255));
+
+    // Round-trip RGB to HSV
+    let (h_r, s_r, v_r) = rgb_to_hsv(255, 0, 0);
+    assert_eq!(h_r, 0.0);
+    assert_eq!(s_r, 1.0);
+    assert_eq!(v_r, 1.0);
+
+    let (h_g, _, _) = rgb_to_hsv(0, 255, 0);
+    assert_eq!(h_g, 120.0);
+
+    let (h_b, _, _) = rgb_to_hsv(0, 0, 255);
+    assert_eq!(h_b, 240.0);
+}
+
+
+
