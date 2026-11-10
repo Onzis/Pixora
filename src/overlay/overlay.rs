@@ -746,7 +746,9 @@ impl ScreenOverlayView {
                 cx.notify();
             }
             SelectionDragMode::None => {
-                if !self.selection.is_active || self.active_tool == ToolKind::Eyedropper {
+                let show_mag = self.active_tool == ToolKind::Eyedropper
+                    || (self.config.show_magnifier && !self.selection.is_active);
+                if show_mag {
                     cx.notify();
                 }
             }
@@ -1004,8 +1006,9 @@ impl Render for ScreenOverlayView {
         let render_img = self.render_image.clone();
         let selection = self.selection;
         let theme = self.theme;
-        let show_magnifier = self.config.show_magnifier
-            && (!selection.is_active || self.active_tool == ToolKind::Eyedropper);
+        let lang = self.config.language.resolve();
+        let show_magnifier = self.active_tool == ToolKind::Eyedropper
+            || (self.config.show_magnifier && !selection.is_active);
 
         let annotations = self.history.annotations.clone();
         let current_drawing = self.current_drawing.clone();
@@ -1421,7 +1424,11 @@ impl Render for ScreenOverlayView {
                             .text_xs()
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(rgb(0xD0D0D8))
-                            .child("Drag to select area  •  Space for fullscreen  •  Esc to cancel"),
+                            .child(t(
+                                lang,
+                                "Drag to select area  •  Space for fullscreen  •  Esc to cancel",
+                                "Выделите область  •  Пробел — весь экран  •  Esc — отмена",
+                            )),
                     ),
             );
         }

@@ -51,7 +51,7 @@ impl Default for AppConfig {
             save_directory: save_dir,
             filename_prefix: "Pixora".to_string(),
             show_dimensions: true,
-            show_magnifier: true,
+            show_magnifier: false,
             magnifier_zoom: 4,
             run_at_startup: false,
             default_stroke_width: 3.0,

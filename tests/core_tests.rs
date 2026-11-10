@@ -13,7 +13,7 @@ fn test_config_defaults_and_serialization() {
     let config = AppConfig::default();
     assert!(config.auto_copy_to_clipboard);
     assert!(config.show_dimensions);
-    assert!(config.show_magnifier);
+    assert!(!config.show_magnifier);
 
     let json = serde_json::to_string(&config).expect("Must serialize to JSON");
     let deserialized: AppConfig = serde_json::from_str(&json).expect("Must deserialize from JSON");
