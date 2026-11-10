@@ -1,4 +1,5 @@
 use crate::config::AppConfig;
+use crate::i18n::{detect_system_language, t, AppLanguage, LanguageChoice};
 use crate::settings::storage::{open_folder_in_explorer, set_run_at_startup};
 use crate::shortcuts::hotkeys::{format_keystroke, update_global_hotkeys};
 use crate::theme::PixoraTheme;
@@ -46,6 +47,7 @@ impl SettingsWindowView {
     }
 
     pub fn save_settings(&mut self, cx: &mut Context<Self>) {
+        let lang = self.config.language.resolve();
         let _ = set_run_at_startup(self.config.run_at_startup);
         update_global_hotkeys(
             &self.config.hotkey_region,
@@ -53,9 +55,9 @@ impl SettingsWindowView {
             &self.config.hotkey_window,
         );
         if let Err(e) = self.config.save() {
-            self.status_message = Some(format!("Error: {}", e));
+            self.status_message = Some(format!("{}: {}", t(lang, "Error", "Ошибка"), e));
         } else {
-            self.status_message = Some("Settings saved successfully".to_string());
+            self.status_message = Some(t(lang, "Settings saved successfully", "Настройки успешно сохранены").to_string());
         }
         cx.notify();
     }
@@ -65,6 +67,7 @@ impl Render for SettingsWindowView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
         let tab = self.current_tab;
+        let lang = self.config.language.resolve();
 
         div()
             .id("settings-root")
@@ -77,9 +80,10 @@ impl Render for SettingsWindowView {
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _window, cx| {
                 if let Some(target) = this.rebinding_target {
+                    let cur_lang = this.config.language.resolve();
                     if ev.keystroke.key == "escape" {
                         this.rebinding_target = None;
-                        this.status_message = Some("Shortcut reassignment cancelled".to_string());
+                        this.status_message = Some(t(cur_lang, "Shortcut reassignment cancelled", "Переназначение клавиш отменено").to_string());
                         cx.notify();
                         return;
                     }
@@ -97,7 +101,7 @@ impl Render for SettingsWindowView {
                             }
                         }
                         this.rebinding_target = None;
-                        this.status_message = Some(format!("Assigned: {}", hotkey_str));
+                        this.status_message = Some(format!("{}: {}", t(cur_lang, "Assigned", "Назначено"), hotkey_str));
                         this.save_settings(cx);
                         cx.notify();
                     }
@@ -130,7 +134,7 @@ impl Render for SettingsWindowView {
                                 div()
                                     .text_lg()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child("Pixora Settings"),
+                                    .child(t(lang, "Pixora Settings", "Настройки Pixora")),
                             ),
                     )
                     .child(
@@ -163,7 +167,7 @@ impl Render for SettingsWindowView {
                             .child(render_tab_button(
                                 "tab-general",
                                 "icons/settings.svg",
-                                "General",
+                                t(lang, "General", "Основные"),
                                 tab == SettingsTab::General,
                                 cx.listener(|this, _, _, cx| {
                                     this.current_tab = SettingsTab::General;
@@ -173,7 +177,7 @@ impl Render for SettingsWindowView {
                             .child(render_tab_button(
                                 "tab-capture",
                                 "icons/camera.svg",
-                                "Capture",
+                                t(lang, "Capture", "Захват"),
                                 tab == SettingsTab::Capture,
                                 cx.listener(|this, _, _, cx| {
                                     this.current_tab = SettingsTab::Capture;
@@ -183,7 +187,7 @@ impl Render for SettingsWindowView {
                             .child(render_tab_button(
                                 "tab-shortcuts",
                                 "icons/keyboard.svg",
-                                "Shortcuts",
+                                t(lang, "Shortcuts", "Горячие клавиши"),
                                 tab == SettingsTab::Shortcuts,
                                 cx.listener(|this, _, _, cx| {
                                     this.current_tab = SettingsTab::Shortcuts;
@@ -193,7 +197,7 @@ impl Render for SettingsWindowView {
                             .child(render_tab_button(
                                 "tab-about",
                                 "icons/info.svg",
-                                "About",
+                                t(lang, "About", "О программе"),
                                 tab == SettingsTab::About,
                                 cx.listener(|this, _, _, cx| {
                                     this.current_tab = SettingsTab::About;
@@ -268,7 +272,7 @@ impl Render for SettingsWindowView {
                                                             .text_xs()
                                                             .font_weight(gpui::FontWeight::SEMIBOLD)
                                                             .text_color(rgb(0xFFFFFF))
-                                                            .child("Save Settings"),
+                                                            .child(t(lang, "Save Settings", "Сохранить настройки")),
                                                     ),
                                             )
                                             .child(
@@ -289,7 +293,7 @@ impl Render for SettingsWindowView {
                                                         div()
                                                             .text_xs()
                                                             .text_color(theme.text_secondary)
-                                                            .child("Close"),
+                                                            .child(t(lang, "Close", "Закрыть")),
                                                     ),
                                             ),
                                     ),
@@ -302,16 +306,94 @@ impl Render for SettingsWindowView {
 impl SettingsWindowView {
     fn render_general_tab(&self, cx: &mut Context<Self>) -> gpui::Div {
         let theme = self.theme;
+        let lang = self.config.language.resolve();
         let save_dir = self.config.save_directory.display().to_string();
+        let detected = detect_system_language();
+        let auto_desc = match detected {
+            AppLanguage::Ru => "Авто (Системный: Русский)",
+            AppLanguage::En => "Auto (System: English)",
+        };
 
         div()
             .flex()
             .flex_col()
             .gap_4()
+            // Language selector
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .p_3p5()
+                    .rounded_lg()
+                    .bg(theme.bg_surface)
+                    .border_1()
+                    .border_color(theme.border_subtle)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme.text_primary)
+                                    .child(t(lang, "Interface Language", "Язык интерфейса")),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.text_muted)
+                                    .child(t(
+                                        lang,
+                                        "Select application language or follow Windows system language automatically",
+                                        "Выберите язык интерфейса или используйте язык системы Windows автоматически",
+                                    )),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(render_language_chip(
+                                "lang-auto",
+                                auto_desc,
+                                self.config.language == LanguageChoice::Auto,
+                                cx.listener(|this, _, _, cx| {
+                                    this.config.language = LanguageChoice::Auto;
+                                    this.save_settings(cx);
+                                }),
+                            ))
+                            .child(render_language_chip(
+                                "lang-ru",
+                                "Русский",
+                                self.config.language == LanguageChoice::Ru,
+                                cx.listener(|this, _, _, cx| {
+                                    this.config.language = LanguageChoice::Ru;
+                                    this.save_settings(cx);
+                                }),
+                            ))
+                            .child(render_language_chip(
+                                "lang-en",
+                                "English",
+                                self.config.language == LanguageChoice::En,
+                                cx.listener(|this, _, _, cx| {
+                                    this.config.language = LanguageChoice::En;
+                                    this.save_settings(cx);
+                                }),
+                            )),
+                    ),
+            )
             .child(render_toggle(
                 "toggle-startup",
-                "Run at Windows startup",
-                "Launch Pixora automatically in the background when logging into Windows",
+                t(lang, "Run at Windows startup", "Автозапуск при старте Windows"),
+                t(
+                    lang,
+                    "Launch Pixora automatically in the background when logging into Windows",
+                    "Автоматически запускать Pixora в фоне при входе в Windows",
+                ),
                 self.config.run_at_startup,
                 cx.listener(|this, _, _, cx| {
                     this.config.run_at_startup = !this.config.run_at_startup;
@@ -320,8 +402,12 @@ impl SettingsWindowView {
             ))
             .child(render_toggle(
                 "toggle-autocopy",
-                "Auto-copy to clipboard",
-                "Automatically copy screenshot to clipboard immediately after selection or capture",
+                t(lang, "Auto-copy to clipboard", "Автокопирование в буфер"),
+                t(
+                    lang,
+                    "Automatically copy screenshot to clipboard immediately after selection or capture",
+                    "Автоматически копировать снимок в буфер сразу после выделения или захвата",
+                ),
                 self.config.auto_copy_to_clipboard,
                 cx.listener(|this, _, _, cx| {
                     this.config.auto_copy_to_clipboard = !this.config.auto_copy_to_clipboard;
@@ -330,8 +416,12 @@ impl SettingsWindowView {
             ))
             .child(render_toggle(
                 "toggle-sound",
-                "Sound effects",
-                "Play subtle camera shutter audio tone upon successful capture",
+                t(lang, "Sound effects", "Звуковые эффекты"),
+                t(
+                    lang,
+                    "Play subtle camera shutter audio tone upon successful capture",
+                    "Воспроизводить щелчок затвора при успешном создании снимка",
+                ),
                 self.config.sound_effects,
                 cx.listener(|this, _, _, cx| {
                     this.config.sound_effects = !this.config.sound_effects;
@@ -348,7 +438,7 @@ impl SettingsWindowView {
                         div()
                             .text_sm()
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .child("Screenshots Directory"),
+                            .child(t(lang, "Screenshots Directory", "Папка со снимками")),
                     )
                     .child(
                         div()
@@ -395,7 +485,7 @@ impl SettingsWindowView {
                                         div()
                                             .text_xs()
                                             .text_color(theme.text_primary)
-                                            .child("Open Folder"),
+                                            .child(t(lang, "Open Folder", "Открыть папку")),
                                     ),
                             ),
                     ),
@@ -403,14 +493,20 @@ impl SettingsWindowView {
     }
 
     fn render_capture_tab(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let lang = self.config.language.resolve();
+
         div()
             .flex()
             .flex_col()
             .gap_4()
             .child(render_toggle(
                 "toggle-dimensions",
-                "Show selection dimensions",
-                "Display width and height pixel badge beside selection box (e.g. 1920 × 1080)",
+                t(lang, "Show selection dimensions", "Показывать размеры выделения"),
+                t(
+                    lang,
+                    "Display width and height pixel badge beside selection box (e.g. 1920 × 1080)",
+                    "Отображать бейдж с шириной и высотой рядом с рамкой (напр. 1920 × 1080)",
+                ),
                 self.config.show_dimensions,
                 cx.listener(|this, _, _, cx| {
                     this.config.show_dimensions = !this.config.show_dimensions;
@@ -419,8 +515,12 @@ impl SettingsWindowView {
             ))
             .child(render_toggle(
                 "toggle-magnifier",
-                "Show pixel magnifier & loupe",
-                "Display zoomed pixel grid, coordinates and HEX color inspector near the cursor",
+                t(lang, "Show pixel magnifier & loupe", "Экранная лупа (Pixel Loupe)"),
+                t(
+                    lang,
+                    "Display zoomed pixel grid, coordinates and HEX color inspector near the cursor",
+                    "Отображать увеличенную сетку пикселей, координаты и HEX-код цвета около курсора",
+                ),
                 self.config.show_magnifier,
                 cx.listener(|this, _, _, cx| {
                     this.config.show_magnifier = !this.config.show_magnifier;
@@ -437,7 +537,7 @@ impl SettingsWindowView {
                         div()
                             .text_sm()
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .child("Default Stroke Width"),
+                            .child(t(lang, "Default Stroke Width", "Толщина линий по умолчанию")),
                     )
                     .child(
                         div()
@@ -445,7 +545,7 @@ impl SettingsWindowView {
                             .gap_2()
                             .child(render_size_chip(
                                 "chip-2px",
-                                "2px Thin",
+                                t(lang, "2px Thin", "2px Тонкая"),
                                 (self.config.default_stroke_width - 2.0).abs() < 0.1,
                                 cx.listener(|this, _, _, cx| {
                                     this.config.default_stroke_width = 2.0;
@@ -454,7 +554,7 @@ impl SettingsWindowView {
                             ))
                             .child(render_size_chip(
                                 "chip-4px",
-                                "4px Medium",
+                                t(lang, "4px Medium", "4px Средняя"),
                                 (self.config.default_stroke_width - 4.0).abs() < 0.1,
                                 cx.listener(|this, _, _, cx| {
                                     this.config.default_stroke_width = 4.0;
@@ -463,7 +563,7 @@ impl SettingsWindowView {
                             ))
                             .child(render_size_chip(
                                 "chip-8px",
-                                "8px Bold",
+                                t(lang, "8px Bold", "8px Толстая"),
                                 (self.config.default_stroke_width - 8.0).abs() < 0.1,
                                 cx.listener(|this, _, _, cx| {
                                     this.config.default_stroke_width = 8.0;
@@ -476,36 +576,37 @@ impl SettingsWindowView {
 
     fn render_shortcuts_tab(&self, cx: &mut Context<Self>) -> gpui::Div {
         let theme = self.theme;
+        let lang = self.config.language.resolve();
 
         let global_shortcuts = [
             (
-                "Region Capture",
-                "Capture selected screen area with interactive overlay",
+                t(lang, "Region Capture", "Снимок области"),
+                t(lang, "Capture selected screen area with interactive overlay", "Захват выбранной области экрана с интерактивной панелью"),
                 &self.config.hotkey_region,
                 ShortcutRebindTarget::Region,
             ),
             (
-                "Fullscreen Capture",
-                "Instantly capture entire screen without overlay",
+                t(lang, "Fullscreen Capture", "Снимок всего экрана"),
+                t(lang, "Instantly capture entire screen without overlay", "Мгновенный захват экрана целиком без оверлея"),
                 &self.config.hotkey_fullscreen,
                 ShortcutRebindTarget::Fullscreen,
             ),
             (
-                "Active Window Capture",
-                "Capture the currently active foreground window directly",
+                t(lang, "Active Window Capture", "Снимок активного окна"),
+                t(lang, "Capture the currently active foreground window directly", "Прямой захват активного окна переднего плана"),
                 &self.config.hotkey_window,
                 ShortcutRebindTarget::Window,
             ),
         ];
 
         let editor_shortcuts = [
-            ("Copy to Clipboard", "Ctrl + C"),
-            ("Save to PNG", "Ctrl + S"),
-            ("Undo Action", "Ctrl + Z"),
-            ("Redo Action", "Ctrl + Y"),
-            ("Confirm / Finish", "Enter"),
-            ("Cancel / Close", "Escape"),
-            ("Brush Size Stepper", "Mouse Wheel / [ - ] [ + ]"),
+            (t(lang, "Copy to Clipboard", "Копировать в буфер"), "Ctrl + C"),
+            (t(lang, "Save to PNG", "Сохранить в PNG"), "Ctrl + S"),
+            (t(lang, "Undo Action", "Отменить действие"), "Ctrl + Z"),
+            (t(lang, "Redo Action", "Повторить действие"), "Ctrl + Y"),
+            (t(lang, "Confirm / Finish", "Подтвердить"), "Enter"),
+            (t(lang, "Cancel / Close", "Закрыть"), "Escape"),
+            (t(lang, "Brush Size Stepper", "Размер кисти"), "Mouse Wheel / [ - ] [ + ]"),
         ];
 
         div()
@@ -526,7 +627,7 @@ impl SettingsWindowView {
                             .text_sm()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(theme.text_primary)
-                            .child("Global Hotkeys (Rebindable)"),
+                            .child(t(lang, "Global Hotkeys (Rebindable)", "Глобальные горячие клавиши")),
                     )
                     .child(
                         div()
@@ -540,18 +641,19 @@ impl SettingsWindowView {
                             .hover(|s| s.bg(theme.bg_hover))
                             .cursor_pointer()
                             .on_click(cx.listener(|this, _, _, cx| {
+                                let cur_lang = this.config.language.resolve();
                                 this.config.hotkey_region = "PrintScreen".to_string();
                                 this.config.hotkey_fullscreen = "Shift + PrintScreen".to_string();
                                 this.config.hotkey_window = "Alt + PrintScreen".to_string();
                                 this.rebinding_target = None;
-                                this.status_message = Some("Reset hotkeys to default".to_string());
+                                this.status_message = Some(t(cur_lang, "Reset hotkeys to default", "Горячие клавиши сброшены по умолчанию").to_string());
                                 this.save_settings(cx);
                             }))
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(theme.text_secondary)
-                                    .child("Reset Defaults"),
+                                    .child(t(lang, "Reset Defaults", "Сбросить")),
                             ),
                     ),
             )
@@ -620,7 +722,7 @@ impl SettingsWindowView {
                                             .font_weight(gpui::FontWeight::BOLD)
                                             .text_color(theme.accent)
                                             .child(if is_rebinding {
-                                                "Press keys... (Esc)".to_string()
+                                                t(lang, "Press keys... (Esc)", "Нажмите клавиши... (Esc)").to_string()
                                             } else {
                                                 key_str.clone()
                                             }),
@@ -649,6 +751,7 @@ impl SettingsWindowView {
                                             .hover(|s| s.bg(theme.bg_hover))
                                             .cursor_pointer()
                                             .on_click(cx.listener(move |this, _, window, cx| {
+                                                let cur_lang = this.config.language.resolve();
                                                 if this.rebinding_target == Some(target) {
                                                     this.rebinding_target = None;
                                                     this.status_message = None;
@@ -656,7 +759,7 @@ impl SettingsWindowView {
                                                     this.rebinding_target = Some(target);
                                                     this.focus_handle.focus(window);
                                                     this.status_message = Some(
-                                                        "Press any key combo... (Esc to cancel)".to_string(),
+                                                        t(cur_lang, "Press any key combo... (Esc to cancel)", "Нажмите комбинацию клавиш... (Esc для отмены)").to_string(),
                                                     );
                                                 }
                                                 cx.notify();
@@ -670,7 +773,7 @@ impl SettingsWindowView {
                                                     } else {
                                                         theme.text_secondary
                                                     })
-                                                    .child(if is_rebinding { "Listening" } else { "Change" }),
+                                                    .child(if is_rebinding { t(lang, "Listening", "Ожидание") } else { t(lang, "Change", "Изменить") }),
                                             ),
                                     ),
                             )
@@ -688,7 +791,7 @@ impl SettingsWindowView {
                             .text_sm()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(theme.text_primary)
-                            .child("In-Overlay Shortcuts"),
+                            .child(t(lang, "In-Overlay Shortcuts", "Горячие клавиши в оверлее")),
                     )
                     .child(
                         div()
@@ -729,6 +832,8 @@ impl SettingsWindowView {
     }
 
     fn render_about_tab(&self) -> gpui::Div {
+        let lang = self.config.language.resolve();
+
         div()
             .flex()
             .flex_col()
@@ -738,26 +843,42 @@ impl SettingsWindowView {
                     .text_base()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(0x8174FF))
-                    .child(concat!("Pixora v", env!("CARGO_PKG_VERSION"), " — High-Performance Screen Capture")),
+                    .child(format!(
+                        "Pixora v{} — {}",
+                        env!("CARGO_PKG_VERSION"),
+                        t(lang, "High-Performance Screen Capture", "Создание и аннотирование снимков экрана")
+                    )),
             )
             .child(
                 div()
                     .text_xs()
                     .text_color(rgb(0xA2A2B0))
-                    .child("Built with pure Rust and GPUI framework for Windows 10 & 11."),
+                    .child(t(
+                        lang,
+                        "Built with pure Rust and GPUI framework for Windows 10 & 11.",
+                        "Разработано на чистом Rust и фреймворке GPUI для Windows 10 и 11.",
+                    )),
             )
             .child(
                 div()
                     .text_xs()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(0x8174FF))
-                    .child("Author: Onzi • Copyright © 2026"),
+                    .child(t(
+                        lang,
+                        "Author: Onzi • Copyright © 2026",
+                        "Автор: Onzi • Copyright © 2026",
+                    )),
             )
             .child(
                 div()
                     .text_xs()
                     .text_color(rgb(0x656575))
-                    .child("Features: multi-monitor support, lossless PNG export, Windows OCR, smart loupe, rich annotation canvas, global hotkeys and tray integration. 100% offline and private."),
+                    .child(t(
+                        lang,
+                        "Features: multi-monitor support, lossless PNG export, Windows OCR, smart loupe, rich annotation canvas, global hotkeys and tray integration. 100% offline and private.",
+                        "Возможности: поддержка нескольких мониторов, сохранение в PNG без потерь, Windows OCR, экранная лупа, аннотации, глобальные горячие клавиши и системный трей. 100% оффлайн и конфиденциально.",
+                    )),
             )
     }
 }
@@ -892,6 +1013,48 @@ fn render_size_chip(
             div()
                 .text_xs()
                 .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(if is_selected {
+                    rgb(0x8174FF)
+                } else {
+                    rgb(0xA2A2B0)
+                })
+                .child(label),
+        )
+}
+
+fn render_language_chip(
+    id: &'static str,
+    label: &'static str,
+    is_selected: bool,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .px_3()
+        .py_1p5()
+        .rounded_md()
+        .bg(if is_selected {
+            rgb(0x282838)
+        } else {
+            rgb(0x1C1C22)
+        })
+        .border_1()
+        .border_color(if is_selected {
+            rgb(0x8174FF)
+        } else {
+            rgb(0x282832)
+        })
+        .hover(|s| s.border_color(rgb(0x8174FF)))
+        .cursor_pointer()
+        .on_click(on_click)
+        .child(
+            div()
+                .text_xs()
+                .font_weight(if is_selected {
+                    gpui::FontWeight::SEMIBOLD
+                } else {
+                    gpui::FontWeight::MEDIUM
+                })
                 .text_color(if is_selected {
                     rgb(0x8174FF)
                 } else {

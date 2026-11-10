@@ -18,6 +18,7 @@ use crate::editor::canvas::render_annotations_to_image;
 use crate::editor::history::EditHistory;
 use crate::editor::properties::ToolProperties;
 use crate::editor::tools::ToolKind;
+use crate::i18n::t;
 use crate::image::clipboard::{copy_image_to_clipboard, copy_text_to_clipboard};
 use crate::image::export::auto_save_screenshot;
 use crate::ocr::recognition::recognize_text_from_image;
@@ -253,9 +254,10 @@ impl ScreenOverlayView {
     }
 
     pub fn do_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let lang = self.config.language.resolve();
         if let Some(final_img) = self.prepare_final_image() {
             if let Err(e) = copy_image_to_clipboard(&final_img) {
-                self.show_toast(format!("Copy failed: {}", e), cx);
+                self.show_toast(format!("{}: {}", t(lang, "Copy failed", "Ошибка копирования"), e), cx);
             } else {
                 if self.config.sound_effects {
                     play_capture_sound();
@@ -263,11 +265,12 @@ impl ScreenOverlayView {
                 window.remove_window();
             }
         } else {
-            self.show_toast("Select an area first", cx);
+            self.show_toast(t(lang, "Select an area first", "Сначала выделите область"), cx);
         }
     }
 
     pub fn do_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let lang = self.config.language.resolve();
         if let Some(final_img) = self.prepare_final_image() {
             match auto_save_screenshot(&final_img, &self.config) {
                 Ok(path) => {
@@ -281,19 +284,20 @@ impl ScreenOverlayView {
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_else(|| "screenshot.png".to_string());
-                    self.show_toast(format!("Saved: {}", filename), cx);
+                    self.show_toast(format!("{}: {}", t(lang, "Saved", "Сохранено"), filename), cx);
                     window.remove_window();
                 }
                 Err(e) => {
-                    self.show_toast(format!("Save error: {}", e), cx);
+                    self.show_toast(format!("{}: {}", t(lang, "Save error", "Ошибка сохранения"), e), cx);
                 }
             }
         } else {
-            self.show_toast("Select an area first", cx);
+            self.show_toast(t(lang, "Select an area first", "Сначала выделите область"), cx);
         }
     }
 
     pub fn do_ocr(&mut self, cx: &mut Context<Self>) {
+        let lang = self.config.language.resolve();
         if let Some(img) = self.prepare_final_image() {
             self.is_ocr_running = true;
             cx.notify();
@@ -301,21 +305,21 @@ impl ScreenOverlayView {
             match recognize_text_from_image(&img) {
                 Ok(output) => {
                     if output.full_text.trim().is_empty() {
-                        self.show_toast("No text found in selected area", cx);
+                        self.show_toast(t(lang, "No text found in selected area", "Текст в выбранной области не найден"), cx);
                     } else {
                         let _ = copy_text_to_clipboard(&output.full_text);
                         let preview: String = output.full_text.chars().take(28).collect();
-                        self.show_toast(format!("OCR copied: \"{}...\"", preview), cx);
+                        self.show_toast(format!("{}: \"{}...\"", t(lang, "OCR copied", "Текст скопирован"), preview), cx);
                     }
                 }
                 Err(e) => {
-                    self.show_toast(format!("OCR failed: {}", e), cx);
+                    self.show_toast(format!("{}: {}", t(lang, "OCR failed", "Ошибка распознавания"), e), cx);
                 }
             }
             self.is_ocr_running = false;
             cx.notify();
         } else {
-            self.show_toast("Select an area with text first", cx);
+            self.show_toast(t(lang, "Select an area with text first", "Сначала выделите область с текстом"), cx);
         }
     }
 
@@ -1340,6 +1344,7 @@ impl Render for ScreenOverlayView {
         // CleanShot X Floating Toolbar: shown after releasing mouse (not while actively dragging creation)
         let is_creating = matches!(self.drag_mode, SelectionDragMode::Creating { .. });
         if selection.is_active && !is_creating {
+            let lang = self.config.language.resolve();
             let active_tool = self.active_tool;
             let current_color = self.tool_props.stroke_color;
             let stroke_width = self.tool_props.stroke_width;
@@ -1403,8 +1408,8 @@ impl Render for ScreenOverlayView {
                             this.active_tool = ToolKind::Select;
                             cx.notify();
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Select / Move", 24.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Select / Move", "Выделение / Перемещение"), 24.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_divider(theme_ref))
@@ -1418,8 +1423,8 @@ impl Render for ScreenOverlayView {
                             this.active_tool = ToolKind::Pencil;
                             cx.notify();
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Freehand Pencil", 65.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Freehand Pencil", "Карандаш"), 65.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -1431,8 +1436,8 @@ impl Render for ScreenOverlayView {
                             this.active_tool = ToolKind::Marker;
                             cx.notify();
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Highlighter Marker", 101.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Highlighter Marker", "Маркер"), 101.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -1444,8 +1449,8 @@ impl Render for ScreenOverlayView {
                             this.active_tool = ToolKind::Arrow;
                             cx.notify();
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Draw Arrow", 137.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Draw Arrow", "Стрелка"), 137.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -1457,8 +1462,8 @@ impl Render for ScreenOverlayView {
                             this.active_tool = ToolKind::Line;
                             cx.notify();
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Straight Line", 173.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Straight Line", "Прямая линия"), 173.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -1470,8 +1475,8 @@ impl Render for ScreenOverlayView {
                             this.active_tool = ToolKind::Rectangle;
                             cx.notify();
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Rectangle", 209.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Rectangle", "Прямоугольник"), 209.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -1483,8 +1488,8 @@ impl Render for ScreenOverlayView {
                             this.active_tool = ToolKind::Ellipse;
                             cx.notify();
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Ellipse / Circle", 245.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Ellipse / Circle", "Эллипс / Окружность"), 245.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -1496,8 +1501,8 @@ impl Render for ScreenOverlayView {
                             this.active_tool = ToolKind::Text;
                             cx.notify();
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Text Annotation", 281.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Text Annotation", "Текст"), 281.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -1509,8 +1514,8 @@ impl Render for ScreenOverlayView {
                             this.active_tool = ToolKind::NumberBadge;
                             cx.notify();
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Step Badge Counter", 317.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Step Badge Counter", "Шаги / Нумерация"), 317.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_divider(theme_ref))
@@ -1524,8 +1529,8 @@ impl Render for ScreenOverlayView {
                             this.active_tool = ToolKind::Blur;
                             cx.notify();
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Blur Sensitive Region", 358.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Blur Sensitive Region", "Размытие"), 358.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -1537,8 +1542,8 @@ impl Render for ScreenOverlayView {
                             this.active_tool = ToolKind::Pixelate;
                             cx.notify();
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Pixelate Mosaic", 394.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Pixelate Mosaic", "Пикселизация"), 394.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -1550,8 +1555,8 @@ impl Render for ScreenOverlayView {
                             this.active_tool = ToolKind::Eyedropper;
                             cx.notify();
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Eyedropper Color Picker", 430.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Eyedropper Color Picker", "Пипетка цвета"), 430.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_divider(theme_ref))
@@ -1564,8 +1569,8 @@ impl Render for ScreenOverlayView {
                         cx.listener(|this, _, _, cx| {
                             this.do_ocr(cx);
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Windows WinRT Text Recognition", 473.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Windows WinRT Text Recognition", "Распознавание текста (OCR)"), 473.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -1578,8 +1583,8 @@ impl Render for ScreenOverlayView {
                             this.rebuild_render_image();
                             cx.notify();
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Undo (Ctrl+Z)", 511.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Undo (Ctrl+Z)", "Отменить (Ctrl+Z)"), 511.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -1592,8 +1597,8 @@ impl Render for ScreenOverlayView {
                             this.rebuild_render_image();
                             cx.notify();
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Redo (Ctrl+Y)", 547.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Redo (Ctrl+Y)", "Повторить (Ctrl+Y)"), 547.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -1604,8 +1609,8 @@ impl Render for ScreenOverlayView {
                         cx.listener(|this, _, window, cx| {
                             this.do_save(window, cx);
                         }),
-                        cx.listener(|this, hovered, _, cx| {
-                            this.set_tooltip("Save to PNG (Ctrl+S)", 583.0, *hovered, cx);
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Save to PNG (Ctrl+S)", "Сохранить в PNG (Ctrl+S)"), 583.0, *hovered, cx);
                         }),
                     ))
                     .child(
@@ -1621,8 +1626,8 @@ impl Render for ScreenOverlayView {
                             .hover(|s| s.bg(theme.accent_hover))
                             .cursor_pointer()
                             .shadow_md()
-                            .on_hover(cx.listener(|this, hovered, _, cx| {
-                                this.set_tooltip("Copy to Clipboard (Ctrl+C)", 637.0, *hovered, cx);
+                            .on_hover(cx.listener(move |this, hovered, _, cx| {
+                                this.set_tooltip(t(lang, "Copy to Clipboard (Ctrl+C)", "Копировать в буфер (Ctrl+C)"), 637.0, *hovered, cx);
                             }))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.do_copy(window, cx);
@@ -1638,7 +1643,7 @@ impl Render for ScreenOverlayView {
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(rgb(0xFFFFFF))
-                                    .child("Copy"),
+                                    .child(t(lang, "Copy", "Копировать")),
                             ),
                     )
                     .child(
@@ -1654,8 +1659,8 @@ impl Render for ScreenOverlayView {
                             .border_color(theme.border_subtle)
                             .hover(|s| s.bg(rgba(0xFF453A22)).border_color(rgb(0xFF453A)))
                             .cursor_pointer()
-                            .on_hover(cx.listener(|this, hovered, _, cx| {
-                                this.set_tooltip("Close Overlay (Esc)", 691.0, *hovered, cx);
+                            .on_hover(cx.listener(move |this, hovered, _, cx| {
+                                this.set_tooltip(t(lang, "Close Overlay (Esc)", "Закрыть (Esc)"), 691.0, *hovered, cx);
                             }))
                             .on_click(cx.listener(|_, _, window, _| {
                                 window.remove_window();
@@ -1783,19 +1788,19 @@ impl Render for ScreenOverlayView {
                         )
                         .child(render_toolbar_divider(theme_ref))
                         // Presets: 6px Soft, 12px Medium, 24px Strong, 36px Heavy
-                        .child(render_blur_preset("preset-b-6".into(), "6px Soft", self.tool_props.blur_radius == 6, cx.listener(|this, _, _, cx| {
+                        .child(render_blur_preset("preset-b-6".into(), t(lang, "6px Soft", "6px Мягкое"), self.tool_props.blur_radius == 6, cx.listener(|this, _, _, cx| {
                             this.tool_props.blur_radius = 6;
                             cx.notify();
                         })))
-                        .child(render_blur_preset("preset-b-12".into(), "12px Medium", self.tool_props.blur_radius == 12, cx.listener(|this, _, _, cx| {
+                        .child(render_blur_preset("preset-b-12".into(), t(lang, "12px Medium", "12px Среднее"), self.tool_props.blur_radius == 12, cx.listener(|this, _, _, cx| {
                             this.tool_props.blur_radius = 12;
                             cx.notify();
                         })))
-                        .child(render_blur_preset("preset-b-24".into(), "24px Strong", self.tool_props.blur_radius == 24, cx.listener(|this, _, _, cx| {
+                        .child(render_blur_preset("preset-b-24".into(), t(lang, "24px Strong", "24px Сильное"), self.tool_props.blur_radius == 24, cx.listener(|this, _, _, cx| {
                             this.tool_props.blur_radius = 24;
                             cx.notify();
                         })))
-                        .child(render_blur_preset("preset-b-36".into(), "36px Heavy", self.tool_props.blur_radius == 36, cx.listener(|this, _, _, cx| {
+                        .child(render_blur_preset("preset-b-36".into(), t(lang, "36px Heavy", "36px Максимальное"), self.tool_props.blur_radius == 36, cx.listener(|this, _, _, cx| {
                             this.tool_props.blur_radius = 36;
                             cx.notify();
                         }))),
@@ -1913,19 +1918,19 @@ impl Render for ScreenOverlayView {
                         )
                         .child(render_toolbar_divider(theme_ref))
                         // Presets: 6px Fine, 10px Medium, 16px Coarse, 24px Heavy
-                        .child(render_blur_preset("preset-p-6".into(), "6px Fine", self.tool_props.pixelate_block == 6, cx.listener(|this, _, _, cx| {
+                        .child(render_blur_preset("preset-p-6".into(), t(lang, "6px Fine", "6px Мелкая"), self.tool_props.pixelate_block == 6, cx.listener(|this, _, _, cx| {
                             this.tool_props.pixelate_block = 6;
                             cx.notify();
                         })))
-                        .child(render_blur_preset("preset-p-10".into(), "10px Medium", self.tool_props.pixelate_block == 10, cx.listener(|this, _, _, cx| {
+                        .child(render_blur_preset("preset-p-10".into(), t(lang, "10px Medium", "10px Средняя"), self.tool_props.pixelate_block == 10, cx.listener(|this, _, _, cx| {
                             this.tool_props.pixelate_block = 10;
                             cx.notify();
                         })))
-                        .child(render_blur_preset("preset-p-16".into(), "16px Coarse", self.tool_props.pixelate_block == 16, cx.listener(|this, _, _, cx| {
+                        .child(render_blur_preset("preset-p-16".into(), t(lang, "16px Coarse", "16px Крупная"), self.tool_props.pixelate_block == 16, cx.listener(|this, _, _, cx| {
                             this.tool_props.pixelate_block = 16;
                             cx.notify();
                         })))
-                        .child(render_blur_preset("preset-p-24".into(), "24px Heavy", self.tool_props.pixelate_block == 24, cx.listener(|this, _, _, cx| {
+                        .child(render_blur_preset("preset-p-24".into(), t(lang, "24px Heavy", "24px Максимальная"), self.tool_props.pixelate_block == 24, cx.listener(|this, _, _, cx| {
                             this.tool_props.pixelate_block = 24;
                             cx.notify();
                         }))),
@@ -2306,7 +2311,7 @@ impl Render for ScreenOverlayView {
                     (bar_y + bar_height + 8.0).min(scr_h - 34.0)
                 };
 
-                let approx_w = (tip.text.len() as f32 * 6.8 + 20.0).max(56.0);
+                let approx_w = (tip.text.chars().count() as f32 * 7.5 + 20.0).max(56.0);
                 let tip_x = (f32::from(toolbar_pos.x) + tip.rel_x - approx_w / 2.0)
                     .clamp(12.0, (scr_w - approx_w - 12.0).max(12.0));
 

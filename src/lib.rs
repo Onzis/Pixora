@@ -5,6 +5,7 @@ pub mod assets;
 pub mod capture;
 pub mod config;
 pub mod editor;
+pub mod i18n;
 pub mod image;
 pub mod ocr;
 pub mod overlay;

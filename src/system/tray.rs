@@ -150,13 +150,26 @@ pub fn start_system_tray(event_sender: Sender<TrayEvent>) {
 
                     let hmenu = CreatePopupMenu().unwrap_or_default();
                     if !hmenu.0.is_null() {
-                        let _ = AppendMenuW(hmenu, MF_STRING, 1, w!("Capture Region (PrintScreen)"));
-                        let _ = AppendMenuW(hmenu, MF_STRING, 2, w!("Capture Fullscreen (Shift+PrintScreen)"));
+                        let config = crate::config::AppConfig::load();
+                        let lang = config.language.resolve();
+
+                        fn to_wide(s: &str) -> Vec<u16> {
+                            s.encode_utf16().chain(std::iter::once(0)).collect()
+                        }
+
+                        let m_region = to_wide(&format!("{} ({})", crate::i18n::t(lang, "Capture Region", "Снимок области"), config.hotkey_region));
+                        let m_fs = to_wide(&format!("{} ({})", crate::i18n::t(lang, "Capture Fullscreen", "Снимок всего экрана"), config.hotkey_fullscreen));
+                        let m_settings = to_wide(crate::i18n::t(lang, "Settings", "Настройки"));
+                        let m_folder = to_wide(crate::i18n::t(lang, "Open Screenshots Folder", "Открыть папку со снимками"));
+                        let m_exit = to_wide(crate::i18n::t(lang, "Exit", "Выход"));
+
+                        let _ = AppendMenuW(hmenu, MF_STRING, 1, windows::core::PCWSTR(m_region.as_ptr()));
+                        let _ = AppendMenuW(hmenu, MF_STRING, 2, windows::core::PCWSTR(m_fs.as_ptr()));
                         let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, None);
-                        let _ = AppendMenuW(hmenu, MF_STRING, 3, w!("Settings"));
-                        let _ = AppendMenuW(hmenu, MF_STRING, 4, w!("Open Screenshots Folder"));
+                        let _ = AppendMenuW(hmenu, MF_STRING, 3, windows::core::PCWSTR(m_settings.as_ptr()));
+                        let _ = AppendMenuW(hmenu, MF_STRING, 4, windows::core::PCWSTR(m_folder.as_ptr()));
                         let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, None);
-                        let _ = AppendMenuW(hmenu, MF_STRING, 5, w!("Exit"));
+                        let _ = AppendMenuW(hmenu, MF_STRING, 5, windows::core::PCWSTR(m_exit.as_ptr()));
 
                         let cmd = TrackPopupMenu(
                             hmenu,

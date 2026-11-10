@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use crate::i18n::LanguageChoice;
 
 fn default_hotkey_region() -> String {
     "PrintScreen".to_string()
@@ -15,6 +16,8 @@ fn default_hotkey_window() -> String {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
+    #[serde(default)]
+    pub language: LanguageChoice,
     pub auto_copy_to_clipboard: bool,
     pub auto_save_file: bool,
     pub save_directory: PathBuf,
@@ -42,6 +45,7 @@ impl Default for AppConfig {
             .unwrap_or_else(|| PathBuf::from("."));
 
         Self {
+            language: LanguageChoice::Auto,
             auto_copy_to_clipboard: true,
             auto_save_file: false,
             save_directory: save_dir,

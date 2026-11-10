@@ -348,6 +348,25 @@ fn test_palette_color_formats_matching_reference() {
     assert_eq!((hsv_v * 100.0).round() as u32, 92);
 }
 
+#[test]
+fn test_i18n_language_detection_and_resolution() {
+    use pixora::i18n::{detect_system_language, t, AppLanguage, LanguageChoice};
+
+    // System language detection test (on this Windows machine with Russian locale)
+    let detected = detect_system_language();
+    assert_eq!(detected, AppLanguage::Ru);
+
+    // Auto resolution test
+    assert_eq!(LanguageChoice::Auto.resolve(), AppLanguage::Ru);
+    assert_eq!(LanguageChoice::En.resolve(), AppLanguage::En);
+    assert_eq!(LanguageChoice::Ru.resolve(), AppLanguage::Ru);
+
+    // Translation helper test
+    assert_eq!(t(AppLanguage::En, "General", "Основные"), "General");
+    assert_eq!(t(AppLanguage::Ru, "General", "Основные"), "Основные");
+}
+
+
 
 
 
