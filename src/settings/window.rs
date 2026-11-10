@@ -749,6 +749,13 @@ impl SettingsWindowView {
             .child(
                 div()
                     .text_xs()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(0x8174FF))
+                    .child("Author: Onzi • Copyright © 2026"),
+            )
+            .child(
+                div()
+                    .text_xs()
                     .text_color(rgb(0x656575))
                     .child("Features: multi-monitor support, lossless PNG export, Windows OCR, smart loupe, rich annotation canvas, global hotkeys and tray integration. 100% offline and private."),
             )
