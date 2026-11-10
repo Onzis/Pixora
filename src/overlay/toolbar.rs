@@ -1,8 +1,11 @@
+use std::sync::Arc;
 use crate::theme::PixoraTheme;
 use gpui::{
-    App, Bounds, ClickEvent, Context, ElementId, IntoElement, Pixels, Point, Render, Rgba,
-    Window, div, point, prelude::*, px, rgb, rgba, svg,
+    App, Bounds, ClickEvent, Context, ElementId, IntoElement, Pixels, Point, Render, RenderImage,
+    Rgba, Window, div, point, prelude::*, px, rgb, rgba, svg,
 };
+use image::{Frame, RgbaImage};
+use smallvec::smallvec;
 
 pub const TOOLBAR_WIDTH: f32 = 750.0;
 pub const TOOLBAR_MAIN_HEIGHT: f32 = 46.0;
@@ -43,6 +46,7 @@ pub struct TooltipView {
 impl Render for TooltipView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .mt(px(24.0))
             .px_2p5()
             .py_1()
             .rounded_md()
@@ -358,4 +362,82 @@ pub fn render_blur_preset(
                 .text_color(text_c)
                 .child(label),
         )
+}
+
+pub fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
+    let r_f = r as f32 / 255.0;
+    let g_f = g as f32 / 255.0;
+    let b_f = b as f32 / 255.0;
+
+    let max = r_f.max(g_f).max(b_f);
+    let min = r_f.min(g_f).min(b_f);
+    let delta = max - min;
+
+    let l = (max + min) / 2.0;
+
+    let h = if delta == 0.0 {
+        0.0
+    } else if (max - r_f).abs() < f32::EPSILON {
+        60.0 * (((g_f - b_f) / delta) % 6.0)
+    } else if (max - g_f).abs() < f32::EPSILON {
+        60.0 * (((b_f - r_f) / delta) + 2.0)
+    } else {
+        60.0 * (((r_f - g_f) / delta) + 4.0)
+    };
+    let h = if h < 0.0 { h + 360.0 } else { h };
+
+    let s = if delta == 0.0 {
+        0.0
+    } else if l <= 0.5 {
+        delta / (max + min)
+    } else {
+        delta / (2.0 - max - min)
+    };
+
+    (h, s, l)
+}
+
+pub fn rgb_to_cmyk(r: u8, g: u8, b: u8) -> (u8, u8, u8, u8) {
+    let r_f = r as f32 / 255.0;
+    let g_f = g as f32 / 255.0;
+    let b_f = b as f32 / 255.0;
+
+    let k = 1.0 - r_f.max(g_f).max(b_f);
+    if (k - 1.0).abs() < f32::EPSILON {
+        return (0, 0, 0, 100);
+    }
+    let c = ((1.0 - r_f - k) / (1.0 - k) * 100.0).round().clamp(0.0, 100.0) as u8;
+    let m = ((1.0 - g_f - k) / (1.0 - k) * 100.0).round().clamp(0.0, 100.0) as u8;
+    let y = ((1.0 - b_f - k) / (1.0 - k) * 100.0).round().clamp(0.0, 100.0) as u8;
+    let k_pct = (k * 100.0).round().clamp(0.0, 100.0) as u8;
+
+    (c, m, y, k_pct)
+}
+
+pub fn generate_gradient_bitmap(hue: f32, width: u32, height: u32) -> Arc<RenderImage> {
+    let mut img = RgbaImage::new(width, height);
+    for y in 0..height {
+        let v = 1.0 - (y as f32 / (height - 1).max(1) as f32);
+        for x in 0..width {
+            let s = x as f32 / (width - 1).max(1) as f32;
+            let (r, g, b) = hsv_to_rgb(hue, s, v);
+            // GPUI RenderImage expects BGRA
+            img.put_pixel(x, y, image::Rgba([b, g, r, 255]));
+        }
+    }
+    let frame = Frame::new(img);
+    Arc::new(RenderImage::new(smallvec![frame]))
+}
+
+pub fn generate_hue_strip_bitmap(width: u32, height: u32) -> Arc<RenderImage> {
+    let mut img = RgbaImage::new(width, height);
+    for x in 0..width {
+        let h = (x as f32 / (width - 1).max(1) as f32) * 360.0;
+        let (r, g, b) = hsv_to_rgb(h, 1.0, 1.0);
+        for y in 0..height {
+            img.put_pixel(x, y, image::Rgba([b, g, r, 255]));
+        }
+    }
+    let frame = Frame::new(img);
+    Arc::new(RenderImage::new(smallvec![frame]))
 }

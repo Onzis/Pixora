@@ -24,13 +24,27 @@ use crate::ocr::recognition::recognize_text_from_image;
 use crate::overlay::magnifier::{MagnifierInfo, render_magnifier};
 use crate::overlay::selection::{SelectionDragMode, SelectionState};
 use crate::overlay::toolbar::{
-    HUE_STOPS, TOOLBAR_MAIN_HEIGHT, TOOLBAR_TOTAL_HEIGHT, TOOLBAR_WIDTH, TooltipView,
-    calculate_toolbar_position, hsv_to_rgb, parse_hex_color, render_blur_preset,
-    render_color_swatch, render_toolbar_button, render_toolbar_divider,
-    render_toolbar_text_button, rgb_to_hsv,
+    TOOLBAR_MAIN_HEIGHT, TOOLBAR_TOTAL_HEIGHT, TOOLBAR_WIDTH, TooltipView,
+    calculate_toolbar_position, generate_gradient_bitmap, generate_hue_strip_bitmap, hsv_to_rgb,
+    parse_hex_color, render_blur_preset, render_color_swatch, render_toolbar_button,
+    render_toolbar_divider, render_toolbar_text_button, rgb_to_cmyk, rgb_to_hsl, rgb_to_hsv,
 };
 use crate::system::windows::{PhysicalRect, play_capture_sound};
 use crate::theme::PixoraTheme;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaletteDragMode {
+    None,
+    SaturationValue,
+    Hue,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NumericInputTarget {
+    StrokeWidth,
+    BlurRadius,
+    PixelateBlock,
+}
 
 pub struct ScreenOverlayView {
     pub capture: ScreenCapture,
@@ -59,11 +73,23 @@ pub struct ScreenOverlayView {
     pub text_input_pos: Point<Pixels>,
     pub text_input_buffer: String,
 
-    // Extended Color Palette & Custom Hex
+    // Numeric value typing for px
+    pub numeric_input_mode: Option<NumericInputTarget>,
+    pub numeric_input_buffer: String,
+
+    // 2D HSV Gradient Color Studio
     pub show_color_palette: bool,
     pub custom_hex_input: String,
     pub hex_input_mode: bool,
     pub current_toolbar_bounds: Option<Bounds<Pixels>>,
+    pub palette_drag_mode: PaletteDragMode,
+    pub picker_hue: f32,
+    pub picker_sat: f32,
+    pub picker_val: f32,
+    pub palette_gradient_image: Option<Arc<RenderImage>>,
+    pub palette_hue_strip_image: Option<Arc<RenderImage>>,
+    pub gradient_field_bounds: Option<Bounds<Pixels>>,
+    pub hue_slider_bounds: Option<Bounds<Pixels>>,
 }
 
 impl ScreenOverlayView {
@@ -105,11 +131,53 @@ impl ScreenOverlayView {
             text_input_pos: point(px(0.0), px(0.0)),
             text_input_buffer: String::new(),
 
+            numeric_input_mode: None,
+            numeric_input_buffer: String::new(),
+
             show_color_palette: false,
             custom_hex_input: "8174FF".to_string(),
             hex_input_mode: false,
             current_toolbar_bounds: None,
+            palette_drag_mode: PaletteDragMode::None,
+            picker_hue: 246.0,
+            picker_sat: 0.55,
+            picker_val: 1.0,
+            palette_gradient_image: Some(generate_gradient_bitmap(246.0, 310, 150)),
+            palette_hue_strip_image: Some(generate_hue_strip_bitmap(448, 12)),
+            gradient_field_bounds: None,
+            hue_slider_bounds: None,
         }
+    }
+
+    pub fn sync_picker_from_color(&mut self) {
+        let r = (self.tool_props.stroke_color.r * 255.0).round().clamp(0.0, 255.0) as u8;
+        let g = (self.tool_props.stroke_color.g * 255.0).round().clamp(0.0, 255.0) as u8;
+        let b = (self.tool_props.stroke_color.b * 255.0).round().clamp(0.0, 255.0) as u8;
+        let (h, s, v) = rgb_to_hsv(r, g, b);
+        self.picker_hue = h;
+        self.picker_sat = s;
+        self.picker_val = v;
+        self.palette_gradient_image = Some(generate_gradient_bitmap(h, 310, 150));
+        self.custom_hex_input = format!("{:02X}{:02X}{:02X}", r, g, b);
+    }
+
+    pub fn set_picker_hue(&mut self, hue: f32, cx: &mut Context<Self>) {
+        self.picker_hue = hue.clamp(0.0, 360.0);
+        self.palette_gradient_image = Some(generate_gradient_bitmap(self.picker_hue, 310, 150));
+        self.apply_hsv_to_color(cx);
+    }
+
+    pub fn set_picker_sat_val(&mut self, sat: f32, val: f32, cx: &mut Context<Self>) {
+        self.picker_sat = sat.clamp(0.0, 1.0);
+        self.picker_val = val.clamp(0.0, 1.0);
+        self.apply_hsv_to_color(cx);
+    }
+
+    pub fn apply_hsv_to_color(&mut self, cx: &mut Context<Self>) {
+        let (r, g, b) = hsv_to_rgb(self.picker_hue, self.picker_sat, self.picker_val);
+        self.tool_props.stroke_color = rgb(((r as u32) << 16) | ((g as u32) << 8) | (b as u32));
+        self.custom_hex_input = format!("{:02X}{:02X}{:02X}", r, g, b);
+        cx.notify();
     }
 
     pub fn show_toast(&mut self, msg: impl Into<String>, cx: &mut Context<Self>) {
@@ -314,12 +382,31 @@ impl ScreenOverlayView {
         // Ignore clicks on floating toolbar / property sub-bar / color palette
         if self.selection.is_active {
             if let Some(tb) = self.current_toolbar_bounds {
-                let pad = px(8.0);
+                let pad = px(12.0);
                 let safe_box = Bounds {
                     origin: point(tb.origin.x - pad, tb.origin.y - pad),
                     size: size(tb.size.width + pad * 2.0, tb.size.height + pad * 2.0),
                 };
                 if safe_box.contains(&p) {
+                    if self.show_color_palette {
+                        if let Some(gb) = self.gradient_field_bounds {
+                            if gb.contains(&p) {
+                                self.palette_drag_mode = PaletteDragMode::SaturationValue;
+                                let rel_x = (px_f - f32::from(gb.origin.x)).clamp(0.0, f32::from(gb.size.width));
+                                let rel_y = (py_f - f32::from(gb.origin.y)).clamp(0.0, f32::from(gb.size.height));
+                                self.set_picker_sat_val(rel_x / f32::from(gb.size.width), 1.0 - (rel_y / f32::from(gb.size.height)), cx);
+                                return;
+                            }
+                        }
+                        if let Some(hb) = self.hue_slider_bounds {
+                            if hb.contains(&p) {
+                                self.palette_drag_mode = PaletteDragMode::Hue;
+                                let rel_x = (px_f - f32::from(hb.origin.x)).clamp(0.0, f32::from(hb.size.width));
+                                self.set_picker_hue(rel_x / f32::from(hb.size.width) * 360.0, cx);
+                                return;
+                            }
+                        }
+                    }
                     return;
                 }
             }
@@ -505,6 +592,21 @@ impl ScreenOverlayView {
         let px_f = f32::from(p.x);
         let py_f = f32::from(p.y);
 
+        if self.palette_drag_mode == PaletteDragMode::SaturationValue {
+            if let Some(gb) = self.gradient_field_bounds {
+                let rel_x = (px_f - f32::from(gb.origin.x)).clamp(0.0, f32::from(gb.size.width));
+                let rel_y = (py_f - f32::from(gb.origin.y)).clamp(0.0, f32::from(gb.size.height));
+                self.set_picker_sat_val(rel_x / f32::from(gb.size.width), 1.0 - (rel_y / f32::from(gb.size.height)), cx);
+                return;
+            }
+        } else if self.palette_drag_mode == PaletteDragMode::Hue {
+            if let Some(hb) = self.hue_slider_bounds {
+                let rel_x = (px_f - f32::from(hb.origin.x)).clamp(0.0, f32::from(hb.size.width));
+                self.set_picker_hue(rel_x / f32::from(hb.size.width) * 360.0, cx);
+                return;
+            }
+        }
+
         // Update magnifier loupe info
         let img_x = (px_f.round() as u32).min(self.capture.bounds.width.saturating_sub(1));
         let img_y = (py_f.round() as u32).min(self.capture.bounds.height.saturating_sub(1));
@@ -552,10 +654,14 @@ impl ScreenOverlayView {
         }
 
         // Handle selection dragging
+        let max_w = self.capture.bounds.width as f32;
+        let max_h = self.capture.bounds.height as f32;
         match self.drag_mode {
             SelectionDragMode::Creating { start } => {
-                let w = px_f - f32::from(start.x);
-                let h = py_f - f32::from(start.y);
+                let cur_x = px_f.clamp(0.0, max_w);
+                let cur_y = py_f.clamp(0.0, max_h);
+                let w = cur_x - f32::from(start.x);
+                let h = cur_y - f32::from(start.y);
                 self.selection = SelectionState::new(f32::from(start.x), f32::from(start.y), w, h);
                 cx.notify();
             }
@@ -576,7 +682,9 @@ impl ScreenOverlayView {
                 start_mouse,
                 orig_bounds,
             } => {
-                let delta = point(p.x - start_mouse.x, p.y - start_mouse.y);
+                let cur_x = px_f.clamp(0.0, max_w);
+                let cur_y = py_f.clamp(0.0, max_h);
+                let delta = point(px(cur_x) - start_mouse.x, px(cur_y) - start_mouse.y);
                 self.selection.update_resize(handle, orig_bounds, delta);
                 cx.notify();
             }
@@ -594,6 +702,12 @@ impl ScreenOverlayView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.palette_drag_mode != PaletteDragMode::None {
+            self.palette_drag_mode = PaletteDragMode::None;
+            cx.notify();
+            return;
+        }
+
         self.drag_mode = SelectionDragMode::None;
         self.drawing_start = None;
 
@@ -642,6 +756,46 @@ impl ScreenOverlayView {
         cx: &mut Context<Self>,
     ) {
         let key = ev.keystroke.key.as_str();
+
+        // 0. Handling Numeric px Input (for stroke width, blur, pixelate)
+        if let Some(target) = self.numeric_input_mode {
+            if key == "enter" {
+                if let Ok(val) = self.numeric_input_buffer.parse::<u32>() {
+                    match target {
+                        NumericInputTarget::StrokeWidth => {
+                            self.tool_props.stroke_width = (val as f32).clamp(1.0, 99.0);
+                        }
+                        NumericInputTarget::BlurRadius => {
+                            self.tool_props.blur_radius = val.clamp(2, 99);
+                        }
+                        NumericInputTarget::PixelateBlock => {
+                            self.tool_props.pixelate_block = val.clamp(2, 99);
+                        }
+                    }
+                }
+                self.numeric_input_mode = None;
+                self.numeric_input_buffer.clear();
+                cx.notify();
+                return;
+            } else if key == "escape" {
+                self.numeric_input_mode = None;
+                self.numeric_input_buffer.clear();
+                cx.notify();
+                return;
+            } else if key == "backspace" {
+                self.numeric_input_buffer.pop();
+                cx.notify();
+                return;
+            } else if ev.keystroke.key.len() == 1 {
+                let ch = ev.keystroke.key.chars().next().unwrap();
+                if ch.is_ascii_digit() && self.numeric_input_buffer.len() < 3 {
+                    self.numeric_input_buffer.push(ch);
+                    cx.notify();
+                    return;
+                }
+            }
+            return;
+        }
 
         // 1. Handling HEX input editing
         if self.hex_input_mode {
@@ -1172,17 +1326,16 @@ impl Render for ScreenOverlayView {
             );
         }
 
-        // CleanShot X Floating Toolbar
-        if selection.is_active {
+        // CleanShot X Floating Toolbar: shown after releasing mouse (not while actively dragging creation)
+        let is_creating = matches!(self.drag_mode, SelectionDragMode::Creating { .. });
+        if selection.is_active && !is_creating {
             let active_tool = self.active_tool;
             let current_color = self.tool_props.stroke_color;
             let stroke_width = self.tool_props.stroke_width;
             let theme_ref = &self.theme;
 
             let show_props = active_tool != ToolKind::Select && active_tool != ToolKind::Eyedropper;
-            let bar_height = if self.show_color_palette {
-                440.0
-            } else if show_props {
+            let bar_height = if show_props {
                 TOOLBAR_TOTAL_HEIGHT
             } else {
                 TOOLBAR_MAIN_HEIGHT
@@ -1210,9 +1363,11 @@ impl Render for ScreenOverlayView {
                 .on_mouse_down(MouseButton::Left, |_, _, cx| {
                     cx.stop_propagation();
                 })
-                .on_mouse_up(MouseButton::Left, |_, _, cx| {
+                .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                    this.palette_drag_mode = PaletteDragMode::None;
                     cx.stop_propagation();
-                });
+                    cx.notify();
+                }));
 
             // Main Toolbar with SVG Icons
             toolbar_col = toolbar_col.child(
@@ -1539,15 +1694,34 @@ impl Render for ScreenOverlayView {
                                         .items_center()
                                         .justify_center()
                                         .rounded_md()
-                                        .bg(theme.bg_secondary)
+                                        .bg(if self.numeric_input_mode == Some(NumericInputTarget::BlurRadius) {
+                                            rgba(0x8174FF33)
+                                        } else {
+                                            theme.bg_secondary
+                                        })
                                         .border_1()
-                                        .border_color(theme.border_subtle)
+                                        .border_color(if self.numeric_input_mode == Some(NumericInputTarget::BlurRadius) {
+                                            theme.accent
+                                        } else {
+                                            theme.border_subtle
+                                        })
+                                        .hover(|s| s.border_color(theme.border_focus))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.numeric_input_mode = Some(NumericInputTarget::BlurRadius);
+                                            this.numeric_input_buffer = this.tool_props.blur_radius.to_string();
+                                            cx.notify();
+                                        }))
                                         .child(
                                             div()
                                                 .text_xs()
                                                 .font_weight(gpui::FontWeight::BOLD)
                                                 .text_color(theme.text_primary)
-                                                .child(format!("{}px", self.tool_props.blur_radius)),
+                                                .child(if self.numeric_input_mode == Some(NumericInputTarget::BlurRadius) {
+                                                    format!("{}▏", self.numeric_input_buffer)
+                                                } else {
+                                                    format!("{}px", self.tool_props.blur_radius)
+                                                }),
                                         ),
                                 )
                                 .child(
@@ -1650,15 +1824,34 @@ impl Render for ScreenOverlayView {
                                         .items_center()
                                         .justify_center()
                                         .rounded_md()
-                                        .bg(theme.bg_secondary)
+                                        .bg(if self.numeric_input_mode == Some(NumericInputTarget::PixelateBlock) {
+                                            rgba(0x8174FF33)
+                                        } else {
+                                            theme.bg_secondary
+                                        })
                                         .border_1()
-                                        .border_color(theme.border_subtle)
+                                        .border_color(if self.numeric_input_mode == Some(NumericInputTarget::PixelateBlock) {
+                                            theme.accent
+                                        } else {
+                                            theme.border_subtle
+                                        })
+                                        .hover(|s| s.border_color(theme.border_focus))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.numeric_input_mode = Some(NumericInputTarget::PixelateBlock);
+                                            this.numeric_input_buffer = this.tool_props.pixelate_block.to_string();
+                                            cx.notify();
+                                        }))
                                         .child(
                                             div()
                                                 .text_xs()
                                                 .font_weight(gpui::FontWeight::BOLD)
                                                 .text_color(theme.text_primary)
-                                                .child(format!("{}px", self.tool_props.pixelate_block)),
+                                                .child(if self.numeric_input_mode == Some(NumericInputTarget::PixelateBlock) {
+                                                    format!("{}▏", self.numeric_input_buffer)
+                                                } else {
+                                                    format!("{}px", self.tool_props.pixelate_block)
+                                                }),
                                         ),
                                 )
                                 .child(
@@ -1810,6 +2003,9 @@ impl Render for ScreenOverlayView {
                                 .cursor_pointer()
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.show_color_palette = !this.show_color_palette;
+                                    if this.show_color_palette {
+                                        this.sync_picker_from_color();
+                                    }
                                     cx.notify();
                                 }))
                                 .child(
@@ -1860,20 +2056,39 @@ impl Render for ScreenOverlayView {
                                         .id("stroke-width-display")
                                         .px_2()
                                         .py_0p5()
-                                        .min_w(px(36.0))
+                                        .min_w(px(40.0))
                                         .flex()
                                         .items_center()
                                         .justify_center()
                                         .rounded_md()
-                                        .bg(theme.bg_secondary)
+                                        .bg(if self.numeric_input_mode == Some(NumericInputTarget::StrokeWidth) {
+                                            rgba(0x8174FF33)
+                                        } else {
+                                            theme.bg_secondary
+                                        })
                                         .border_1()
-                                        .border_color(theme.border_subtle)
+                                        .border_color(if self.numeric_input_mode == Some(NumericInputTarget::StrokeWidth) {
+                                            theme.accent
+                                        } else {
+                                            theme.border_subtle
+                                        })
+                                        .hover(|s| s.border_color(theme.border_focus))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.numeric_input_mode = Some(NumericInputTarget::StrokeWidth);
+                                            this.numeric_input_buffer = (this.tool_props.stroke_width as u32).to_string();
+                                            cx.notify();
+                                        }))
                                         .child(
                                             div()
                                                 .text_xs()
                                                 .font_weight(gpui::FontWeight::BOLD)
                                                 .text_color(theme.text_primary)
-                                                .child(format!("{}px", stroke_width as u32)),
+                                                .child(if self.numeric_input_mode == Some(NumericInputTarget::StrokeWidth) {
+                                                    format!("{}▏", self.numeric_input_buffer)
+                                                } else {
+                                                    format!("{}px", stroke_width as u32)
+                                                }),
                                         ),
                                 )
                                 .child(
@@ -2023,266 +2238,106 @@ impl Render for ScreenOverlayView {
                 );
             }
 
-            // Expanded True RGB Color Studio Popup
+            root = root.child(toolbar_col);
+
+            // Expanded Google-Style 2D HSV Gradient Color Studio Dropdown
             if self.show_color_palette {
                 let cur_r = (current_color.r * 255.0).round().clamp(0.0, 255.0) as u8;
                 let cur_g = (current_color.g * 255.0).round().clamp(0.0, 255.0) as u8;
                 let cur_b = (current_color.b * 255.0).round().clamp(0.0, 255.0) as u8;
-                let hex_str = format!("#{:02X}{:02X}{:02X}", cur_r, cur_g, cur_b);
-                let (cur_h, _, _) = rgb_to_hsv(cur_r, cur_g, cur_b);
+                let hex_code = format!("#{:02x}{:02x}{:02x}", cur_r, cur_g, cur_b);
+                let (h_deg, s_hsl, l_hsl) = rgb_to_hsl(cur_r, cur_g, cur_b);
+                let (c_cmyk, m_cmyk, y_cmyk, k_cmyk) = rgb_to_cmyk(cur_r, cur_g, cur_b);
 
-                // 1. Hue Rainbow Spectrum Bar (0° - 360°)
-                let mut hue_row = div()
-                    .flex()
-                    .items_center()
-                    .gap_1();
+                let hsv_h = self.picker_hue.round() as u32;
+                let hsv_s = (self.picker_sat * 100.0).round() as u32;
+                let hsv_v = (self.picker_val * 100.0).round() as u32;
+                let hsl_h = h_deg.round() as u32;
+                let hsl_s = (s_hsl * 100.0).round() as u32;
+                let hsl_l = (l_hsl * 100.0).round() as u32;
 
-                for hue in HUE_STOPS {
-                    let (hr, hg, hb) = hsv_to_rgb(hue, 1.0, 1.0);
-                    let h_col = rgb(((hr as u32) << 16) | ((hg as u32) << 8) | (hb as u32));
-                    let is_active_hue = (cur_h - hue).abs() < 8.0 || (cur_h - hue).abs() > 352.0;
+                let grad_img = self.palette_gradient_image.clone();
+                let hue_img = self.palette_hue_strip_image.clone();
+                let sat = self.picker_sat;
+                let val = self.picker_val;
+                let hue = self.picker_hue;
 
-                    hue_row = hue_row.child(
-                        div()
-                            .id(ElementId::NamedInteger("hue-stop".into(), hue as u64))
-                            .flex_1()
-                            .h(px(16.0))
-                            .rounded_sm()
-                            .bg(h_col)
-                            .border_1()
-                            .border_color(if is_active_hue {
-                                rgb(0xFFFFFF)
-                            } else {
-                                rgba(0x00000033)
-                            })
-                            .hover(|s| s.border_color(rgb(0xFFFFFF)))
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.set_hue_color(hue, cx);
-                            })),
-                    );
-                }
+                let scr_h = f32::from(screen_bounds.size.height);
+                let palette_w = 480.0;
+                let palette_h = 360.0;
+                let top_section_h = 150.0;
+                let left_preview_w = 130.0;
+                let grad_w = 448.0 - left_preview_w;
+                let hue_strip_w = 448.0;
 
-                // Helper for rendering an RGB channel row
-                let render_channel_row = |ch_idx: usize,
-                                          ch_label: &'static str,
-                                          ch_val: u8,
-                                          ch_color: gpui::Rgba,
-                                          badge_bg: gpui::Rgba,
-                                          theme: PixoraTheme,
-                                          cx: &mut Context<Self>| {
-                    let bar_w = (ch_val as f32 / 255.0 * 140.0).clamp(2.0, 140.0);
+                let palette_drop_up = f32::from(toolbar_pos.y) + bar_height + palette_h + 16.0 > scr_h - 12.0;
+                let palette_top = if palette_drop_up {
+                    (f32::from(toolbar_pos.y) - palette_h - 8.0).max(12.0)
+                } else {
+                    f32::from(toolbar_pos.y) + bar_height + 8.0
+                };
+                let palette_left = f32::from(toolbar_pos.x) + (TOOLBAR_WIDTH - palette_w) / 2.0;
+
+                let grad_top = palette_top + 16.0 + 34.0;
+                let grad_left = palette_left + 16.0 + left_preview_w;
+
+                self.gradient_field_bounds = Some(Bounds {
+                    origin: point(px(grad_left), px(grad_top)),
+                    size: size(px(grad_w), px(top_section_h)),
+                });
+
+                let hue_top = grad_top + top_section_h + 12.0;
+                let hue_left = palette_left + 16.0;
+
+                self.hue_slider_bounds = Some(Bounds {
+                    origin: point(px(hue_left), px(hue_top)),
+                    size: size(px(hue_strip_w), px(20.0)),
+                });
+
+                let render_format_card = |label: &'static str, val_str: String, cx: &mut Context<Self>| {
+                    let copy_str = val_str.clone();
                     div()
+                        .id(ElementId::NamedInteger("card-format".into(), label.as_ptr() as u64))
+                        .flex_1()
+                        .px_2()
+                        .py_1p5()
+                        .rounded_md()
+                        .bg(theme.bg_secondary)
+                        .border_1()
+                        .border_color(theme.border_subtle)
                         .flex()
-                        .items_center()
-                        .gap_2()
-                        // Channel Badge (R, G, B)
+                        .flex_col()
+                        .gap_0p5()
+                        .cursor_pointer()
+                        .hover(|s| s.border_color(theme.border_focus))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let _ = copy_text_to_clipboard(&copy_str);
+                            this.show_toast(format!("Copied {}: {}", label, copy_str), cx);
+                        }))
                         .child(
                             div()
-                                .size(px(20.0))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded_md()
-                                .bg(badge_bg)
-                                .border_1()
-                                .border_color(ch_color)
+                                .text_size(px(10.0))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(theme.text_muted)
+                                .child(label),
+                        )
+                        .child(
+                            div()
                                 .text_xs()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(ch_color)
-                                .child(ch_label),
-                        )
-                        // -10 Stepper
-                        .child(
-                            div()
-                                .id(ElementId::NamedInteger("ch-dec10".into(), (ch_idx * 10 + 1) as u64))
-                                .px_1p5()
-                                .py_0p5()
-                                .rounded_md()
-                                .bg(theme.bg_secondary)
-                                .border_1()
-                                .border_color(theme.border_subtle)
-                                .hover(|s| s.bg(theme.bg_hover))
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.update_rgb_channel(ch_idx, -10, cx);
-                                }))
-                                .text_xs()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(theme.text_secondary)
-                                .child("-10"),
-                        )
-                        // -1 Stepper
-                        .child(
-                            div()
-                                .id(ElementId::NamedInteger("ch-dec1".into(), (ch_idx * 10 + 2) as u64))
-                                .size(px(20.0))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded_md()
-                                .bg(theme.bg_secondary)
-                                .border_1()
-                                .border_color(theme.border_subtle)
-                                .hover(|s| s.bg(theme.bg_hover))
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.update_rgb_channel(ch_idx, -1, cx);
-                                }))
-                                .child(
-                                    svg()
-                                        .path("icons/minus.svg")
-                                        .size(px(10.0))
-                                        .text_color(theme.text_secondary),
-                                ),
-                        )
-                        // Interactive Visual Channel Track
-                        .child(
-                            div()
-                                .id(ElementId::NamedInteger("ch-track".into(), (ch_idx * 10 + 3) as u64))
-                                .w(px(140.0))
-                                .h(px(12.0))
-                                .rounded_full()
-                                .bg(rgb(0x181820))
-                                .border_1()
-                                .border_color(theme.border_subtle)
-                                .overflow_hidden()
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    let new_v = if ch_val > 128 { 0 } else { 255 };
-                                    this.set_rgb_channel(ch_idx, new_v, cx);
-                                }))
-                                .child(
-                                    div()
-                                        .w(px(bar_w))
-                                        .h_full()
-                                        .rounded_full()
-                                        .bg(ch_color),
-                                ),
-                        )
-                        // +1 Stepper
-                        .child(
-                            div()
-                                .id(ElementId::NamedInteger("ch-inc1".into(), (ch_idx * 10 + 4) as u64))
-                                .size(px(20.0))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded_md()
-                                .bg(theme.bg_secondary)
-                                .border_1()
-                                .border_color(theme.border_subtle)
-                                .hover(|s| s.bg(theme.bg_hover))
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.update_rgb_channel(ch_idx, 1, cx);
-                                }))
-                                .child(
-                                    svg()
-                                        .path("icons/plus.svg")
-                                        .size(px(10.0))
-                                        .text_color(theme.text_secondary),
-                                ),
-                        )
-                        // +10 Stepper
-                        .child(
-                            div()
-                                .id(ElementId::NamedInteger("ch-inc10".into(), (ch_idx * 10 + 5) as u64))
-                                .px_1p5()
-                                .py_0p5()
-                                .rounded_md()
-                                .bg(theme.bg_secondary)
-                                .border_1()
-                                .border_color(theme.border_subtle)
-                                .hover(|s| s.bg(theme.bg_hover))
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.update_rgb_channel(ch_idx, 10, cx);
-                                }))
-                                .text_xs()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(theme.text_secondary)
-                                .child("+10"),
-                        )
-                        // Numeric Value Box (0..255)
-                        .child(
-                            div()
-                                .min_w(px(36.0))
-                                .px_1p5()
-                                .py_0p5()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded_md()
-                                .bg(theme.bg_secondary)
-                                .border_1()
-                                .border_color(theme.border_subtle)
-                                .text_xs()
-                                .font_weight(gpui::FontWeight::BOLD)
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .text_color(theme.text_primary)
-                                .child(format!("{}", ch_val)),
+                                .child(val_str),
                         )
                 };
 
-                let r_row = render_channel_row(
-                    0,
-                    "R",
-                    cur_r,
-                    rgb(0xFF453A),
-                    rgba(0xFF3B3022),
-                    theme,
-                    cx,
-                );
-                let g_row = render_channel_row(
-                    1,
-                    "G",
-                    cur_g,
-                    rgb(0x30D158),
-                    rgba(0x34C75922),
-                    theme,
-                    cx,
-                );
-                let b_row = render_channel_row(
-                    2,
-                    "B",
-                    cur_b,
-                    rgb(0x0A84FF),
-                    rgba(0x007AFF22),
-                    theme,
-                    cx,
-                );
-
-                // Quick Presets Row
-                let mut presets_row = div()
-                    .flex()
-                    .items_center()
-                    .gap_1p5();
-
-                let quick_presets: [u32; 12] = [
-                    0xFF3B30, 0xFF9500, 0xFFCC00, 0x34C759, 0x00C7BE, 0x32ADE6,
-                    0x007AFF, 0x8174FF, 0xFF2D55, 0xFFFFFF, 0x8E8E93, 0x000000,
-                ];
-
-                for hex_val in quick_presets {
-                    let c = rgb(hex_val);
-                    let is_sel = current_color == c;
-                    presets_row = presets_row.child(render_color_swatch(
-                        ElementId::NamedInteger("preset-swatch".into(), hex_val as u64),
-                        c,
-                        is_sel,
-                        cx.listener(move |this, _, _, cx| {
-                            this.tool_props.stroke_color = c;
-                            this.custom_hex_input = format!("{:06X}", hex_val);
-                            cx.notify();
-                        }),
-                    ));
-                }
-
-                toolbar_col = toolbar_col.child(
+                root = root.child(
                     div()
-                        .w(px(460.0))
-                        .px_3p5()
-                        .py_3()
+                        .id("palette-dropdown-panel")
+                        .absolute()
+                        .left(px(palette_left))
+                        .top(px(palette_top))
+                        .w(px(palette_w))
+                        .p_4()
                         .rounded_xl()
                         .bg(theme.bg_surface)
                         .border_1()
@@ -2290,8 +2345,16 @@ impl Render for ScreenOverlayView {
                         .shadow_2xl()
                         .flex()
                         .flex_col()
-                        .gap_2p5()
-                        // 1. Header with Preview Swatch, Color Values, Copy HEX & Eyedropper
+                        .gap_3()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                            this.palette_drag_mode = PaletteDragMode::None;
+                            cx.stop_propagation();
+                            cx.notify();
+                        }))
+                        // 1. Header: "Палитра" + Close Button
                         .child(
                             div()
                                 .flex()
@@ -2299,258 +2362,256 @@ impl Render for ScreenOverlayView {
                                 .justify_between()
                                 .child(
                                     div()
-                                        .flex()
-                                        .items_center()
-                                        .gap_2p5()
-                                        .child(
-                                            div()
-                                                .w(px(38.0))
-                                                .h(px(26.0))
-                                                .rounded_md()
-                                                .bg(current_color)
-                                                .border_2()
-                                                .border_color(rgb(0xFFFFFF))
-                                                .shadow_md(),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .flex_col()
-                                                .gap_0p5()
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .font_weight(gpui::FontWeight::BOLD)
-                                                        .text_color(theme.text_primary)
-                                                        .child(hex_str.clone()),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(10.0))
-                                                        .text_color(theme.text_muted)
-                                                        .child(format!("rgb({}, {}, {})", cur_r, cur_g, cur_b)),
-                                                ),
-                                        ),
+                                        .text_sm()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(theme.text_primary)
+                                        .child("Палитра"),
                                 )
                                 .child(
                                     div()
+                                        .id("btn-close-palette-box")
+                                        .size(px(22.0))
                                         .flex()
                                         .items_center()
-                                        .gap_1p5()
-                                        // Copy HEX button
-                                        .child({
-                                            let hx = hex_str.clone();
-                                            div()
-                                                .id("btn-copy-hex-palette")
-                                                .flex()
-                                                .items_center()
-                                                .gap_1()
-                                                .px_2()
-                                                .py_1()
-                                                .rounded_md()
-                                                .bg(theme.bg_secondary)
-                                                .border_1()
-                                                .border_color(theme.border_subtle)
-                                                .hover(|s| s.bg(theme.bg_hover))
-                                                .cursor_pointer()
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.copy_hex_color(&hx, cx);
-                                                }))
-                                                .child(
-                                                    svg()
-                                                        .path("icons/copy.svg")
-                                                        .size(px(12.0))
-                                                        .text_color(theme.text_secondary),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(theme.text_secondary)
-                                                        .child("Copy HEX"),
-                                                )
-                                        })
-                                        // Pick from Screen (Eyedropper)
+                                        .justify_center()
+                                        .rounded_md()
+                                        .bg(theme.bg_secondary)
+                                        .border_1()
+                                        .border_color(theme.border_subtle)
+                                        .hover(|s| s.bg(rgba(0xFF453A22)).border_color(rgb(0xFF453A)))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.show_color_palette = false;
+                                            this.hex_input_mode = false;
+                                            cx.notify();
+                                        }))
                                         .child(
-                                            div()
-                                                .id("btn-eyedropper-palette")
-                                                .flex()
-                                                .items_center()
-                                                .gap_1()
-                                                .px_2()
-                                                .py_1()
-                                                .rounded_md()
-                                                .bg(theme.bg_secondary)
-                                                .border_1()
-                                                .border_color(theme.border_subtle)
-                                                .hover(|s| s.bg(theme.bg_hover))
-                                                .cursor_pointer()
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.active_tool = ToolKind::Eyedropper;
-                                                    this.show_color_palette = false;
-                                                    cx.notify();
-                                                }))
-                                                .child(
-                                                    svg()
-                                                        .path("icons/eyedropper.svg")
-                                                        .size(px(12.0))
-                                                        .text_color(theme.accent),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(theme.accent)
-                                                        .child("Pick"),
-                                                ),
-                                        )
-                                        // Close button
-                                        .child(
-                                            div()
-                                                .id("btn-close-palette")
-                                                .size(px(22.0))
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .rounded_md()
-                                                .bg(theme.bg_secondary)
-                                                .border_1()
-                                                .border_color(theme.border_subtle)
-                                                .hover(|s| s.bg(rgba(0xFF453A22)).border_color(rgb(0xFF453A)))
-                                                .cursor_pointer()
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.show_color_palette = false;
-                                                    this.hex_input_mode = false;
-                                                    cx.notify();
-                                                }))
-                                                .child(
-                                                    svg()
-                                                        .path("icons/close.svg")
-                                                        .size(px(12.0))
-                                                        .text_color(theme.text_muted),
-                                                ),
+                                            svg()
+                                                .path("icons/close.svg")
+                                                .size(px(12.0))
+                                                .text_color(theme.text_muted),
                                         ),
                                 ),
                         )
-                        .child(
-                            div()
-                                .w_full()
-                                .h(px(1.0))
-                                .bg(theme.border_subtle),
-                        )
-                        // 2. Hue Rainbow Spectrum Bar (0° - 360°)
+                        // 2. Top section: Left preview block + Right 2D Saturation-Value gradient
                         .child(
                             div()
                                 .flex()
-                                .flex_col()
-                                .gap_1()
+                                .h(px(top_section_h))
+                                .rounded_lg()
+                                .border_1()
+                                .border_color(theme.border_subtle)
+                                .overflow_hidden()
+                                // Left solid preview
                                 .child(
                                     div()
-                                        .text_size(px(10.0))
-                                        .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(theme.text_muted)
-                                        .child("Hue Spectrum (0° – 360°):"),
+                                        .w(px(left_preview_w))
+                                        .h_full()
+                                        .bg(current_color)
+                                        .border_r_1()
+                                        .border_color(rgba(0xFFFFFF18)),
                                 )
-                                .child(hue_row),
-                        )
-                        // 3. RGB Channels: Red, Green, Blue
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_1p5()
+                                // Right 2D gradient canvas
                                 .child(
                                     div()
-                                        .text_size(px(10.0))
-                                        .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(theme.text_muted)
-                                        .child("RGB Channels (0 – 255):"),
-                                )
-                                .child(r_row)
-                                .child(g_row)
-                                .child(b_row),
+                                        .id("palette-2d-canvas-wrap")
+                                        .flex_1()
+                                        .h_full()
+                                        .cursor_crosshair()
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                                                cx.stop_propagation();
+                                                this.palette_drag_mode = PaletteDragMode::SaturationValue;
+                                                if let Some(gb) = this.gradient_field_bounds {
+                                                    let px_f = f32::from(ev.position.x);
+                                                    let py_f = f32::from(ev.position.y);
+                                                    let rel_x = (px_f - f32::from(gb.origin.x)).clamp(0.0, f32::from(gb.size.width));
+                                                    let rel_y = (py_f - f32::from(gb.origin.y)).clamp(0.0, f32::from(gb.size.height));
+                                                    this.set_picker_sat_val(rel_x / f32::from(gb.size.width), 1.0 - (rel_y / f32::from(gb.size.height)), cx);
+                                                }
+                                            }),
+                                        )
+                                        .on_mouse_up(
+                                            MouseButton::Left,
+                                            cx.listener(|this, _, _, cx| {
+                                                this.palette_drag_mode = PaletteDragMode::None;
+                                                cx.stop_propagation();
+                                                cx.notify();
+                                            }),
+                                        )
+                                        .child(
+                                            canvas(|_, _, _| (), move |bounds, _, window, _cx| {
+                                                if let Some(img) = &grad_img {
+                                                    let _ = window.paint_image(bounds, Corners::default(), img.clone(), 0, false);
+                                                }
+                                                let center_x = bounds.origin.x + px(sat * f32::from(bounds.size.width));
+                                                let center_y = bounds.origin.y + px((1.0 - val) * f32::from(bounds.size.height));
+                                                let r = px(7.0);
+                                                let circle_bounds = Bounds {
+                                                    origin: point(center_x - r, center_y - r),
+                                                    size: size(r * 2.0, r * 2.0),
+                                                };
+                                                window.paint_quad(outline(
+                                                    Bounds {
+                                                        origin: point(circle_bounds.origin.x + px(0.5), circle_bounds.origin.y + px(0.5)),
+                                                        size: circle_bounds.size,
+                                                    },
+                                                    rgba(0x00000088),
+                                                    BorderStyle::Solid,
+                                                ));
+                                                window.paint_quad(outline(circle_bounds, rgb(0xFFFFFF), BorderStyle::Solid));
+                                            })
+                                            .size_full(),
+                                        ),
+                                ),
                         )
+                        // 3. Continuous Rainbow Hue Slider Bar
                         .child(
                             div()
+                                .id("palette-hue-slider-wrap")
                                 .w_full()
-                                .h(px(1.0))
-                                .bg(theme.border_subtle),
+                                .h(px(20.0))
+                                .flex()
+                                .items_center()
+                                .cursor_pointer()
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                                        cx.stop_propagation();
+                                        this.palette_drag_mode = PaletteDragMode::Hue;
+                                        if let Some(hb) = this.hue_slider_bounds {
+                                            let px_f = f32::from(ev.position.x);
+                                            let rel_x = (px_f - f32::from(hb.origin.x)).clamp(0.0, f32::from(hb.size.width));
+                                            this.set_picker_hue(rel_x / f32::from(hb.size.width) * 360.0, cx);
+                                        }
+                                    }),
+                                )
+                                .on_mouse_up(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.palette_drag_mode = PaletteDragMode::None;
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    }),
+                                )
+                                .child(
+                                    canvas(|_, _, _| (), move |bounds, _, window, _cx| {
+                                        if let Some(img) = &hue_img {
+                                            let _ = window.paint_image(bounds, Corners::all(px(5.0)), img.clone(), 0, false);
+                                        }
+                                        let center_x = bounds.origin.x + px((hue / 360.0) * f32::from(bounds.size.width));
+                                        let center_y = bounds.origin.y + bounds.size.height / 2.0;
+                                        let r = px(8.0);
+                                        let thumb_bounds = Bounds {
+                                            origin: point(center_x - r, center_y - r),
+                                            size: size(r * 2.0, r * 2.0),
+                                        };
+                                        let (hr, hg, hb) = hsv_to_rgb(hue, 1.0, 1.0);
+                                        let thumb_col = rgb(((hr as u32) << 16) | ((hg as u32) << 8) | (hb as u32));
+                                        window.paint_quad(fill(thumb_bounds, thumb_col));
+                                        window.paint_quad(outline(thumb_bounds, rgb(0xFFFFFF), BorderStyle::Solid));
+                                    })
+                                    .w_full()
+                                    .h(px(12.0)),
+                                ),
                         )
-                        // 4. Custom HEX Direct Input & Quick Presets
+                        // 4. Wide HEX input bar with Copy Button
                         .child(
                             div()
                                 .flex()
                                 .items_center()
                                 .justify_between()
+                                .px_3()
+                                .py_1p5()
+                                .rounded_md()
+                                .bg(theme.bg_secondary)
+                                .border_1()
+                                .border_color(if self.hex_input_mode {
+                                    theme.accent
+                                } else {
+                                    theme.border_subtle
+                                })
                                 .child(
-                                    // HEX input field
                                     div()
+                                        .id("hex-text-click")
                                         .flex()
-                                        .items_center()
-                                        .gap_1p5()
+                                        .flex_col()
+                                        .gap_0p5()
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.hex_input_mode = true;
+                                            cx.notify();
+                                        }))
                                         .child(
                                             div()
-                                                .text_xs()
-                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_size(px(10.0))
+                                                .font_weight(gpui::FontWeight::MEDIUM)
                                                 .text_color(theme.text_muted)
-                                                .child("#"),
+                                                .child("HEX"),
                                         )
                                         .child(
                                             div()
-                                                .id("hex-input-box")
-                                                .px_2()
-                                                .py_1()
-                                                .min_w(px(72.0))
-                                                .rounded_md()
-                                                .bg(theme.bg_secondary)
-                                                .border_1()
-                                                .border_color(if self.hex_input_mode {
-                                                    theme.accent
+                                                .text_sm()
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_color(theme.text_primary)
+                                                .child(if self.hex_input_mode {
+                                                    format!("{}▏", self.custom_hex_input)
                                                 } else {
-                                                    theme.border_subtle
-                                                })
-                                                .cursor_pointer()
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.hex_input_mode = true;
-                                                    cx.notify();
-                                                }))
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .font_weight(gpui::FontWeight::MEDIUM)
-                                                        .text_color(theme.text_primary)
-                                                        .child(if self.hex_input_mode {
-                                                            format!("{}▏", self.custom_hex_input)
-                                                        } else {
-                                                            self.custom_hex_input.clone()
-                                                        }),
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .id("btn-apply-hex")
-                                                .px_2()
-                                                .py_1()
-                                                .rounded_md()
-                                                .bg(theme.accent)
-                                                .hover(|s| s.bg(theme.accent_hover))
-                                                .cursor_pointer()
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.apply_custom_hex(cx);
-                                                }))
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                        .text_color(rgb(0xFFFFFF))
-                                                        .child("Apply"),
-                                                ),
+                                                    hex_code.clone()
+                                                }),
                                         ),
                                 )
-                                .child(presets_row),
+                                .child({
+                                    let to_copy = hex_code.clone();
+                                    div()
+                                        .id("btn-copy-hex-google")
+                                        .p_1p5()
+                                        .rounded_md()
+                                        .bg(theme.bg_surface)
+                                        .border_1()
+                                        .border_color(theme.border_subtle)
+                                        .hover(|s| s.bg(theme.bg_hover).border_color(theme.border_focus))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.copy_hex_color(&to_copy, cx);
+                                        }))
+                                        .child(
+                                            svg()
+                                                .path("icons/copy.svg")
+                                                .size(px(16.0))
+                                                .text_color(theme.text_secondary),
+                                        )
+                                }),
+                        )
+                        // 5. Four format cards: RGB, CMYK, HSV, HSL
+                        .child(
+                            div()
+                                .flex()
+                                .gap_2()
+                                .child(render_format_card(
+                                    "RGB",
+                                    format!("{}, {}, {}", cur_r, cur_g, cur_b),
+                                    cx,
+                                ))
+                                .child(render_format_card(
+                                    "CMYK",
+                                    format!("{}%, {}%, {}%, {}%", c_cmyk, m_cmyk, y_cmyk, k_cmyk),
+                                    cx,
+                                ))
+                                .child(render_format_card(
+                                    "HSV",
+                                    format!("{}°, {}%, {}%", hsv_h, hsv_s, hsv_v),
+                                    cx,
+                                ))
+                                .child(render_format_card(
+                                    "HSL",
+                                    format!("{}°, {}%, {}%", hsl_h, hsl_s, hsl_l),
+                                    cx,
+                                )),
                         ),
                 );
             }
-
-            root = root.child(toolbar_col);
         }
 
         // CleanShot toast feedback

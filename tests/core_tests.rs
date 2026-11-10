@@ -329,5 +329,25 @@ fn test_hsv_and_rgb_conversions() {
     assert_eq!(h_b, 240.0);
 }
 
+#[test]
+fn test_palette_color_formats_matching_reference() {
+    use pixora::overlay::toolbar::{rgb_to_cmyk, rgb_to_hsl, rgb_to_hsv};
+
+    // User reference screenshot test: RGB 235, 64, 52 (#eb4034)
+    let (c, m, y, k) = rgb_to_cmyk(235, 64, 52);
+    assert_eq!((c, m, y, k), (0, 73, 78, 8));
+
+    let (h, s, l) = rgb_to_hsl(235, 64, 52);
+    assert_eq!(h.round() as u32, 4);
+    assert_eq!((s * 100.0).round() as u32, 82);
+    assert_eq!((l * 100.0).round() as u32, 56);
+
+    let (hsv_h, hsv_s, hsv_v) = rgb_to_hsv(235, 64, 52);
+    assert_eq!(hsv_h.round() as u32, 4);
+    assert_eq!((hsv_s * 100.0).round() as u32, 78);
+    assert_eq!((hsv_v * 100.0).round() as u32, 92);
+}
+
+
 
 

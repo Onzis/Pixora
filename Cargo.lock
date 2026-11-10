@@ -3838,12 +3838,13 @@ dependencies = [
 
 [[package]]
 name = "pixora"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
  "gpui",
  "image",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "smallvec",

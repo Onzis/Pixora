@@ -176,13 +176,17 @@ impl PixoraApp {
         let screen_h = capture.bounds.height as f32;
 
         let bounds = Bounds {
-            origin: point(px(0.0), px(0.0)),
+            origin: point(px(capture.bounds.x as f32), px(capture.bounds.y as f32)),
             size: size(px(screen_w), px(screen_h)),
         };
 
         let window_options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: None,
+            window_bounds: Some(WindowBounds::Fullscreen(bounds)),
+            titlebar: Some(gpui::TitlebarOptions {
+                title: Some("Pixora Overlay".into()),
+                appears_transparent: false,
+                traffic_light_position: None,
+            }),
             focus: true,
             show: true,
             kind: WindowKind::PopUp,
@@ -192,7 +196,52 @@ impl PixoraApp {
             ..Default::default()
         };
 
+        let cap_bounds = capture.bounds;
         let _ = cx.open_window(window_options, |window, cx| {
+            #[cfg(windows)]
+            {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                use windows::Win32::Foundation::HWND;
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    BringWindowToTop, GetWindowLongW, GWL_EXSTYLE, GWL_STYLE, HWND_TOPMOST,
+                    SetForegroundWindow, SetWindowLongW, SetWindowPos, SWP_FRAMECHANGED,
+                    SWP_SHOWWINDOW, WS_EX_TOPMOST, WS_POPUP,
+                };
+
+                if let Ok(wh) = window.window_handle() {
+                    if let RawWindowHandle::Win32(handle) = wh.as_raw() {
+                        let hwnd = HWND(handle.hwnd.get() as *mut _);
+                        unsafe {
+                            let style = GetWindowLongW(hwnd, GWL_STYLE);
+                            let _ = SetWindowLongW(
+                                hwnd,
+                                GWL_STYLE,
+                                (style | (WS_POPUP.0 as i32)) & !(0x00C00000 | 0x00040000),
+                            );
+                            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                            let _ = SetWindowLongW(
+                                hwnd,
+                                GWL_EXSTYLE,
+                                ex_style | (WS_EX_TOPMOST.0 as i32),
+                            );
+
+                            let _ = SetWindowPos(
+                                hwnd,
+                                Some(HWND_TOPMOST),
+                                cap_bounds.x,
+                                cap_bounds.y,
+                                cap_bounds.width as i32,
+                                cap_bounds.height as i32,
+                                SWP_SHOWWINDOW | SWP_FRAMECHANGED,
+                            );
+
+                            let _ = BringWindowToTop(hwnd);
+                            let _ = SetForegroundWindow(hwnd);
+                        }
+                    }
+                }
+            }
+
             let view = cx.new(|cx| ScreenOverlayView::new(capture, config, cx));
             window.focus(&view.read(cx).focus_handle);
             view

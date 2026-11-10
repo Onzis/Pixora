@@ -144,7 +144,7 @@ impl Render for SettingsWindowView {
                         div()
                             .text_xs()
                             .text_color(theme.text_muted)
-                            .child("v1.1.0 (Rust & GPUI)"),
+                            .child(concat!("v", env!("CARGO_PKG_VERSION"), " (Rust & GPUI)")),
                     ),
             )
             // Body
@@ -745,7 +745,7 @@ impl SettingsWindowView {
                     .text_base()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(0x8174FF))
-                    .child("Pixora v1.1.0 — High-Performance Screen Capture"),
+                    .child(concat!("Pixora v", env!("CARGO_PKG_VERSION"), " — High-Performance Screen Capture")),
             )
             .child(
                 div()
