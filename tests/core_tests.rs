@@ -218,7 +218,7 @@ fn test_svg_asset_source_loads_all_icons() {
 
     let assets = PixoraAssets;
     let list = assets.list("").expect("List icons");
-    assert_eq!(list.len(), 27);
+    assert_eq!(list.len(), 28);
 
     for path in list {
         let content = assets.load(&path).expect("Load svg").expect("Found icon");

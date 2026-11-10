@@ -20,10 +20,11 @@ pub fn start_system_tray(event_sender: Sender<TrayEvent>) {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
-        DispatchMessageW, GetCursorPos, GetMessageW, LoadIconW, MSG, MF_SEPARATOR, MF_STRING,
-        PostQuitMessage, RegisterClassW, SetForegroundWindow, TPM_BOTTOMALIGN, TPM_RETURNCMD,
-        TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
-        WM_APP, WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
+        DispatchMessageW, GetCursorPos, GetMessageW, HICON, IDI_APPLICATION, IMAGE_ICON,
+        LR_DEFAULTCOLOR, LR_LOADFROMFILE, LoadIconW, LoadImageW, MF_SEPARATOR, MF_STRING, MSG, PostQuitMessage,
+        RegisterClassW, SetForegroundWindow, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+        TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_DESTROY,
+        WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
     };
 
     static TRAY_SENDER: Mutex<Option<Sender<TrayEvent>>> = Mutex::new(None);
@@ -65,7 +66,36 @@ pub fn start_system_tray(event_sender: Sender<TrayEvent>) {
         let hwnd = hwnd.unwrap();
 
         const WM_TRAY: u32 = WM_APP + 10;
-        let icon = LoadIconW(None, windows::Win32::UI::WindowsAndMessaging::IDI_APPLICATION).unwrap_or_default();
+        let icon = LoadImageW(
+            Some(hinstance.into()),
+            windows::core::PCWSTR(1 as *const u16),
+            IMAGE_ICON,
+            16,
+            16,
+            LR_DEFAULTCOLOR,
+        )
+        .or_else(|_| {
+            let ico_path = std::path::Path::new("assets/icon.ico");
+            if ico_path.exists() {
+                use windows::core::HSTRING;
+                let full_path = std::fs::canonicalize(ico_path).unwrap_or_else(|_| ico_path.to_path_buf());
+                let hstr = HSTRING::from(full_path.as_os_str());
+                LoadImageW(
+                    None,
+                    windows::core::PCWSTR(hstr.as_ptr()),
+                    IMAGE_ICON,
+                    16,
+                    16,
+                    LR_LOADFROMFILE | LR_DEFAULTCOLOR,
+                )
+            } else {
+                Err(windows::core::Error::empty())
+            }
+        })
+        .map(|h| HICON(h.0))
+        .unwrap_or_else(|_| {
+            LoadIconW(None, IDI_APPLICATION).unwrap_or_default()
+        });
 
         let mut tip = [0u16; 128];
         let tip_str = "Pixora Screen Capture";

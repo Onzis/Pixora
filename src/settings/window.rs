@@ -121,17 +121,10 @@ impl Render for SettingsWindowView {
                             .items_center()
                             .gap_3()
                             .child(
-                                div()
+                                svg()
+                                    .path("icons/app-icon.svg")
                                     .size_8()
-                                    .rounded_lg()
-                                    .bg(theme.accent)
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .text_sm()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(rgb(0xFFFFFF))
-                                    .child("P"),
+                                    .rounded_lg(),
                             )
                             .child(
                                 div()
