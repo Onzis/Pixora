@@ -231,6 +231,48 @@ impl ScreenOverlayView {
         self.render_image = Arc::new(RenderImage::new(smallvec![frame]));
     }
 
+    pub fn do_undo(&mut self, cx: &mut Context<Self>) {
+        if self.history.undo() {
+            let max_badge = self
+                .history
+                .annotations
+                .iter()
+                .filter_map(|ann| {
+                    if let Annotation::NumberBadge { number, .. } = ann {
+                        Some(*number)
+                    } else {
+                        None
+                    }
+                })
+                .max()
+                .unwrap_or(0);
+            self.tool_props.current_badge_number = max_badge + 1;
+            self.rebuild_render_image();
+            cx.notify();
+        }
+    }
+
+    pub fn do_redo(&mut self, cx: &mut Context<Self>) {
+        if self.history.redo() {
+            let max_badge = self
+                .history
+                .annotations
+                .iter()
+                .filter_map(|ann| {
+                    if let Annotation::NumberBadge { number, .. } = ann {
+                        Some(*number)
+                    } else {
+                        None
+                    }
+                })
+                .max()
+                .unwrap_or(0);
+            self.tool_props.current_badge_number = max_badge + 1;
+            self.rebuild_render_image();
+            cx.notify();
+        }
+    }
+
     pub fn prepare_final_image(&self) -> Option<RgbaImage> {
         if !self.selection.is_active {
             return None;
@@ -897,18 +939,53 @@ impl ScreenOverlayView {
         }
 
         if ev.keystroke.modifiers.control {
-            match key {
-                "c" => self.do_copy(window, cx),
-                "s" => self.do_save(window, cx),
-                "z" => {
-                    self.history.undo();
-                    cx.notify();
+            let is_z = key == "z" || key == "Z" || key == "я" || key == "Я"
+                || ev.keystroke.key_char.as_deref() == Some("z")
+                || ev.keystroke.key_char.as_deref() == Some("Z")
+                || ev.keystroke.key_char.as_deref() == Some("я")
+                || ev.keystroke.key_char.as_deref() == Some("Я");
+
+            let is_y = key == "y" || key == "Y" || key == "н" || key == "Н"
+                || ev.keystroke.key_char.as_deref() == Some("y")
+                || ev.keystroke.key_char.as_deref() == Some("Y")
+                || ev.keystroke.key_char.as_deref() == Some("н")
+                || ev.keystroke.key_char.as_deref() == Some("Н");
+
+            let is_c = key == "c" || key == "C" || key == "с" || key == "С"
+                || ev.keystroke.key_char.as_deref() == Some("c")
+                || ev.keystroke.key_char.as_deref() == Some("C")
+                || ev.keystroke.key_char.as_deref() == Some("с")
+                || ev.keystroke.key_char.as_deref() == Some("С");
+
+            let is_s = key == "s" || key == "S" || key == "ы" || key == "Ы"
+                || ev.keystroke.key_char.as_deref() == Some("s")
+                || ev.keystroke.key_char.as_deref() == Some("S")
+                || ev.keystroke.key_char.as_deref() == Some("ы")
+                || ev.keystroke.key_char.as_deref() == Some("Ы");
+
+            let is_a = key == "a" || key == "A" || key == "ф" || key == "Ф"
+                || ev.keystroke.key_char.as_deref() == Some("a")
+                || ev.keystroke.key_char.as_deref() == Some("A")
+                || ev.keystroke.key_char.as_deref() == Some("ф")
+                || ev.keystroke.key_char.as_deref() == Some("Ф");
+
+            if is_c {
+                self.do_copy(window, cx);
+            } else if is_s {
+                self.do_save(window, cx);
+            } else if is_z {
+                if ev.keystroke.modifiers.shift {
+                    self.do_redo(cx);
+                } else {
+                    self.do_undo(cx);
                 }
-                "y" => {
-                    self.history.redo();
-                    cx.notify();
-                }
-                _ => {}
+            } else if is_y {
+                self.do_redo(cx);
+            } else if is_a {
+                let scr_w = f32::from(window.viewport_size().width);
+                let scr_h = f32::from(window.viewport_size().height);
+                self.selection = SelectionState::new(0.0, 0.0, scr_w, scr_h);
+                cx.notify();
             }
         } else if key == "enter" {
             self.do_copy(window, cx);
@@ -1193,14 +1270,7 @@ impl Render for ScreenOverlayView {
                                 }
                             }
                         }
-                        Annotation::Blur { bounds, .. } => {
-                            window.paint_quad(fill(*bounds, rgba(0x8174FF22)));
-                            window.paint_quad(outline(*bounds, rgba(0x8174FF88), BorderStyle::Dashed));
-                        }
-                        Annotation::Pixelate { bounds, .. } => {
-                            window.paint_quad(fill(*bounds, rgba(0x30D15822)));
-                            window.paint_quad(outline(*bounds, rgba(0x30D15888), BorderStyle::Dashed));
-                        }
+                        Annotation::Blur { .. } | Annotation::Pixelate { .. } => {}
                         Annotation::NumberBadge { center, color, radius, .. } => {
                             let badge_bounds = Bounds {
                                 origin: point(center.x - px(*radius), center.y - px(*radius)),
@@ -1208,6 +1278,21 @@ impl Render for ScreenOverlayView {
                             };
                             window.paint_quad(fill(badge_bounds, *color));
                             window.paint_quad(outline(badge_bounds, rgb(0xFFFFFF), BorderStyle::Solid));
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Live preview indicator only while actively dragging Blur or Pixelate
+                if let Some(drawing) = &current_drawing {
+                    match drawing {
+                        Annotation::Blur { bounds, .. } => {
+                            window.paint_quad(fill(*bounds, rgba(0x8174FF22)));
+                            window.paint_quad(outline(*bounds, rgba(0x8174FF88), BorderStyle::Dashed));
+                        }
+                        Annotation::Pixelate { bounds, .. } => {
+                            window.paint_quad(fill(*bounds, rgba(0x30D15822)));
+                            window.paint_quad(outline(*bounds, rgba(0x30D15888), BorderStyle::Dashed));
                         }
                         _ => {}
                     }
@@ -1579,9 +1664,7 @@ impl Render for ScreenOverlayView {
                         false,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
-                            this.history.undo();
-                            this.rebuild_render_image();
-                            cx.notify();
+                            this.do_undo(cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
                             this.set_tooltip(t(lang, "Undo (Ctrl+Z)", "Отменить (Ctrl+Z)"), 511.0, *hovered, cx);
@@ -1593,9 +1676,7 @@ impl Render for ScreenOverlayView {
                         false,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
-                            this.history.redo();
-                            this.rebuild_render_image();
-                            cx.notify();
+                            this.do_redo(cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
                             this.set_tooltip(t(lang, "Redo (Ctrl+Y)", "Повторить (Ctrl+Y)"), 547.0, *hovered, cx);

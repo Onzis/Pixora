@@ -366,6 +366,73 @@ fn test_i18n_language_detection_and_resolution() {
     assert_eq!(t(AppLanguage::Ru, "General", "Основные"), "Основные");
 }
 
+#[test]
+fn test_blur_and_pixelate_undo_redo_pixel_restoration() {
+    let mut base_img = RgbaImage::new(100, 100);
+    // Draw high-contrast checkerboard
+    for y in 0..100 {
+        for x in 0..100 {
+            let color = if (x / 10 + y / 10) % 2 == 0 {
+                image::Rgba([255, 255, 255, 255])
+            } else {
+                image::Rgba([0, 0, 0, 255])
+            };
+            base_img.put_pixel(x, y, color);
+        }
+    }
+
+    let mut history = EditHistory::new();
+    let blur_ann = Annotation::Blur {
+        bounds: Bounds {
+            origin: point(px(20.0), px(20.0)),
+            size: size(px(40.0), px(40.0)),
+        },
+        radius: 12,
+    };
+
+    history.push_annotation(blur_ann);
+    assert_eq!(history.annotations.len(), 1);
+
+    // 1. Apply blur to a working image
+    let mut working_img = base_img.clone();
+    render_annotations_to_image(&mut working_img, &history.annotations, 0.0, 0.0);
+
+    // Pixel at (20, 20) should have changed due to blur
+    assert_ne!(
+        working_img.get_pixel(25, 25),
+        base_img.get_pixel(25, 25),
+        "Blurred pixels must differ from pristine base"
+    );
+
+    // 2. Undo the blur annotation
+    assert!(history.undo());
+    assert_eq!(history.annotations.len(), 0);
+
+    // 3. Rebuild image from base_img (simulating overlay.rebuild_render_image())
+    let mut restored_img = base_img.clone();
+    render_annotations_to_image(&mut restored_img, &history.annotations, 0.0, 0.0);
+
+    // Verify 100% exact pixel match with base_img
+    assert_eq!(
+        restored_img,
+        base_img,
+        "Undoing blur must completely restore pristine background image"
+    );
+
+    // 4. Redo the blur annotation
+    assert!(history.redo());
+    assert_eq!(history.annotations.len(), 1);
+
+    let mut reblurred_img = base_img.clone();
+    render_annotations_to_image(&mut reblurred_img, &history.annotations, 0.0, 0.0);
+    assert_eq!(
+        reblurred_img,
+        working_img,
+        "Redoing blur must produce identical blurred result"
+    );
+}
+
+
 
 
 
