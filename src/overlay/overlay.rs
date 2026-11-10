@@ -24,7 +24,7 @@ use crate::ocr::recognition::recognize_text_from_image;
 use crate::overlay::magnifier::{MagnifierInfo, render_magnifier};
 use crate::overlay::selection::{SelectionDragMode, SelectionState};
 use crate::overlay::toolbar::{
-    TOOLBAR_MAIN_HEIGHT, TOOLBAR_TOTAL_HEIGHT, TOOLBAR_WIDTH, TooltipView,
+    HoveredTooltip, TOOLBAR_MAIN_HEIGHT, TOOLBAR_TOTAL_HEIGHT, TOOLBAR_WIDTH,
     calculate_toolbar_position, generate_gradient_bitmap, generate_hue_strip_bitmap, hsv_to_rgb,
     parse_hex_color, render_blur_preset, render_color_swatch, render_toolbar_button,
     render_toolbar_divider, render_toolbar_text_button, rgb_to_cmyk, rgb_to_hsl, rgb_to_hsv,
@@ -90,6 +90,7 @@ pub struct ScreenOverlayView {
     pub palette_hue_strip_image: Option<Arc<RenderImage>>,
     pub gradient_field_bounds: Option<Bounds<Pixels>>,
     pub hue_slider_bounds: Option<Bounds<Pixels>>,
+    pub hovered_tooltip: Option<HoveredTooltip>,
 }
 
 impl ScreenOverlayView {
@@ -146,7 +147,17 @@ impl ScreenOverlayView {
             palette_hue_strip_image: Some(generate_hue_strip_bitmap(448, 12)),
             gradient_field_bounds: None,
             hue_slider_bounds: None,
+            hovered_tooltip: None,
         }
+    }
+
+    pub fn set_tooltip(&mut self, text: &'static str, rel_x: f32, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            self.hovered_tooltip = Some(HoveredTooltip { text, rel_x });
+        } else if self.hovered_tooltip.map(|t| t.text) == Some(text) {
+            self.hovered_tooltip = None;
+        }
+        cx.notify();
     }
 
     pub fn sync_picker_from_color(&mut self) {
@@ -1386,12 +1397,14 @@ impl Render for ScreenOverlayView {
                     .child(render_toolbar_button(
                         "btn-select".into(),
                         "icons/select.svg",
-                        "Select / Move",
                         active_tool == ToolKind::Select,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
                             this.active_tool = ToolKind::Select;
                             cx.notify();
+                        }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Select / Move", 24.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_divider(theme_ref))
@@ -1399,89 +1412,105 @@ impl Render for ScreenOverlayView {
                     .child(render_toolbar_button(
                         "btn-pencil".into(),
                         "icons/pencil.svg",
-                        "Freehand Pencil",
                         active_tool == ToolKind::Pencil,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
                             this.active_tool = ToolKind::Pencil;
                             cx.notify();
                         }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Freehand Pencil", 65.0, *hovered, cx);
+                        }),
                     ))
                     .child(render_toolbar_button(
                         "btn-marker".into(),
                         "icons/marker.svg",
-                        "Highlighter Marker",
                         active_tool == ToolKind::Marker,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
                             this.active_tool = ToolKind::Marker;
                             cx.notify();
                         }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Highlighter Marker", 101.0, *hovered, cx);
+                        }),
                     ))
                     .child(render_toolbar_button(
                         "btn-arrow".into(),
                         "icons/arrow.svg",
-                        "Draw Arrow",
                         active_tool == ToolKind::Arrow,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
                             this.active_tool = ToolKind::Arrow;
                             cx.notify();
                         }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Draw Arrow", 137.0, *hovered, cx);
+                        }),
                     ))
                     .child(render_toolbar_button(
                         "btn-line".into(),
                         "icons/line.svg",
-                        "Straight Line",
                         active_tool == ToolKind::Line,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
                             this.active_tool = ToolKind::Line;
                             cx.notify();
                         }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Straight Line", 173.0, *hovered, cx);
+                        }),
                     ))
                     .child(render_toolbar_button(
                         "btn-rect".into(),
                         "icons/rectangle.svg",
-                        "Rectangle",
                         active_tool == ToolKind::Rectangle,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
                             this.active_tool = ToolKind::Rectangle;
                             cx.notify();
                         }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Rectangle", 209.0, *hovered, cx);
+                        }),
                     ))
                     .child(render_toolbar_button(
                         "btn-circle".into(),
                         "icons/circle.svg",
-                        "Ellipse / Circle",
                         active_tool == ToolKind::Ellipse,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
                             this.active_tool = ToolKind::Ellipse;
                             cx.notify();
                         }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Ellipse / Circle", 245.0, *hovered, cx);
+                        }),
                     ))
                     .child(render_toolbar_button(
                         "btn-text".into(),
                         "icons/text.svg",
-                        "Text Annotation",
                         active_tool == ToolKind::Text,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
                             this.active_tool = ToolKind::Text;
                             cx.notify();
                         }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Text Annotation", 281.0, *hovered, cx);
+                        }),
                     ))
                     .child(render_toolbar_button(
                         "btn-step".into(),
                         "icons/step.svg",
-                        "Step Badge Counter",
                         active_tool == ToolKind::NumberBadge,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
                             this.active_tool = ToolKind::NumberBadge;
                             cx.notify();
+                        }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Step Badge Counter", 317.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_divider(theme_ref))
@@ -1489,34 +1518,40 @@ impl Render for ScreenOverlayView {
                     .child(render_toolbar_button(
                         "btn-blur".into(),
                         "icons/blur.svg",
-                        "Blur Sensitive Region",
                         active_tool == ToolKind::Blur,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
                             this.active_tool = ToolKind::Blur;
                             cx.notify();
                         }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Blur Sensitive Region", 358.0, *hovered, cx);
+                        }),
                     ))
                     .child(render_toolbar_button(
                         "btn-pixelate".into(),
                         "icons/pixelate.svg",
-                        "Pixelate Mosaic",
                         active_tool == ToolKind::Pixelate,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
                             this.active_tool = ToolKind::Pixelate;
                             cx.notify();
                         }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Pixelate Mosaic", 394.0, *hovered, cx);
+                        }),
                     ))
                     .child(render_toolbar_button(
                         "btn-dropper".into(),
                         "icons/eyedropper.svg",
-                        "Eyedropper Color Picker",
                         active_tool == ToolKind::Eyedropper,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
                             this.active_tool = ToolKind::Eyedropper;
                             cx.notify();
+                        }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Eyedropper Color Picker", 430.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_divider(theme_ref))
@@ -1524,17 +1559,18 @@ impl Render for ScreenOverlayView {
                     .child(render_toolbar_text_button(
                         "btn-ocr".into(),
                         "OCR",
-                        "Windows WinRT Text Recognition",
                         self.is_ocr_running,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
                             this.do_ocr(cx);
                         }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Windows WinRT Text Recognition", 473.0, *hovered, cx);
+                        }),
                     ))
                     .child(render_toolbar_button(
                         "btn-undo".into(),
                         "icons/undo.svg",
-                        "Undo (Ctrl+Z)",
                         false,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
@@ -1542,11 +1578,13 @@ impl Render for ScreenOverlayView {
                             this.rebuild_render_image();
                             cx.notify();
                         }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Undo (Ctrl+Z)", 511.0, *hovered, cx);
+                        }),
                     ))
                     .child(render_toolbar_button(
                         "btn-redo".into(),
                         "icons/redo.svg",
-                        "Redo (Ctrl+Y)",
                         false,
                         theme_ref,
                         cx.listener(|this, _, _, cx| {
@@ -1554,15 +1592,20 @@ impl Render for ScreenOverlayView {
                             this.rebuild_render_image();
                             cx.notify();
                         }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Redo (Ctrl+Y)", 547.0, *hovered, cx);
+                        }),
                     ))
                     .child(render_toolbar_button(
                         "btn-save".into(),
                         "icons/save.svg",
-                        "Save to PNG (Ctrl+S)",
                         false,
                         theme_ref,
                         cx.listener(|this, _, window, cx| {
                             this.do_save(window, cx);
+                        }),
+                        cx.listener(|this, hovered, _, cx| {
+                            this.set_tooltip("Save to PNG (Ctrl+S)", 583.0, *hovered, cx);
                         }),
                     ))
                     .child(
@@ -1578,12 +1621,9 @@ impl Render for ScreenOverlayView {
                             .hover(|s| s.bg(theme.accent_hover))
                             .cursor_pointer()
                             .shadow_md()
-                            .tooltip(move |_window, cx| {
-                                cx.new(|_| TooltipView {
-                                    text: "Copy to Clipboard (Ctrl+C)".to_string(),
-                                })
-                                .into()
-                            })
+                            .on_hover(cx.listener(|this, hovered, _, cx| {
+                                this.set_tooltip("Copy to Clipboard (Ctrl+C)", 637.0, *hovered, cx);
+                            }))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.do_copy(window, cx);
                             }))
@@ -1614,12 +1654,9 @@ impl Render for ScreenOverlayView {
                             .border_color(theme.border_subtle)
                             .hover(|s| s.bg(rgba(0xFF453A22)).border_color(rgb(0xFF453A)))
                             .cursor_pointer()
-                            .tooltip(move |_window, cx| {
-                                cx.new(|_| TooltipView {
-                                    text: "Close Overlay (Esc)".to_string(),
-                                })
-                                .into()
-                            })
+                            .on_hover(cx.listener(|this, hovered, _, cx| {
+                                this.set_tooltip("Close Overlay (Esc)", 691.0, *hovered, cx);
+                            }))
                             .on_click(cx.listener(|_, _, window, _| {
                                 window.remove_window();
                             }))
@@ -2239,6 +2276,58 @@ impl Render for ScreenOverlayView {
             }
 
             root = root.child(toolbar_col);
+
+            // Floating Tooltip: dynamically positioned strictly ABOVE or BELOW toolbar icons depending on situation
+            if let Some(tip) = self.hovered_tooltip {
+                let scr_w = f32::from(screen_bounds.size.width);
+                let scr_h = f32::from(screen_bounds.size.height);
+                let bar_y = f32::from(toolbar_pos.y);
+                let sel_y = f32::from(selection.bounds.origin.y);
+                let sel_h = f32::from(selection.bounds.size.height);
+
+                // Determine whether toolbar is placed above selection, below selection, or inside
+                let show_above = if bar_y + bar_height <= sel_y + 4.0 {
+                    // Toolbar is positioned ABOVE selection:
+                    // Show tooltip ABOVE toolbar (away from selection), unless screen top prevents it
+                    bar_y - 34.0 >= 8.0
+                } else if bar_y >= sel_y + sel_h - 4.0 {
+                    // Toolbar is positioned BELOW selection:
+                    // Show tooltip BELOW toolbar (away from selection), unless screen bottom prevents it
+                    bar_y + bar_height + 34.0 > scr_h - 8.0
+                } else {
+                    // Toolbar is positioned INSIDE selection (e.g. nearly full-screen selection):
+                    // Show above if toolbar is in lower half of screen, otherwise below
+                    bar_y + bar_height + 34.0 > scr_h - 8.0 || bar_y > scr_h / 2.0
+                };
+
+                let tip_y = if show_above {
+                    (bar_y - 34.0).max(8.0)
+                } else {
+                    (bar_y + bar_height + 8.0).min(scr_h - 34.0)
+                };
+
+                let approx_w = (tip.text.len() as f32 * 6.8 + 20.0).max(56.0);
+                let tip_x = (f32::from(toolbar_pos.x) + tip.rel_x - approx_w / 2.0)
+                    .clamp(12.0, (scr_w - approx_w - 12.0).max(12.0));
+
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left(px(tip_x))
+                        .top(px(tip_y))
+                        .px_2p5()
+                        .py_1()
+                        .rounded_md()
+                        .bg(rgb(0x18181E))
+                        .border_1()
+                        .border_color(rgb(0x323242))
+                        .shadow_2xl()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(rgb(0xF2F2F5))
+                        .child(tip.text),
+                );
+            }
 
             // Expanded Google-Style 2D HSV Gradient Color Studio Dropdown
             if self.show_color_palette {

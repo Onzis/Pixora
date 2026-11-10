@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use crate::theme::PixoraTheme;
 use gpui::{
-    App, Bounds, ClickEvent, Context, ElementId, IntoElement, Pixels, Point, Render, RenderImage,
+    App, Bounds, ClickEvent, ElementId, IntoElement, Pixels, Point, RenderImage,
     Rgba, Window, div, point, prelude::*, px, rgb, rgba, svg,
 };
 use image::{Frame, RgbaImage};
@@ -39,26 +39,10 @@ pub const PALETTE_24: [(&str, u32); 24] = [
     ("Black", 0x000000),
 ];
 
-pub struct TooltipView {
-    pub text: String,
-}
-
-impl Render for TooltipView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .mt(px(24.0))
-            .px_2p5()
-            .py_1()
-            .rounded_md()
-            .bg(rgb(0x18181E))
-            .border_1()
-            .border_color(rgb(0x323242))
-            .shadow_xl()
-            .text_xs()
-            .font_weight(gpui::FontWeight::MEDIUM)
-            .text_color(rgb(0xF2F2F5))
-            .child(self.text.clone())
-    }
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HoveredTooltip {
+    pub text: &'static str,
+    pub rel_x: f32,
 }
 
 pub const HUE_STOPS: [f32; 24] = [
@@ -177,10 +161,10 @@ pub fn calculate_toolbar_position(
 pub fn render_toolbar_button(
     id: ElementId,
     icon_path: &'static str,
-    tooltip: &'static str,
     is_active: bool,
     theme: &PixoraTheme,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let bg_color = if is_active {
         rgba(0x8174FF33)
@@ -212,12 +196,7 @@ pub fn render_toolbar_button(
         .border_color(border_color)
         .hover(|s| s.bg(theme.bg_hover).border_color(theme.border_focus))
         .cursor_pointer()
-        .tooltip(move |_window, cx| {
-            cx.new(|_| TooltipView {
-                text: tooltip.to_string(),
-            })
-            .into()
-        })
+        .on_hover(on_hover)
         .on_click(on_click)
         .child(
             svg()
@@ -230,10 +209,10 @@ pub fn render_toolbar_button(
 pub fn render_toolbar_text_button(
     id: ElementId,
     label: &'static str,
-    tooltip: &'static str,
     is_active: bool,
     theme: &PixoraTheme,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let bg_color = if is_active {
         rgba(0x8174FF33)
@@ -266,12 +245,7 @@ pub fn render_toolbar_text_button(
         .border_color(border_color)
         .hover(|s| s.bg(theme.bg_hover).border_color(theme.border_focus))
         .cursor_pointer()
-        .tooltip(move |_window, cx| {
-            cx.new(|_| TooltipView {
-                text: tooltip.to_string(),
-            })
-            .into()
-        })
+        .on_hover(on_hover)
         .on_click(on_click)
         .child(
             div()
