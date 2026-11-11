@@ -1,3 +1,4 @@
+use std::time::Duration;
 use crate::config::AppConfig;
 use crate::i18n::{detect_system_language, t, AppLanguage, LanguageChoice};
 use crate::settings::storage::{open_folder_in_explorer, set_run_at_startup};
@@ -33,6 +34,7 @@ pub struct SettingsWindowView {
     pub scroll_handle: ScrollHandle,
     pub focus_handle: FocusHandle,
     pub update_status: UpdateStatus,
+    pub last_checked_time: Option<String>,
 }
 
 impl SettingsWindowView {
@@ -51,6 +53,7 @@ impl SettingsWindowView {
             scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             update_status: global_status,
+            last_checked_time: None,
         };
         if tab == SettingsTab::About && view.update_status == UpdateStatus::Idle {
             view.check_for_updates(cx);
@@ -66,15 +69,43 @@ impl SettingsWindowView {
         cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let cx = cx.clone();
             async move {
-                let status = std::thread::spawn(move || {
+                let task = cx.background_executor().spawn(async move {
                     crate::system::updater::check_latest_release_status()
-                })
-                .join()
-                .unwrap_or_else(|_| UpdateStatus::Error("Update thread panicked".to_string()));
+                });
+
+                cx.background_executor().timer(Duration::from_millis(600)).await;
+                let status = task.await;
 
                 crate::system::updater::set_global_update_status(status.clone());
                 let _ = cx.update(|app| {
                     let _ = this.update(app, |view, cx| {
+                        let now_str = chrono::Local::now().format("%H:%M:%S").to_string();
+                        view.last_checked_time = Some(now_str);
+                        let lang = view.config.language.resolve();
+                        match &status {
+                            UpdateStatus::UpToDate { version } => {
+                                view.status_message = Some(format!(
+                                    "{}: v{}",
+                                    t(lang, "Pixora is up to date", "У вас установлена последняя версия"),
+                                    version
+                                ));
+                            }
+                            UpdateStatus::Available { latest, .. } => {
+                                view.status_message = Some(format!(
+                                    "{}: v{}",
+                                    t(lang, "New update available", "Доступно обновление"),
+                                    latest
+                                ));
+                            }
+                            UpdateStatus::Error(e) => {
+                                view.status_message = Some(format!(
+                                    "{}: {}",
+                                    t(lang, "Update check error", "Ошибка проверки обновлений"),
+                                    e
+                                ));
+                            }
+                            _ => {}
+                        }
                         view.update_status = status;
                         cx.notify();
                     });
@@ -1200,6 +1231,21 @@ impl SettingsWindowView {
                         }
                         UpdateStatus::UpToDate { version } => {
                             let ver_str = version.clone();
+                            let desc = if let Some(time) = &self.last_checked_time {
+                                format!(
+                                    "{} v{} • {}: {}",
+                                    t(lang, "Latest version installed:", "Установлена актуальная версия:"),
+                                    ver_str,
+                                    t(lang, "Checked at", "Проверено в"),
+                                    time
+                                )
+                            } else {
+                                format!(
+                                    "{} v{}",
+                                    t(lang, "Latest version installed:", "Установлена актуальная версия:"),
+                                    ver_str
+                                )
+                            };
                             div()
                                 .flex()
                                 .items_center()
@@ -1220,11 +1266,7 @@ impl SettingsWindowView {
                                             div()
                                                 .text_xs()
                                                 .text_color(rgb(0x8A8A99))
-                                                .child(format!(
-                                                    "{} v{}",
-                                                    t(lang, "Latest version installed:", "Установлена актуальная версия:"),
-                                                    ver_str
-                                                )),
+                                                .child(desc),
                                         ),
                                 )
                                 .child(
