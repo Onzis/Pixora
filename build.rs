@@ -5,7 +5,7 @@ fn main() {
         println!("cargo:rerun-if-changed=assets/pixora.rc");
         println!("cargo:rerun-if-changed=Cargo.toml");
 
-        let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.15.0".to_string());
+        let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.16.0".to_string());
         let version_parts: Vec<u32> = version
             .split('.')
             .map(|s| s.parse::<u32>().unwrap_or(0))

@@ -13,7 +13,7 @@
 [![Language](https://img.shields.io/badge/Language-Rust%202024-orange.svg?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![UI Framework](https://img.shields.io/badge/UI-GPUI%20(DirectX)-blueviolet.svg?style=flat-square)](https://github.com/zed-industries/zed)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6.svg?style=flat-square&logo=windows)](https://microsoft.com)
-[![Version](https://img.shields.io/badge/Version-0.15.0-8174FF.svg?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.16.0-8174FF.svg?style=flat-square)]()
 [![Author](https://img.shields.io/badge/Author-Onzi-cyan.svg?style=flat-square)]()
 [![License](https://img.shields.io/badge/License-Apache--2.0-green.svg?style=flat-square)](https://www.apache.org/licenses/LICENSE-2.0)
 
