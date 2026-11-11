@@ -1,7 +1,16 @@
 use gpui::{
-    Bounds, IntoElement, Pixels, Point, Rgba, div, prelude::*, px, rgb, rgba,
+    BorderStyle, Bounds, IntoElement, Pixels, Point, Rgba, canvas, div, fill, outline, point,
+    prelude::*, px, rgb, rgba, size,
 };
 use image::RgbaImage;
+
+use crate::i18n::{AppLanguage, t};
+
+pub const LOUPE_RADIUS: i32 = 5;
+pub const LOUPE_GRID_SIZE: usize = 11;
+pub const LOUPE_TOTAL_CELLS: usize = LOUPE_GRID_SIZE * LOUPE_GRID_SIZE;
+pub const LOUPE_CELL_SIZE: f32 = 12.0;
+pub const LOUPE_GRID_PX: f32 = (LOUPE_GRID_SIZE as f32) * LOUPE_CELL_SIZE; // 132.0 px
 
 #[derive(Clone, Copy, Debug)]
 pub struct MagnifierInfo {
@@ -12,10 +21,36 @@ pub struct MagnifierInfo {
     pub r: u8,
     pub g: u8,
     pub b: u8,
+    pub grid_colors: [Rgba; LOUPE_TOTAL_CELLS],
 }
 
 impl MagnifierInfo {
-    pub fn from_image(image: &RgbaImage, screen_x: i32, screen_y: i32, img_x: u32, img_y: u32) -> Self {
+    pub fn from_image(
+        image: &RgbaImage,
+        screen_x: i32,
+        screen_y: i32,
+        img_x: u32,
+        img_y: u32,
+    ) -> Self {
+        let w = image.width() as i32;
+        let h = image.height() as i32;
+        let mut grid_colors = [rgba(0x000000FF); LOUPE_TOTAL_CELLS];
+
+        for dy in -LOUPE_RADIUS..=LOUPE_RADIUS {
+            for dx in -LOUPE_RADIUS..=LOUPE_RADIUS {
+                let sx = (img_x as i32 + dx).clamp(0, (w - 1).max(0)) as u32;
+                let sy = (img_y as i32 + dy).clamp(0, (h - 1).max(0)) as u32;
+                let p = if sx < image.width() && sy < image.height() {
+                    *image.get_pixel(sx, sy)
+                } else {
+                    image::Rgba([0, 0, 0, 255])
+                };
+                let c = rgb(((p[0] as u32) << 16) | ((p[1] as u32) << 8) | (p[2] as u32));
+                let idx = ((dy + LOUPE_RADIUS) * (LOUPE_GRID_SIZE as i32) + (dx + LOUPE_RADIUS)) as usize;
+                grid_colors[idx] = c;
+            }
+        }
+
         let p = if img_x < image.width() && img_y < image.height() {
             *image.get_pixel(img_x, img_y)
         } else {
@@ -40,6 +75,7 @@ impl MagnifierInfo {
             r,
             g,
             b,
+            grid_colors,
         }
     }
 
@@ -52,10 +88,13 @@ pub fn render_magnifier(
     cursor: Point<Pixels>,
     info: MagnifierInfo,
     screen_bounds: Bounds<Pixels>,
+    is_eyedropper: bool,
+    lang: AppLanguage,
 ) -> impl IntoElement {
-    let mag_w = 140.0;
-    let mag_h = 100.0;
-    let offset = 20.0;
+    let padding = 8.0;
+    let mag_w = LOUPE_GRID_PX + padding * 2.0; // 148.0
+    let mag_h = LOUPE_GRID_PX + padding * 2.0 + 44.0; // 192.0
+    let offset = 22.0;
 
     let cur_x = f32::from(cursor.x);
     let cur_y = f32::from(cursor.y);
@@ -65,15 +104,17 @@ pub fn render_magnifier(
     let mut x = cur_x + offset;
     let mut y = cur_y + offset;
 
-    if x + mag_w > scr_w - 10.0 {
+    if x + mag_w > scr_w - 12.0 {
         x = cur_x - mag_w - offset;
     }
-    if y + mag_h > scr_h - 10.0 {
+    if y + mag_h > scr_h - 12.0 {
         y = cur_y - mag_h - offset;
     }
 
+    x = x.clamp(8.0, (scr_w - mag_w - 8.0).max(8.0));
+    y = y.clamp(8.0, (scr_h - mag_h - 8.0).max(8.0));
+
     let hex_label = info.hex_string();
-    let rgb_label = format!("RGB({}, {}, {})", info.r, info.g, info.b);
     let pos_label = format!("X: {}  Y: {}", info.screen_x, info.screen_y);
 
     div()
@@ -82,46 +123,175 @@ pub fn render_magnifier(
         .top(px(y))
         .w(px(mag_w))
         .h(px(mag_h))
-        .bg(rgb(0x151519))
+        .bg(rgba(0x131317FA))
         .border_1()
-        .border_color(rgb(0x2E2E38))
-        .rounded_lg()
-        .shadow_lg()
-        .p_2()
+        .border_color(rgba(0xFFFFFF28))
+        .rounded_xl()
+        .shadow_2xl()
+        .p(px(padding))
         .flex()
         .flex_col()
+        .items_center()
         .gap_1p5()
+        // 1. Magnified Pixel Grid (Canvas)
         .child(
             div()
+                .w(px(LOUPE_GRID_PX))
+                .h(px(LOUPE_GRID_PX))
+                .rounded_md()
+                .border_1()
+                .border_color(rgba(0xFFFFFF35))
+                .child(
+                    canvas(
+                        |_, _, _| (),
+                        move |bounds, _, window, _cx| {
+                            let cell_sz = px(LOUPE_CELL_SIZE);
+                            let origin_x = bounds.origin.x;
+                            let origin_y = bounds.origin.y;
+
+                            // Draw each magnified pixel cell
+                            for row in 0..LOUPE_GRID_SIZE {
+                                let y_pos = origin_y + px(row as f32 * LOUPE_CELL_SIZE);
+                                for col in 0..LOUPE_GRID_SIZE {
+                                    let x_pos = origin_x + px(col as f32 * LOUPE_CELL_SIZE);
+                                    let cell_bounds = Bounds {
+                                        origin: point(x_pos, y_pos),
+                                        size: size(cell_sz, cell_sz),
+                                    };
+                                    let color = info.grid_colors[row * LOUPE_GRID_SIZE + col];
+                                    window.paint_quad(fill(cell_bounds, color));
+                                    window.paint_quad(outline(
+                                        cell_bounds,
+                                        rgba(0x00000028),
+                                        BorderStyle::Solid,
+                                    ));
+                                }
+                            }
+
+                            // Center target reticle
+                            let center_col = LOUPE_RADIUS as f32;
+                            let center_row = LOUPE_RADIUS as f32;
+                            let cx_left = origin_x + px(center_col * LOUPE_CELL_SIZE);
+                            let cy_top = origin_y + px(center_row * LOUPE_CELL_SIZE);
+
+                            // Crosshair lines through center
+                            window.paint_quad(fill(
+                                Bounds {
+                                    origin: point(cx_left + px(5.5), origin_y),
+                                    size: size(px(1.0), px(center_row * LOUPE_CELL_SIZE)),
+                                },
+                                rgba(0xFFFFFF38),
+                            ));
+                            window.paint_quad(fill(
+                                Bounds {
+                                    origin: point(cx_left + px(5.5), cy_top + px(LOUPE_CELL_SIZE)),
+                                    size: size(px(1.0), px(center_row * LOUPE_CELL_SIZE)),
+                                },
+                                rgba(0xFFFFFF38),
+                            ));
+                            window.paint_quad(fill(
+                                Bounds {
+                                    origin: point(origin_x, cy_top + px(5.5)),
+                                    size: size(px(center_col * LOUPE_CELL_SIZE), px(1.0)),
+                                },
+                                rgba(0xFFFFFF38),
+                            ));
+                            window.paint_quad(fill(
+                                Bounds {
+                                    origin: point(cx_left + px(LOUPE_CELL_SIZE), cy_top + px(5.5)),
+                                    size: size(px(center_col * LOUPE_CELL_SIZE), px(1.0)),
+                                },
+                                rgba(0xFFFFFF38),
+                            ));
+
+                            let center_bounds = Bounds {
+                                origin: point(cx_left, cy_top),
+                                size: size(cell_sz, cell_sz),
+                            };
+
+                            let outer_center = Bounds {
+                                origin: point(cx_left - px(1.0), cy_top - px(1.0)),
+                                size: size(cell_sz + px(2.0), cell_sz + px(2.0)),
+                            };
+
+                            // Double outline for visibility on any background (light or dark)
+                            window.paint_quad(outline(
+                                outer_center,
+                                rgba(0x000000B8),
+                                BorderStyle::Solid,
+                            ));
+                            window.paint_quad(outline(
+                                center_bounds,
+                                rgb(0xFFFFFF),
+                                BorderStyle::Solid,
+                            ));
+                        },
+                    )
+                    .size_full(),
+                ),
+        )
+        // 2. Info readout: Color swatch, HEX, RGB, and coordinates
+        .child(
+            div()
+                .w_full()
                 .flex()
-                .items_center()
-                .gap_2()
+                .flex_col()
+                .gap_0p5()
                 .child(
                     div()
-                        .size_5()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgba(0xFFFFFF40))
-                        .bg(info.color),
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1p5()
+                                .child(
+                                    div()
+                                        .w(px(14.0))
+                                        .h(px(14.0))
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgba(0xFFFFFF50))
+                                        .bg(info.color),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(rgb(0xF2F2F5))
+                                        .child(hex_label),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(rgb(0xA2A2B0))
+                                .child(format!("{},{},{}", info.r, info.g, info.b)),
+                        ),
                 )
                 .child(
                     div()
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(rgb(0xF2F2F5))
-                        .child(hex_label),
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0x757585))
+                                .child(pos_label),
+                        )
+                        .when(is_eyedropper, |d| {
+                            d.child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(rgb(0x9D8CFF))
+                                    .child(t(lang, "Pick", "Клик")),
+                            )
+                        }),
                 ),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(0xA2A2B0))
-                .child(rgb_label),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(0x656575))
-                .child(pos_label),
         )
 }

@@ -107,6 +107,27 @@ impl ScreenOverlayView {
         let render_image = Arc::new(RenderImage::new(smallvec![frame]));
         let focus_handle = cx.focus_handle();
 
+        let mut initial_cursor = point(px(0.0), px(0.0));
+        let mut initial_magnifier = None;
+        #[cfg(windows)]
+        {
+            use windows::Win32::Foundation::POINT;
+            use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+            let mut pt = POINT { x: 0, y: 0 };
+            if unsafe { GetCursorPos(&mut pt) }.is_ok() {
+                let rx = (pt.x - capture.bounds.x).max(0) as u32;
+                let ry = (pt.y - capture.bounds.y).max(0) as u32;
+                initial_cursor = point(px(rx as f32), px(ry as f32));
+                initial_magnifier = Some(MagnifierInfo::from_image(
+                    &capture.image,
+                    pt.x,
+                    pt.y,
+                    rx,
+                    ry,
+                ));
+            }
+        }
+
         Self {
             capture,
             render_image,
@@ -122,8 +143,8 @@ impl ScreenOverlayView {
             current_drawing: None,
             drawing_start: None,
 
-            cursor_pos: point(px(0.0), px(0.0)),
-            magnifier_info: None,
+            cursor_pos: initial_cursor,
+            magnifier_info: initial_magnifier,
             focus_handle,
 
             toast_message: None,
@@ -503,8 +524,9 @@ impl ScreenOverlayView {
             let hex = format!("#{:02X}{:02X}{:02X}", pixel[0], pixel[1], pixel[2]);
             self.tool_props.stroke_color = picked;
             self.custom_hex_input = format!("{:02X}{:02X}{:02X}", pixel[0], pixel[1], pixel[2]);
+            let lang = self.config.language.resolve();
             let _ = copy_text_to_clipboard(&hex);
-            self.show_toast(format!("Picked color {}", hex), cx);
+            self.show_toast(format!("{} {}", t(lang, "Picked color:", "Цвет скопирован:"), hex), cx);
             self.active_tool = ToolKind::Pencil;
             cx.notify();
             return;
@@ -1010,7 +1032,10 @@ impl Render for ScreenOverlayView {
         let theme = self.theme;
         let lang = self.config.language.resolve();
         let show_magnifier = self.active_tool == ToolKind::Eyedropper
-            || (self.config.show_magnifier && !selection.is_active);
+            || (self.config.show_magnifier && (
+                !selection.is_active
+                || matches!(self.drag_mode, SelectionDragMode::Creating { .. } | SelectionDragMode::Resizing { .. })
+            ));
 
         let annotations = self.history.annotations.clone();
         let current_drawing = self.current_drawing.clone();
@@ -1397,7 +1422,13 @@ impl Render for ScreenOverlayView {
         // Magnifier loupe
         if show_magnifier {
             if let Some(info) = self.magnifier_info {
-                root = root.child(render_magnifier(self.cursor_pos, info, screen_bounds));
+                root = root.child(render_magnifier(
+                    self.cursor_pos,
+                    info,
+                    screen_bounds,
+                    self.active_tool == ToolKind::Eyedropper,
+                    lang,
+                ));
             }
         }
 

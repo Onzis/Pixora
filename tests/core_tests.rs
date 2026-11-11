@@ -479,6 +479,51 @@ fn test_ocr_on_empty_image_returns_error() {
     assert!(recognize_text_from_image(&empty, None).is_err());
 }
 
+#[test]
+fn test_magnifier_pixel_sampling_and_grid() {
+    use pixora::overlay::magnifier::{LOUPE_GRID_SIZE, LOUPE_TOTAL_CELLS, MagnifierInfo};
+    let mut img = image::RgbaImage::new(30, 30);
+    // Fill with black
+    for p in img.pixels_mut() {
+        *p = image::Rgba([0, 0, 0, 255]);
+    }
+    // Set center pixel at (10, 10) to red (#FF453A)
+    img.put_pixel(10, 10, image::Rgba([255, 69, 58, 255]));
+    // Set neighboring pixel at (9, 10) to green (#30D158)
+    img.put_pixel(9, 10, image::Rgba([48, 209, 88, 255]));
+
+    let info = MagnifierInfo::from_image(&img, 1000, 500, 10, 10);
+    assert_eq!(info.screen_x, 1000);
+    assert_eq!(info.screen_y, 500);
+    assert_eq!(info.hex_string(), "#FF453A");
+    assert_eq!(info.r, 255);
+    assert_eq!(info.g, 69);
+    assert_eq!(info.b, 58);
+    assert_eq!(info.grid_colors.len(), LOUPE_TOTAL_CELLS);
+    assert_eq!(LOUPE_GRID_SIZE, 11);
+
+    // Center cell is index 60 (5 * 11 + 5)
+    let center_col = info.grid_colors[60];
+    assert_eq!(center_col, gpui::rgb(0xFF453A));
+
+    // dx = -1, dy = 0 is index (0 + 5) * 11 + (-1 + 5) = 5 * 11 + 4 = 59
+    let left_col = info.grid_colors[59];
+    assert_eq!(left_col, gpui::rgb(0x30D158));
+}
+
+#[test]
+fn test_magnifier_clamping_at_edges() {
+    use pixora::overlay::magnifier::{LOUPE_TOTAL_CELLS, MagnifierInfo};
+    let img = image::RgbaImage::new(5, 5);
+    // Coordinates at top-left corner (0, 0)
+    let info_tl = MagnifierInfo::from_image(&img, 0, 0, 0, 0);
+    assert_eq!(info_tl.grid_colors.len(), LOUPE_TOTAL_CELLS);
+    // Coordinates at bottom-right beyond image
+    let info_br = MagnifierInfo::from_image(&img, 999, 999, 100, 100);
+    assert_eq!(info_br.grid_colors.len(), LOUPE_TOTAL_CELLS);
+}
+
+
 
 
 
