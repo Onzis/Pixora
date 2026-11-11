@@ -603,6 +603,15 @@ fn test_github_release_checking() {
     assert!(info.release_url.contains("github.com/Onzis/Pixora/releases"));
 }
 
+#[test]
+fn test_settings_window_tracking() {
+    use pixora::app::clear_settings_window_handle;
+    // Clearing settings window handle must be safe and idempotent
+    clear_settings_window_handle();
+    clear_settings_window_handle();
+}
+
+
 
 
 

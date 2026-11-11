@@ -20,6 +20,12 @@ use crate::system::tray::{show_tray_notification, start_system_tray, TrayEvent};
 use crate::system::windows::play_capture_sound;
 
 pub static IS_OVERLAY_OPEN: AtomicBool = AtomicBool::new(false);
+static SETTINGS_WINDOW: std::sync::Mutex<Option<gpui::WindowHandle<SettingsWindowView>>> =
+    std::sync::Mutex::new(None);
+
+pub fn clear_settings_window_handle() {
+    *SETTINGS_WINDOW.lock().unwrap() = None;
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum AppEvent {
@@ -318,6 +324,44 @@ impl PixoraApp {
     }
 
     pub fn open_settings_window_with_tab(cx: &mut App, tab: SettingsTab) {
+        if let Some(handle) = *SETTINGS_WINDOW.lock().unwrap() {
+            let update_res = handle.update(cx, |view, window, cx| {
+                view.current_tab = tab;
+                if tab == SettingsTab::About {
+                    view.check_for_updates(cx);
+                }
+                window.focus(&view.focus_handle);
+
+                #[cfg(windows)]
+                {
+                    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                    use windows::Win32::Foundation::HWND;
+                    use windows::Win32::UI::WindowsAndMessaging::{
+                        BringWindowToTop, SetForegroundWindow, ShowWindow, SW_RESTORE,
+                    };
+
+                    if let Ok(wh) = window.window_handle() {
+                        if let RawWindowHandle::Win32(h) = wh.as_raw() {
+                            let hwnd = HWND(h.hwnd.get() as *mut _);
+                            unsafe {
+                                let _ = ShowWindow(hwnd, SW_RESTORE);
+                                let _ = BringWindowToTop(hwnd);
+                                let _ = SetForegroundWindow(hwnd);
+                            }
+                        }
+                    }
+                }
+
+                cx.notify();
+            });
+
+            if update_res.is_ok() {
+                return;
+            } else {
+                *SETTINGS_WINDOW.lock().unwrap() = None;
+            }
+        }
+
         let config = AppConfig::load();
         let bounds = Bounds::centered(None, size(px(800.0), px(580.0)), cx);
 
@@ -337,9 +381,40 @@ impl PixoraApp {
             ..Default::default()
         };
 
-        let _ = cx.open_window(window_options, |_, cx| {
-            cx.new(|cx| SettingsWindowView::with_tab(config, tab, cx))
+        let handle = cx.open_window(window_options, |window, cx| {
+            #[cfg(windows)]
+            {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                use windows::Win32::Foundation::HWND;
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    BringWindowToTop, SetForegroundWindow, ShowWindow, SW_RESTORE,
+                };
+
+                if let Ok(wh) = window.window_handle() {
+                    if let RawWindowHandle::Win32(h) = wh.as_raw() {
+                        let hwnd = HWND(h.hwnd.get() as *mut _);
+                        unsafe {
+                            let _ = ShowWindow(hwnd, SW_RESTORE);
+                            let _ = BringWindowToTop(hwnd);
+                            let _ = SetForegroundWindow(hwnd);
+                        }
+                    }
+                }
+            }
+
+            window.on_window_should_close(cx, |_, _| {
+                clear_settings_window_handle();
+                true
+            });
+
+            let view = cx.new(|cx| SettingsWindowView::with_tab(config, tab, cx));
+            window.focus(&view.read(cx).focus_handle);
+            view
         });
+
+        if let Ok(h) = handle {
+            *SETTINGS_WINDOW.lock().unwrap() = Some(h);
+        }
     }
 
     pub fn handle_check_updates_from_tray(cx: &mut App) {

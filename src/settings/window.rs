@@ -365,6 +365,7 @@ impl Render for SettingsWindowView {
                                                     .hover(|s| s.bg(theme.bg_hover))
                                                     .cursor_pointer()
                                                     .on_click(cx.listener(|_, _, window, _| {
+                                                        crate::app::clear_settings_window_handle();
                                                         window.remove_window();
                                                     }))
                                                     .child(
