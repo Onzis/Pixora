@@ -400,9 +400,14 @@ impl ScreenOverlayView {
                         self.show_toast(t(lang, "No text found in selected area", "Текст в выбранной области не найден"), cx);
                     } else {
                         let _ = copy_text_to_clipboard(&output.full_text);
-                        let first_line = output.full_text.lines().next().unwrap_or(&output.full_text);
-                        let preview: String = first_line.chars().take(28).collect();
-                        self.show_toast(format!("{}: \"{}...\"", t(lang, "OCR copied", "Текст скопирован"), preview), cx);
+                        let first_line = output.full_text.lines().next().unwrap_or(&output.full_text).trim();
+                        let char_count = first_line.chars().count();
+                        let preview: String = if char_count > 36 {
+                            format!("{}...", first_line.chars().take(36).collect::<String>())
+                        } else {
+                            first_line.to_string()
+                        };
+                        self.show_toast(format!("{}: \"{}\"", t(lang, "OCR copied", "Текст скопирован"), preview), cx);
                     }
                 }
                 Err(e) => {
@@ -3011,28 +3016,44 @@ impl Render for ScreenOverlayView {
         // CleanShot toast feedback
         if let Some((msg, created)) = &self.toast_message {
             if created.elapsed() < Duration::from_secs(3) {
+                let is_err = msg.to_lowercase().contains("failed") || msg.to_lowercase().contains("ошибка");
+                let icon_path = if is_err { "icons/close.svg" } else { "icons/check.svg" };
+                let accent_color = if is_err { rgb(0xFF453A) } else { theme.accent };
+
                 root = root.child(
                     div()
                         .absolute()
                         .bottom(px(32.0))
-                        .left(px((f32::from(screen_size.width) - 340.0) / 2.0))
-                        .w(px(340.0))
-                        .py_2()
-                        .px_4()
-                        .rounded_lg()
-                        .bg(theme.bg_surface)
-                        .border_1()
-                        .border_color(theme.accent)
-                        .shadow_2xl()
+                        .left(px(0.0))
+                        .w(screen_size.width)
                         .flex()
-                        .items_center()
                         .justify_center()
                         .child(
                             div()
-                                .text_sm()
-                                .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(theme.text_primary)
-                                .child(msg.clone()),
+                                .max_w(px((f32::from(screen_size.width) - 64.0).min(760.0)))
+                                .py_2p5()
+                                .px_5()
+                                .rounded_xl()
+                                .bg(theme.bg_surface)
+                                .border_1()
+                                .border_color(accent_color)
+                                .shadow_2xl()
+                                .flex()
+                                .items_center()
+                                .gap_2p5()
+                                .child(
+                                    svg()
+                                        .path(icon_path)
+                                        .size(px(14.0))
+                                        .text_color(accent_color),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(theme.text_primary)
+                                        .child(msg.clone()),
+                                ),
                         ),
                 );
             }
