@@ -6,8 +6,50 @@ pub enum TrayEvent {
     CaptureFullscreen,
     OpenSettings,
     OpenFolder,
+    CheckUpdates,
     Exit,
 }
+
+#[cfg(windows)]
+static TRAY_HWND: std::sync::Mutex<Option<isize>> = std::sync::Mutex::new(None);
+
+#[cfg(windows)]
+pub fn show_tray_notification(title: &str, message: &str) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Shell::{
+        NOTIFYICONDATAW, NOTIFY_ICON_DATA_FLAGS, NOTIFY_ICON_INFOTIP_FLAGS, NIF_INFO,
+        Shell_NotifyIconW, NIM_MODIFY,
+    };
+    if let Ok(lock) = TRAY_HWND.lock() {
+        if let Some(h) = *lock {
+            let hwnd = HWND(h as *mut core::ffi::c_void);
+            let mut info = [0u16; 256];
+            for (i, c) in message.encode_utf16().enumerate().take(255) {
+                info[i] = c;
+            }
+            let mut info_title = [0u16; 64];
+            for (i, c) in title.encode_utf16().enumerate().take(63) {
+                info_title[i] = c;
+            }
+            let nid = NOTIFYICONDATAW {
+                cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+                hWnd: hwnd,
+                uID: 2001,
+                uFlags: NOTIFY_ICON_DATA_FLAGS(NIF_INFO.0),
+                szInfo: info,
+                szInfoTitle: info_title,
+                dwInfoFlags: NOTIFY_ICON_INFOTIP_FLAGS(1), // NIIF_INFO
+                ..Default::default()
+            };
+            unsafe {
+                let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn show_tray_notification(_title: &str, _message: &str) {}
 
 #[cfg(windows)]
 pub fn start_system_tray(event_sender: Sender<TrayEvent>) {
@@ -64,6 +106,9 @@ pub fn start_system_tray(event_sender: Sender<TrayEvent>) {
             return;
         }
         let hwnd = hwnd.unwrap();
+        if let Ok(mut lock) = TRAY_HWND.lock() {
+            *lock = Some(hwnd.0 as isize);
+        }
 
         const WM_TRAY: u32 = WM_APP + 10;
         let icon = LoadImageW(
@@ -161,6 +206,7 @@ pub fn start_system_tray(event_sender: Sender<TrayEvent>) {
                         let m_fs = to_wide(&format!("{} ({})", crate::i18n::t(lang, "Capture Fullscreen", "Снимок всего экрана"), config.hotkey_fullscreen));
                         let m_settings = to_wide(crate::i18n::t(lang, "Settings", "Настройки"));
                         let m_folder = to_wide(crate::i18n::t(lang, "Open Screenshots Folder", "Открыть папку со снимками"));
+                        let m_updates = to_wide(crate::i18n::t(lang, "Check for Updates...", "Проверить обновление..."));
                         let m_exit = to_wide(crate::i18n::t(lang, "Exit", "Выход"));
 
                         let _ = AppendMenuW(hmenu, MF_STRING, 1, windows::core::PCWSTR(m_region.as_ptr()));
@@ -168,6 +214,7 @@ pub fn start_system_tray(event_sender: Sender<TrayEvent>) {
                         let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, None);
                         let _ = AppendMenuW(hmenu, MF_STRING, 3, windows::core::PCWSTR(m_settings.as_ptr()));
                         let _ = AppendMenuW(hmenu, MF_STRING, 4, windows::core::PCWSTR(m_folder.as_ptr()));
+                        let _ = AppendMenuW(hmenu, MF_STRING, 6, windows::core::PCWSTR(m_updates.as_ptr()));
                         let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, None);
                         let _ = AppendMenuW(hmenu, MF_STRING, 5, windows::core::PCWSTR(m_exit.as_ptr()));
 
@@ -190,6 +237,7 @@ pub fn start_system_tray(event_sender: Sender<TrayEvent>) {
                                     3 => { let _ = sender.send(TrayEvent::OpenSettings); }
                                     4 => { let _ = sender.send(TrayEvent::OpenFolder); }
                                     5 => { let _ = sender.send(TrayEvent::Exit); }
+                                    6 => { let _ = sender.send(TrayEvent::CheckUpdates); }
                                     _ => {}
                                 }
                             }
@@ -198,6 +246,9 @@ pub fn start_system_tray(event_sender: Sender<TrayEvent>) {
                 }
                 return LRESULT(0);
             } else if msg == WM_DESTROY {
+                if let Ok(mut lock) = TRAY_HWND.lock() {
+                    *lock = None;
+                }
                 PostQuitMessage(0);
                 return LRESULT(0);
             }

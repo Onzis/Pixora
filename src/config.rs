@@ -38,6 +38,10 @@ fn default_color_hex() -> String {
     "#FF453A".to_string()
 }
 
+fn default_auto_check_updates() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
@@ -69,6 +73,8 @@ pub struct AppConfig {
     pub hotkey_window: String,
     #[serde(default = "default_ocr_language")]
     pub ocr_language: String,
+    #[serde(default = "default_auto_check_updates")]
+    pub auto_check_updates: bool,
 }
 
 impl Default for AppConfig {
@@ -97,6 +103,7 @@ impl Default for AppConfig {
             hotkey_fullscreen: default_hotkey_fullscreen(),
             hotkey_window: default_hotkey_window(),
             ocr_language: default_ocr_language(),
+            auto_check_updates: default_auto_check_updates(),
         }
     }
 }

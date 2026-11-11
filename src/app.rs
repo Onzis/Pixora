@@ -14,9 +14,9 @@ use crate::image::clipboard::copy_image_to_clipboard;
 use crate::image::export::auto_save_screenshot;
 use crate::overlay::overlay::ScreenOverlayView;
 use crate::settings::storage::open_folder_in_explorer;
-use crate::settings::window::SettingsWindowView;
+use crate::settings::window::{SettingsTab, SettingsWindowView};
 use crate::shortcuts::hotkeys::{HotkeyAction, start_hotkey_listener};
-use crate::system::tray::{TrayEvent, start_system_tray};
+use crate::system::tray::{show_tray_notification, start_system_tray, TrayEvent};
 use crate::system::windows::play_capture_sound;
 
 pub static IS_OVERLAY_OPEN: AtomicBool = AtomicBool::new(false);
@@ -28,6 +28,7 @@ pub enum AppEvent {
     TriggerActiveWindowCapture,
     OpenSettings,
     OpenFolder,
+    CheckUpdates,
     Exit,
 }
 
@@ -114,6 +115,9 @@ impl PixoraApp {
                     TrayEvent::OpenFolder => {
                         let _ = tray_tx.send(AppEvent::OpenFolder);
                     }
+                    TrayEvent::CheckUpdates => {
+                        let _ = tray_tx.send(AppEvent::CheckUpdates);
+                    }
                     TrayEvent::Exit => {
                         let _ = tray_tx.send(AppEvent::Exit);
                     }
@@ -144,6 +148,9 @@ impl PixoraApp {
                                 let cfg = AppConfig::load();
                                 open_folder_in_explorer(&cfg.save_directory);
                             }
+                            AppEvent::CheckUpdates => {
+                                Self::handle_check_updates_from_tray(app);
+                            }
                             AppEvent::Exit => {
                                 app.quit();
                             }
@@ -155,6 +162,35 @@ impl PixoraApp {
             }
         })
         .detach();
+
+        // 4. Background auto-update check on startup if enabled
+        let startup_cfg = AppConfig::load();
+        if startup_cfg.auto_check_updates {
+            let lang = startup_cfg.language.resolve();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(3));
+                if let Ok(info) = crate::system::updater::check_latest_release() {
+                    if info.is_update_available {
+                        crate::system::updater::set_global_update_status(
+                            crate::system::updater::UpdateStatus::Available {
+                                current: info.current_version.clone(),
+                                latest: info.latest_version.clone(),
+                                release_url: info.release_url.clone(),
+                            },
+                        );
+                        let title = "Pixora";
+                        let msg = format!("{}: v{}", crate::i18n::t(lang, "New version available", "Доступно обновление"), info.latest_version);
+                        show_tray_notification(title, &msg);
+                    } else {
+                        crate::system::updater::set_global_update_status(
+                            crate::system::updater::UpdateStatus::UpToDate {
+                                version: info.latest_version,
+                            },
+                        );
+                    }
+                }
+            });
+        }
     }
 
     pub fn open_capture_overlay(cx: &mut App) {
@@ -278,6 +314,10 @@ impl PixoraApp {
     }
 
     pub fn open_settings_window(cx: &mut App) {
+        Self::open_settings_window_with_tab(cx, SettingsTab::General);
+    }
+
+    pub fn open_settings_window_with_tab(cx: &mut App, tab: SettingsTab) {
         let config = AppConfig::load();
         let bounds = Bounds::centered(None, size(px(800.0), px(580.0)), cx);
 
@@ -298,7 +338,35 @@ impl PixoraApp {
         };
 
         let _ = cx.open_window(window_options, |_, cx| {
-            cx.new(|cx| SettingsWindowView::new(config, cx))
+            cx.new(|cx| SettingsWindowView::with_tab(config, tab, cx))
+        });
+    }
+
+    pub fn handle_check_updates_from_tray(cx: &mut App) {
+        let config = AppConfig::load();
+        let lang = config.language.resolve();
+
+        Self::open_settings_window_with_tab(cx, SettingsTab::About);
+
+        std::thread::spawn(move || {
+            match crate::system::updater::check_latest_release_status() {
+                crate::system::updater::UpdateStatus::Available { latest, .. } => {
+                    let title = "Pixora";
+                    let msg = format!("{}: v{}", crate::i18n::t(lang, "New version available", "Доступно обновление"), latest);
+                    show_tray_notification(title, &msg);
+                }
+                crate::system::updater::UpdateStatus::UpToDate { version } => {
+                    let title = "Pixora";
+                    let msg = format!("{}: v{}", crate::i18n::t(lang, "Pixora is up to date", "Установлена актуальная версия"), version);
+                    show_tray_notification(title, &msg);
+                }
+                crate::system::updater::UpdateStatus::Error(err) => {
+                    let title = "Pixora";
+                    let msg = format!("{}: {}", crate::i18n::t(lang, "Update check failed", "Ошибка проверки обновлений"), err);
+                    show_tray_notification(title, &msg);
+                }
+                _ => {}
+            }
         });
     }
 }

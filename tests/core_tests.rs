@@ -16,6 +16,7 @@ fn test_config_defaults_and_serialization() {
     assert!(!config.show_magnifier);
     assert_eq!(config.blur_radius, 12);
     assert_eq!(config.pixelate_block, 10);
+    assert!(config.auto_check_updates);
 
     let json = serde_json::to_string(&config).expect("Must serialize to JSON");
     let deserialized: AppConfig = serde_json::from_str(&json).expect("Must deserialize from JSON");
@@ -542,6 +543,39 @@ fn test_magnifier_clamping_at_edges() {
     let info_br = MagnifierInfo::from_image(&img, 999, 999, 100, 100);
     assert_eq!(info_br.grid_colors.len(), LOUPE_TOTAL_CELLS);
 }
+
+#[test]
+fn test_version_parsing_and_comparison() {
+    use pixora::system::updater::{is_newer_version, parse_version_tuple};
+
+    assert_eq!(parse_version_tuple("0.14.0"), vec![0, 14, 0]);
+    assert_eq!(parse_version_tuple("v0.14.0"), vec![0, 14, 0]);
+    assert_eq!(parse_version_tuple("V1.2.3.4"), vec![1, 2, 3, 4]);
+    assert_eq!(parse_version_tuple("v0.15.0-alpha"), vec![0, 15, 0]);
+
+    assert!(is_newer_version("0.14.0", "0.14.1"));
+    assert!(is_newer_version("0.14.0", "0.15.0"));
+    assert!(is_newer_version("0.14.0", "1.0.0"));
+    assert!(is_newer_version("0.14.0", "v0.14.1"));
+
+    assert!(!is_newer_version("0.14.0", "0.14.0"));
+    assert!(!is_newer_version("0.14.0", "v0.14.0"));
+    assert!(!is_newer_version("0.14.0", "0.13.9"));
+    assert!(!is_newer_version("1.0.0", "0.99.99"));
+}
+
+#[test]
+fn test_github_release_checking() {
+    use pixora::system::updater::check_latest_release;
+
+    let res = check_latest_release();
+    assert!(res.is_ok(), "check_latest_release should succeed: {:?}", res.err());
+    let info = res.unwrap();
+    assert_eq!(info.current_version, "0.14.0");
+    assert!(!info.latest_version.is_empty());
+    assert!(info.release_url.contains("github.com/Onzis/Pixora/releases"));
+}
+
 
 
 

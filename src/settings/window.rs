@@ -2,6 +2,7 @@ use crate::config::AppConfig;
 use crate::i18n::{detect_system_language, t, AppLanguage, LanguageChoice};
 use crate::settings::storage::{open_folder_in_explorer, set_run_at_startup};
 use crate::shortcuts::hotkeys::{format_keystroke, update_global_hotkeys};
+use crate::system::updater::{open_url, UpdateStatus, GITHUB_REPO_URL};
 use crate::theme::PixoraTheme;
 use gpui::{
     App, ClickEvent, Context, FocusHandle, IntoElement, KeyDownEvent, Render, ScrollHandle,
@@ -31,19 +32,56 @@ pub struct SettingsWindowView {
     pub rebinding_target: Option<ShortcutRebindTarget>,
     pub scroll_handle: ScrollHandle,
     pub focus_handle: FocusHandle,
+    pub update_status: UpdateStatus,
 }
 
 impl SettingsWindowView {
     pub fn new(config: AppConfig, cx: &mut Context<Self>) -> Self {
-        Self {
+        Self::with_tab(config, SettingsTab::General, cx)
+    }
+
+    pub fn with_tab(config: AppConfig, tab: SettingsTab, cx: &mut Context<Self>) -> Self {
+        let global_status = crate::system::updater::get_global_update_status();
+        let mut view = Self {
             config,
             theme: PixoraTheme::default(),
-            current_tab: SettingsTab::General,
+            current_tab: tab,
             status_message: None,
             rebinding_target: None,
             scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
+            update_status: global_status,
+        };
+        if tab == SettingsTab::About && view.update_status == UpdateStatus::Idle {
+            view.check_for_updates(cx);
         }
+        view
+    }
+
+    pub fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+        self.update_status = UpdateStatus::Checking;
+        crate::system::updater::set_global_update_status(UpdateStatus::Checking);
+        cx.notify();
+
+        cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let status = std::thread::spawn(move || {
+                    crate::system::updater::check_latest_release_status()
+                })
+                .join()
+                .unwrap_or_else(|_| UpdateStatus::Error("Update thread panicked".to_string()));
+
+                crate::system::updater::set_global_update_status(status.clone());
+                let _ = cx.update(|app| {
+                    let _ = this.update(app, |view, cx| {
+                        view.update_status = status;
+                        cx.notify();
+                    });
+                });
+            }
+        })
+        .detach();
     }
 
     pub fn save_settings(&mut self, cx: &mut Context<Self>) {
@@ -231,7 +269,7 @@ impl Render for SettingsWindowView {
                                         SettingsTab::General => self.render_general_tab(cx),
                                         SettingsTab::Capture => self.render_capture_tab(cx),
                                         SettingsTab::Shortcuts => self.render_shortcuts_tab(cx),
-                                        SettingsTab::About => self.render_about_tab(),
+                                        SettingsTab::About => self.render_about_tab(cx),
                                     }),
                             )
                             // Fixed Footer (Always locked at bottom, never clipped or pushed out)
@@ -938,45 +976,420 @@ impl SettingsWindowView {
             )
     }
 
-    fn render_about_tab(&self) -> gpui::Div {
+    fn render_about_tab(&self, cx: &mut Context<Self>) -> gpui::Div {
         let lang = self.config.language.resolve();
 
         div()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_4()
+            // Header card
             .child(
                 div()
-                    .text_base()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(0x8174FF))
-                    .child(format!(
-                        "Pixora v{} — {}",
-                        env!("CARGO_PKG_VERSION"),
-                        t(lang, "High-Performance Screen Capture", "Создание и аннотирование снимков экрана")
-                    )),
+                    .flex()
+                    .flex_col()
+                    .gap_1p5()
+                    .child(
+                        div()
+                            .text_base()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(rgb(0x8174FF))
+                            .child(format!(
+                                "Pixora v{} — {}",
+                                env!("CARGO_PKG_VERSION"),
+                                t(lang, "High-Performance Screen Capture", "Создание и аннотирование снимков экрана")
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0xA2A2B0))
+                            .child(t(
+                                lang,
+                                "Built with pure Rust and GPUI framework for Windows 10 & 11.",
+                                "Разработано на чистом Rust и фреймворке GPUI для Windows 10 и 11.",
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(0x8174FF))
+                            .child(t(
+                                lang,
+                                "Author: Onzi • Copyright © 2026",
+                                "Автор: Onzi • Copyright © 2026",
+                            )),
+                    ),
             )
+            // GitHub Project Card
             .child(
                 div()
-                    .text_xs()
-                    .text_color(rgb(0xA2A2B0))
-                    .child(t(
-                        lang,
-                        "Built with pure Rust and GPUI framework for Windows 10 & 11.",
-                        "Разработано на чистом Rust и фреймворке GPUI для Windows 10 и 11.",
-                    )),
+                    .p_4()
+                    .rounded_lg()
+                    .bg(rgb(0x181820))
+                    .border_1()
+                    .border_color(rgb(0x282832))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child(t(lang, "GitHub Repository", "Репозиторий GitHub")),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(0x8174FF))
+                                    .child(GITHUB_REPO_URL),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("btn-open-github")
+                            .px_3()
+                            .py_1p5()
+                            .rounded_md()
+                            .bg(rgb(0x282838))
+                            .border_1()
+                            .border_color(rgb(0x8174FF))
+                            .hover(|s| s.bg(rgb(0x35354A)))
+                            .cursor_pointer()
+                            .on_click(cx.listener(|_, _, _, _| {
+                                open_url(GITHUB_REPO_URL);
+                            }))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(rgb(0xFFFFFF))
+                                    .child(t(lang, "Open in Browser", "Открыть в браузере")),
+                            ),
+                    ),
             )
+            // Updates card
             .child(
                 div()
-                    .text_xs()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(0x8174FF))
-                    .child(t(
-                        lang,
-                        "Author: Onzi • Copyright © 2026",
-                        "Автор: Onzi • Copyright © 2026",
-                    )),
+                    .p_4()
+                    .rounded_lg()
+                    .bg(rgb(0x181820))
+                    .border_1()
+                    .border_color(rgb(0x282832))
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        render_toggle(
+                            "toggle-auto-updates",
+                            t(lang, "Check for updates automatically", "Автоматически проверять обновления"),
+                            t(
+                                lang,
+                                "Check GitHub Releases for new versions when Pixora starts",
+                                "Проверять наличие новых релизов на GitHub при запуске Pixora",
+                            ),
+                            self.config.auto_check_updates,
+                            cx.listener(|this, _, _, cx| {
+                                this.config.auto_check_updates = !this.config.auto_check_updates;
+                                cx.notify();
+                            }),
+                        ),
+                    )
+                    .child(div().h(px(1.0)).bg(rgb(0x282832)))
+                    .child(match &self.update_status {
+                        UpdateStatus::Idle => {
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_0p5()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .child(format!(
+                                                    "{} v{}",
+                                                    t(lang, "Current Version:", "Текущая версия:"),
+                                                    env!("CARGO_PKG_VERSION")
+                                                )),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0x8A8A99))
+                                                .child(t(
+                                                    lang,
+                                                    "Check GitHub Releases for updates",
+                                                    "Проверить наличие обновлений на GitHub",
+                                                )),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("btn-check-updates-idle")
+                                        .px_4()
+                                        .py_2()
+                                        .rounded_md()
+                                        .bg(rgb(0x8174FF))
+                                        .hover(|s| s.bg(rgb(0x9488FF)))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.check_for_updates(cx);
+                                        }))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                .text_color(rgb(0xFFFFFF))
+                                                .child(t(lang, "Check for Updates", "Проверить обновление")),
+                                        ),
+                                )
+                        }
+                        UpdateStatus::Checking => {
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_0p5()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(rgb(0x8174FF))
+                                                .child(t(lang, "Checking for updates...", "Проверка обновлений...")),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0x8A8A99))
+                                                .child(t(
+                                                    lang,
+                                                    "Connecting to GitHub Releases...",
+                                                    "Подключение к релизам GitHub...",
+                                                )),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .px_4()
+                                        .py_2()
+                                        .rounded_md()
+                                        .bg(rgb(0x282832))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(rgb(0x8A8A99))
+                                                .child(t(lang, "Checking...", "Проверка...")),
+                                        ),
+                                )
+                        }
+                        UpdateStatus::UpToDate { version } => {
+                            let ver_str = version.clone();
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_0p5()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                .text_color(rgb(0x34C759))
+                                                .child(t(lang, "Pixora is up to date", "У вас установлена последняя версия")),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0x8A8A99))
+                                                .child(format!(
+                                                    "{} v{}",
+                                                    t(lang, "Latest version installed:", "Установлена актуальная версия:"),
+                                                    ver_str
+                                                )),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("btn-check-updates-again")
+                                        .px_3()
+                                        .py_1p5()
+                                        .rounded_md()
+                                        .bg(rgb(0x282838))
+                                        .border_1()
+                                        .border_color(rgb(0x383848))
+                                        .hover(|s| s.bg(rgb(0x323242)))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.check_for_updates(cx);
+                                        }))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(rgb(0xA2A2B0))
+                                                .child(t(lang, "Check Again", "Проверить снова")),
+                                        ),
+                                )
+                        }
+                        UpdateStatus::Available { current, latest, release_url } => {
+                            let rel_url = release_url.clone();
+                            let cur_str = current.clone();
+                            let lat_str = latest.clone();
+                            div()
+                                .p_3p5()
+                                .rounded_md()
+                                .bg(rgb(0x221D38))
+                                .border_1()
+                                .border_color(rgb(0x8174FF))
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_color(rgb(0x8174FF))
+                                                .child(format!(
+                                                    "{} v{}",
+                                                    t(lang, "New Version Available:", "Доступно обновление:"),
+                                                    lat_str
+                                                )),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0xD0D0E0))
+                                                .child(format!(
+                                                    "{} v{} • {} v{}",
+                                                    t(lang, "Current:", "Текущая:"),
+                                                    cur_str,
+                                                    t(lang, "Latest:", "Новая:"),
+                                                    lat_str
+                                                )),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .id("btn-download-update")
+                                                .px_4()
+                                                .py_2()
+                                                .rounded_md()
+                                                .bg(rgb(0x8174FF))
+                                                .hover(|s| s.bg(rgb(0x9488FF)))
+                                                .cursor_pointer()
+                                                .on_click(cx.listener(move |_, _, _, _| {
+                                                    open_url(&rel_url);
+                                                }))
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                        .text_color(rgb(0xFFFFFF))
+                                                        .child(t(lang, "Open Release", "Открыть релиз")),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .id("btn-check-again-after-avail")
+                                                .px_3()
+                                                .py_2()
+                                                .rounded_md()
+                                                .bg(rgb(0x282838))
+                                                .hover(|s| s.bg(rgb(0x323242)))
+                                                .cursor_pointer()
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.check_for_updates(cx);
+                                                }))
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                                        .text_color(rgb(0xA2A2B0))
+                                                        .child(t(lang, "Check Again", "Проверить снова")),
+                                                ),
+                                        ),
+                                )
+                        }
+                        UpdateStatus::Error(err) => {
+                            let err_msg = err.clone();
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_0p5()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(rgb(0xFF453A))
+                                                .child(t(lang, "Update Check Failed", "Ошибка проверки обновлений")),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0x8A8A99))
+                                                .child(err_msg),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("btn-retry-update")
+                                        .px_3()
+                                        .py_1p5()
+                                        .rounded_md()
+                                        .bg(rgb(0x282838))
+                                        .border_1()
+                                        .border_color(rgb(0x383848))
+                                        .hover(|s| s.bg(rgb(0x323242)))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.check_for_updates(cx);
+                                        }))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(rgb(0xA2A2B0))
+                                                .child(t(lang, "Retry", "Повторить")),
+                                        ),
+                                )
+                        }
+                    }),
             )
+            // Privacy and features notice
             .child(
                 div()
                     .text_xs()
