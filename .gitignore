@@ -1,2 +1,4 @@
 /target
 pixora.exe
+config.json
+*.log

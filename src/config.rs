@@ -18,6 +18,26 @@ fn default_ocr_language() -> String {
     "auto".to_string()
 }
 
+fn default_stroke_width() -> f32 {
+    3.0
+}
+
+fn default_font_size() -> f32 {
+    18.0
+}
+
+fn default_blur_radius() -> u32 {
+    12
+}
+
+fn default_pixelate_block() -> u32 {
+    10
+}
+
+fn default_color_hex() -> String {
+    "#FF453A".to_string()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
@@ -30,9 +50,16 @@ pub struct AppConfig {
     pub show_magnifier: bool,
     pub magnifier_zoom: u32,
     pub run_at_startup: bool,
+    #[serde(default = "default_stroke_width")]
     pub default_stroke_width: f32,
+    #[serde(default = "default_color_hex")]
     pub default_color_hex: String,
+    #[serde(default = "default_font_size")]
     pub default_font_size: f32,
+    #[serde(default = "default_blur_radius")]
+    pub blur_radius: u32,
+    #[serde(default = "default_pixelate_block")]
+    pub pixelate_block: u32,
     pub sound_effects: bool,
     #[serde(default = "default_hotkey_region")]
     pub hotkey_region: String,
@@ -60,9 +87,11 @@ impl Default for AppConfig {
             show_magnifier: false,
             magnifier_zoom: 4,
             run_at_startup: false,
-            default_stroke_width: 3.0,
-            default_color_hex: "#FF453A".to_string(),
-            default_font_size: 18.0,
+            default_stroke_width: default_stroke_width(),
+            default_color_hex: default_color_hex(),
+            default_font_size: default_font_size(),
+            blur_radius: default_blur_radius(),
+            pixelate_block: default_pixelate_block(),
             sound_effects: true,
             hotkey_region: default_hotkey_region(),
             hotkey_fullscreen: default_hotkey_fullscreen(),
@@ -73,19 +102,51 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    pub fn config_path() -> PathBuf {
+    pub fn adjacent_config_path() -> Option<PathBuf> {
+        let exe = std::env::current_exe().ok()?;
+        let dir = exe.parent()?;
+        Some(dir.join("config.json"))
+    }
+
+    pub fn appdata_config_path() -> PathBuf {
         dirs::config_dir()
             .map(|p| p.join("Pixora").join("config.json"))
-            .unwrap_or_else(|| PathBuf::from("pixora_config.json"))
+            .unwrap_or_else(|| PathBuf::from("config.json"))
+    }
+
+    pub fn config_path() -> PathBuf {
+        if let Some(adj) = Self::adjacent_config_path() {
+            return adj;
+        }
+        Self::appdata_config_path()
     }
 
     pub fn load() -> Self {
-        let path = Self::config_path();
-        if let Ok(data) = std::fs::read_to_string(&path) {
-            if let Ok(config) = serde_json::from_str(&data) {
-                return config;
+        let adjacent_opt = Self::adjacent_config_path();
+        let appdata_path = Self::appdata_config_path();
+
+        // 1. Check if config.json exists next to exe
+        if let Some(ref adj) = adjacent_opt {
+            if adj.exists() {
+                if let Ok(data) = std::fs::read_to_string(adj) {
+                    if let Ok(config) = serde_json::from_str(&data) {
+                        return config;
+                    }
+                }
             }
         }
+
+        // 2. Migration fallback: check if config.json exists in AppData
+        if appdata_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&appdata_path) {
+                if let Ok(config) = serde_json::from_str::<AppConfig>(&data) {
+                    let _ = config.save();
+                    return config;
+                }
+            }
+        }
+
+        // 3. New default config
         let config = Self::default();
         let _ = config.save();
         config
@@ -97,7 +158,17 @@ impl AppConfig {
             let _ = std::fs::create_dir_all(parent);
         }
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, json)?;
+        std::fs::write(&path, &json)?;
+
+        // Also keep appdata in sync
+        let appdata = Self::appdata_config_path();
+        if path != appdata {
+            if let Some(parent) = appdata.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&appdata, &json);
+        }
+
         Ok(())
     }
 }

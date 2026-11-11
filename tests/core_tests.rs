@@ -14,11 +14,22 @@ fn test_config_defaults_and_serialization() {
     assert!(config.auto_copy_to_clipboard);
     assert!(config.show_dimensions);
     assert!(!config.show_magnifier);
+    assert_eq!(config.blur_radius, 12);
+    assert_eq!(config.pixelate_block, 10);
 
     let json = serde_json::to_string(&config).expect("Must serialize to JSON");
     let deserialized: AppConfig = serde_json::from_str(&json).expect("Must deserialize from JSON");
     assert_eq!(config.filename_prefix, deserialized.filename_prefix);
     assert_eq!(config.default_stroke_width, deserialized.default_stroke_width);
+    assert_eq!(config.blur_radius, deserialized.blur_radius);
+    assert_eq!(config.pixelate_block, deserialized.pixelate_block);
+    assert_eq!(config.default_font_size, deserialized.default_font_size);
+}
+
+#[test]
+fn test_config_adjacent_path() {
+    let path = AppConfig::config_path();
+    assert!(path.ends_with("config.json"));
 }
 
 #[test]

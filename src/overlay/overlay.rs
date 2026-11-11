@@ -45,6 +45,7 @@ pub enum NumericInputTarget {
     StrokeWidth,
     BlurRadius,
     PixelateBlock,
+    FontSize,
 }
 
 pub struct ScreenOverlayView {
@@ -128,6 +129,18 @@ impl ScreenOverlayView {
             }
         }
 
+        let initial_stroke_color = parse_hex_color(&config.default_color_hex).unwrap_or(rgb(0xFF453A));
+        let tool_props = ToolProperties {
+            stroke_color: initial_stroke_color,
+            stroke_width: config.default_stroke_width.clamp(1.0, 99.0),
+            font_size: config.default_font_size.clamp(10.0, 96.0),
+            blur_radius: config.blur_radius.clamp(2, 99),
+            pixelate_block: config.pixelate_block.clamp(2, 99),
+            is_filled: false,
+            current_badge_number: 1,
+        };
+        let custom_hex = config.default_color_hex.trim_start_matches('#').to_string();
+
         Self {
             capture,
             render_image,
@@ -138,7 +151,7 @@ impl ScreenOverlayView {
             drag_mode: SelectionDragMode::None,
 
             active_tool: ToolKind::Select,
-            tool_props: ToolProperties::default(),
+            tool_props,
             history: EditHistory::new(),
             current_drawing: None,
             drawing_start: None,
@@ -158,7 +171,7 @@ impl ScreenOverlayView {
             numeric_input_buffer: String::new(),
 
             show_color_palette: false,
-            custom_hex_input: "8174FF".to_string(),
+            custom_hex_input: custom_hex,
             hex_input_mode: false,
             current_toolbar_bounds: None,
             palette_drag_mode: PaletteDragMode::None,
@@ -180,6 +193,20 @@ impl ScreenOverlayView {
             self.hovered_tooltip = None;
         }
         cx.notify();
+    }
+
+    pub fn sync_and_save_tool_props(&mut self) {
+        self.config.default_stroke_width = self.tool_props.stroke_width;
+        self.config.blur_radius = self.tool_props.blur_radius;
+        self.config.pixelate_block = self.tool_props.pixelate_block;
+        self.config.default_font_size = self.tool_props.font_size;
+
+        let r = (self.tool_props.stroke_color.r * 255.0).round().clamp(0.0, 255.0) as u8;
+        let g = (self.tool_props.stroke_color.g * 255.0).round().clamp(0.0, 255.0) as u8;
+        let b = (self.tool_props.stroke_color.b * 255.0).round().clamp(0.0, 255.0) as u8;
+        self.config.default_color_hex = format!("#{:02X}{:02X}{:02X}", r, g, b);
+
+        let _ = self.config.save();
     }
 
     pub fn sync_picker_from_color(&mut self) {
@@ -210,6 +237,7 @@ impl ScreenOverlayView {
         let (r, g, b) = hsv_to_rgb(self.picker_hue, self.picker_sat, self.picker_val);
         self.tool_props.stroke_color = rgb(((r as u32) << 16) | ((g as u32) << 8) | (b as u32));
         self.custom_hex_input = format!("{:02X}{:02X}{:02X}", r, g, b);
+        self.sync_and_save_tool_props();
         cx.notify();
     }
 
@@ -417,6 +445,7 @@ impl ScreenOverlayView {
 
         self.tool_props.stroke_color = rgb(((r_u8 as u32) << 16) | ((g_u8 as u32) << 8) | (b_u8 as u32));
         self.custom_hex_input = format!("{:02X}{:02X}{:02X}", r_u8, g_u8, b_u8);
+        self.sync_and_save_tool_props();
         cx.notify();
     }
 
@@ -434,6 +463,7 @@ impl ScreenOverlayView {
 
         self.tool_props.stroke_color = rgb(((r as u32) << 16) | ((g as u32) << 8) | (b as u32));
         self.custom_hex_input = format!("{:02X}{:02X}{:02X}", r, g, b);
+        self.sync_and_save_tool_props();
         cx.notify();
     }
 
@@ -441,6 +471,7 @@ impl ScreenOverlayView {
         let (r, g, b) = hsv_to_rgb(hue, 1.0, 1.0);
         self.tool_props.stroke_color = rgb(((r as u32) << 16) | ((g as u32) << 8) | (b as u32));
         self.custom_hex_input = format!("{:02X}{:02X}{:02X}", r, g, b);
+        self.sync_and_save_tool_props();
         cx.notify();
     }
 
@@ -524,6 +555,7 @@ impl ScreenOverlayView {
             let hex = format!("#{:02X}{:02X}{:02X}", pixel[0], pixel[1], pixel[2]);
             self.tool_props.stroke_color = picked;
             self.custom_hex_input = format!("{:02X}{:02X}{:02X}", pixel[0], pixel[1], pixel[2]);
+            self.sync_and_save_tool_props();
             let lang = self.config.language.resolve();
             let _ = copy_text_to_clipboard(&hex);
             self.show_toast(format!("{} {}", t(lang, "Picked color:", "Цвет скопирован:"), hex), cx);
@@ -817,19 +849,51 @@ impl ScreenOverlayView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Adjust brush size via mouse wheel
         let delta = match ev.delta {
             gpui::ScrollDelta::Pixels(p) => f32::from(p.y),
             gpui::ScrollDelta::Lines(l) => l.y * 10.0,
         };
 
-        if delta > 0.0 {
-            self.tool_props.stroke_width = (self.tool_props.stroke_width + 1.0).min(48.0);
-            cx.notify();
-        } else if delta < 0.0 {
-            self.tool_props.stroke_width = (self.tool_props.stroke_width - 1.0).max(1.0);
-            cx.notify();
+        if delta == 0.0 {
+            return;
         }
+
+        let is_up = delta > 0.0;
+
+        match self.active_tool {
+            ToolKind::Blur => {
+                if is_up {
+                    self.tool_props.blur_radius = (self.tool_props.blur_radius + 2).min(99);
+                } else {
+                    self.tool_props.blur_radius = self.tool_props.blur_radius.saturating_sub(2).max(2);
+                }
+            }
+            ToolKind::Pixelate => {
+                if is_up {
+                    self.tool_props.pixelate_block = (self.tool_props.pixelate_block + 2).min(99);
+                } else {
+                    self.tool_props.pixelate_block = self.tool_props.pixelate_block.saturating_sub(2).max(2);
+                }
+            }
+            ToolKind::Text => {
+                if is_up {
+                    self.tool_props.font_size = (self.tool_props.font_size + 2.0).min(96.0);
+                } else {
+                    self.tool_props.font_size = (self.tool_props.font_size - 2.0).max(10.0);
+                }
+            }
+            _ => {
+                // Pencil, Marker, Arrow, Line, Rectangle, Ellipse, Select
+                if is_up {
+                    self.tool_props.stroke_width = (self.tool_props.stroke_width + 1.0).min(99.0);
+                } else {
+                    self.tool_props.stroke_width = (self.tool_props.stroke_width - 1.0).max(1.0);
+                }
+            }
+        }
+
+        self.sync_and_save_tool_props();
+        cx.notify();
     }
 
     pub fn handle_key_down(
@@ -840,7 +904,7 @@ impl ScreenOverlayView {
     ) {
         let key = ev.keystroke.key.as_str();
 
-        // 0. Handling Numeric px Input (for stroke width, blur, pixelate)
+        // 0. Handling Numeric px Input (for stroke width, blur, pixelate, font size)
         if let Some(target) = self.numeric_input_mode {
             if key == "enter" {
                 if let Ok(val) = self.numeric_input_buffer.parse::<u32>() {
@@ -854,7 +918,11 @@ impl ScreenOverlayView {
                         NumericInputTarget::PixelateBlock => {
                             self.tool_props.pixelate_block = val.clamp(2, 99);
                         }
+                        NumericInputTarget::FontSize => {
+                            self.tool_props.font_size = (val as f32).clamp(10.0, 96.0);
+                        }
                     }
+                    self.sync_and_save_tool_props();
                 }
                 self.numeric_input_mode = None;
                 self.numeric_input_buffer.clear();
@@ -1843,6 +1911,7 @@ impl Render for ScreenOverlayView {
                                         .cursor_pointer()
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.tool_props.blur_radius = this.tool_props.blur_radius.saturating_sub(2).max(2);
+                                            this.sync_and_save_tool_props();
                                             cx.notify();
                                         }))
                                         .child(svg().path("icons/minus.svg").size(px(12.0)).text_color(theme.text_secondary)),
@@ -1901,7 +1970,8 @@ impl Render for ScreenOverlayView {
                                         .hover(|s| s.bg(theme.bg_hover))
                                         .cursor_pointer()
                                         .on_click(cx.listener(|this, _, _, cx| {
-                                            this.tool_props.blur_radius = (this.tool_props.blur_radius + 2).min(48);
+                                            this.tool_props.blur_radius = (this.tool_props.blur_radius + 2).min(99);
+                                            this.sync_and_save_tool_props();
                                             cx.notify();
                                         }))
                                         .child(svg().path("icons/plus.svg").size(px(12.0)).text_color(theme.text_secondary)),
@@ -1911,18 +1981,22 @@ impl Render for ScreenOverlayView {
                         // Presets: 6px Soft, 12px Medium, 24px Strong, 36px Heavy
                         .child(render_blur_preset("preset-b-6".into(), t(lang, "6px Soft", "6px Мягкое"), self.tool_props.blur_radius == 6, cx.listener(|this, _, _, cx| {
                             this.tool_props.blur_radius = 6;
+                            this.sync_and_save_tool_props();
                             cx.notify();
                         })))
                         .child(render_blur_preset("preset-b-12".into(), t(lang, "12px Medium", "12px Среднее"), self.tool_props.blur_radius == 12, cx.listener(|this, _, _, cx| {
                             this.tool_props.blur_radius = 12;
+                            this.sync_and_save_tool_props();
                             cx.notify();
                         })))
                         .child(render_blur_preset("preset-b-24".into(), t(lang, "24px Strong", "24px Сильное"), self.tool_props.blur_radius == 24, cx.listener(|this, _, _, cx| {
                             this.tool_props.blur_radius = 24;
+                            this.sync_and_save_tool_props();
                             cx.notify();
                         })))
                         .child(render_blur_preset("preset-b-36".into(), t(lang, "36px Heavy", "36px Максимальное"), self.tool_props.blur_radius == 36, cx.listener(|this, _, _, cx| {
                             this.tool_props.blur_radius = 36;
+                            this.sync_and_save_tool_props();
                             cx.notify();
                         }))),
                 );
@@ -1973,6 +2047,7 @@ impl Render for ScreenOverlayView {
                                         .cursor_pointer()
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.tool_props.pixelate_block = this.tool_props.pixelate_block.saturating_sub(2).max(2);
+                                            this.sync_and_save_tool_props();
                                             cx.notify();
                                         }))
                                         .child(svg().path("icons/minus.svg").size(px(12.0)).text_color(theme.text_secondary)),
@@ -2031,7 +2106,8 @@ impl Render for ScreenOverlayView {
                                         .hover(|s| s.bg(theme.bg_hover))
                                         .cursor_pointer()
                                         .on_click(cx.listener(|this, _, _, cx| {
-                                            this.tool_props.pixelate_block = (this.tool_props.pixelate_block + 2).min(48);
+                                            this.tool_props.pixelate_block = (this.tool_props.pixelate_block + 2).min(99);
+                                            this.sync_and_save_tool_props();
                                             cx.notify();
                                         }))
                                         .child(svg().path("icons/plus.svg").size(px(12.0)).text_color(theme.text_secondary)),
@@ -2041,18 +2117,22 @@ impl Render for ScreenOverlayView {
                         // Presets: 6px Fine, 10px Medium, 16px Coarse, 24px Heavy
                         .child(render_blur_preset("preset-p-6".into(), t(lang, "6px Fine", "6px Мелкая"), self.tool_props.pixelate_block == 6, cx.listener(|this, _, _, cx| {
                             this.tool_props.pixelate_block = 6;
+                            this.sync_and_save_tool_props();
                             cx.notify();
                         })))
                         .child(render_blur_preset("preset-p-10".into(), t(lang, "10px Medium", "10px Средняя"), self.tool_props.pixelate_block == 10, cx.listener(|this, _, _, cx| {
                             this.tool_props.pixelate_block = 10;
+                            this.sync_and_save_tool_props();
                             cx.notify();
                         })))
                         .child(render_blur_preset("preset-p-16".into(), t(lang, "16px Coarse", "16px Крупная"), self.tool_props.pixelate_block == 16, cx.listener(|this, _, _, cx| {
                             this.tool_props.pixelate_block = 16;
+                            this.sync_and_save_tool_props();
                             cx.notify();
                         })))
                         .child(render_blur_preset("preset-p-24".into(), t(lang, "24px Heavy", "24px Максимальная"), self.tool_props.pixelate_block == 24, cx.listener(|this, _, _, cx| {
                             this.tool_props.pixelate_block = 24;
+                            this.sync_and_save_tool_props();
                             cx.notify();
                         }))),
                 );
@@ -2076,6 +2156,7 @@ impl Render for ScreenOverlayView {
                             current_color == theme.palette_red,
                             cx.listener(|this, _, _, cx| {
                                 this.tool_props.stroke_color = this.theme.palette_red;
+                                this.sync_and_save_tool_props();
                                 cx.notify();
                             }),
                         ))
@@ -2085,6 +2166,7 @@ impl Render for ScreenOverlayView {
                             current_color == theme.palette_orange,
                             cx.listener(|this, _, _, cx| {
                                 this.tool_props.stroke_color = this.theme.palette_orange;
+                                this.sync_and_save_tool_props();
                                 cx.notify();
                             }),
                         ))
@@ -2094,6 +2176,7 @@ impl Render for ScreenOverlayView {
                             current_color == theme.palette_yellow,
                             cx.listener(|this, _, _, cx| {
                                 this.tool_props.stroke_color = this.theme.palette_yellow;
+                                this.sync_and_save_tool_props();
                                 cx.notify();
                             }),
                         ))
@@ -2103,6 +2186,7 @@ impl Render for ScreenOverlayView {
                             current_color == theme.palette_green,
                             cx.listener(|this, _, _, cx| {
                                 this.tool_props.stroke_color = this.theme.palette_green;
+                                this.sync_and_save_tool_props();
                                 cx.notify();
                             }),
                         ))
@@ -2112,6 +2196,7 @@ impl Render for ScreenOverlayView {
                             current_color == theme.palette_cyan,
                             cx.listener(|this, _, _, cx| {
                                 this.tool_props.stroke_color = this.theme.palette_cyan;
+                                this.sync_and_save_tool_props();
                                 cx.notify();
                             }),
                         ))
@@ -2121,6 +2206,7 @@ impl Render for ScreenOverlayView {
                             current_color == theme.palette_blue,
                             cx.listener(|this, _, _, cx| {
                                 this.tool_props.stroke_color = this.theme.palette_blue;
+                                this.sync_and_save_tool_props();
                                 cx.notify();
                             }),
                         ))
@@ -2130,6 +2216,7 @@ impl Render for ScreenOverlayView {
                             current_color == theme.palette_purple,
                             cx.listener(|this, _, _, cx| {
                                 this.tool_props.stroke_color = this.theme.palette_purple;
+                                this.sync_and_save_tool_props();
                                 cx.notify();
                             }),
                         ))
@@ -2139,6 +2226,7 @@ impl Render for ScreenOverlayView {
                             current_color == theme.palette_white,
                             cx.listener(|this, _, _, cx| {
                                 this.tool_props.stroke_color = this.theme.palette_white;
+                                this.sync_and_save_tool_props();
                                 cx.notify();
                             }),
                         ))
@@ -2184,8 +2272,9 @@ impl Render for ScreenOverlayView {
                         )
                         .child(render_toolbar_divider(theme_ref))
                         // Dynamic Stroke Width Stepper: [-] [ 4px ] [+]
-                        .child(
-                            div()
+                        .when(active_tool != ToolKind::Text, |p| {
+                            p.child(
+                                div()
                                 .flex()
                                 .items_center()
                                 .gap_1()
@@ -2205,6 +2294,7 @@ impl Render for ScreenOverlayView {
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.tool_props.stroke_width =
                                                 (this.tool_props.stroke_width - 1.0).max(1.0);
+                                            this.sync_and_save_tool_props();
                                             cx.notify();
                                         }))
                                         .child(
@@ -2269,7 +2359,8 @@ impl Render for ScreenOverlayView {
                                         .cursor_pointer()
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.tool_props.stroke_width =
-                                                (this.tool_props.stroke_width + 1.0).min(48.0);
+                                                (this.tool_props.stroke_width + 1.0).min(99.0);
+                                            this.sync_and_save_tool_props();
                                             cx.notify();
                                         }))
                                         .child(
@@ -2279,7 +2370,8 @@ impl Render for ScreenOverlayView {
                                                 .text_color(theme.text_secondary),
                                         ),
                                 ),
-                        )
+                            )
+                        })
                         // Fill toggle for Rect & Ellipse
                         .when(active_tool == ToolKind::Rectangle || active_tool == ToolKind::Ellipse, |p| {
                             p.child(render_toolbar_divider(theme_ref)).child(
@@ -2317,13 +2409,93 @@ impl Render for ScreenOverlayView {
                                     ),
                             )
                         })
-                        // Font size for Text tool
+                        // Font size stepper and presets for Text tool
                         .when(active_tool == ToolKind::Text, |p| {
                             p.child(render_toolbar_divider(theme_ref)).child(
                                 div()
                                     .flex()
                                     .items_center()
                                     .gap_1()
+                                    .child(
+                                        div()
+                                            .id("btn-dec-font")
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .size(px(22.0))
+                                            .rounded_md()
+                                            .bg(theme.bg_secondary)
+                                            .border_1()
+                                            .border_color(theme.border_subtle)
+                                            .hover(|s| s.bg(theme.bg_hover))
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.tool_props.font_size = (this.tool_props.font_size - 2.0).max(10.0);
+                                                this.sync_and_save_tool_props();
+                                                cx.notify();
+                                            }))
+                                            .child(svg().path("icons/minus.svg").size(px(12.0)).text_color(theme.text_secondary)),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("font-size-display")
+                                            .px_2()
+                                            .py_0p5()
+                                            .min_w(px(40.0))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded_md()
+                                            .bg(if self.numeric_input_mode == Some(NumericInputTarget::FontSize) {
+                                                rgba(0x8174FF33)
+                                            } else {
+                                                theme.bg_secondary
+                                            })
+                                            .border_1()
+                                            .border_color(if self.numeric_input_mode == Some(NumericInputTarget::FontSize) {
+                                                theme.accent
+                                            } else {
+                                                theme.border_subtle
+                                            })
+                                            .hover(|s| s.border_color(theme.border_focus))
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.numeric_input_mode = Some(NumericInputTarget::FontSize);
+                                                this.numeric_input_buffer = (this.tool_props.font_size as u32).to_string();
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .text_color(theme.text_primary)
+                                                    .child(if self.numeric_input_mode == Some(NumericInputTarget::FontSize) {
+                                                        format!("{}▏", self.numeric_input_buffer)
+                                                    } else {
+                                                        format!("{}px", self.tool_props.font_size as u32)
+                                                    }),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("btn-inc-font")
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .size(px(22.0))
+                                            .rounded_md()
+                                            .bg(theme.bg_secondary)
+                                            .border_1()
+                                            .border_color(theme.border_subtle)
+                                            .hover(|s| s.bg(theme.bg_hover))
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.tool_props.font_size = (this.tool_props.font_size + 2.0).min(96.0);
+                                                this.sync_and_save_tool_props();
+                                                cx.notify();
+                                            }))
+                                            .child(svg().path("icons/plus.svg").size(px(12.0)).text_color(theme.text_secondary)),
+                                    )
                                     .child(
                                         div()
                                             .id("font-14px")
@@ -2344,6 +2516,7 @@ impl Render for ScreenOverlayView {
                                             .cursor_pointer()
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.tool_props.font_size = 14.0;
+                                                this.sync_and_save_tool_props();
                                                 cx.notify();
                                             }))
                                             .child(div().text_xs().text_color(theme.text_primary).child("14")),
@@ -2368,6 +2541,7 @@ impl Render for ScreenOverlayView {
                                             .cursor_pointer()
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.tool_props.font_size = 18.0;
+                                                this.sync_and_save_tool_props();
                                                 cx.notify();
                                             }))
                                             .child(div().text_xs().text_color(theme.text_primary).child("18")),
@@ -2392,6 +2566,7 @@ impl Render for ScreenOverlayView {
                                             .cursor_pointer()
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.tool_props.font_size = 24.0;
+                                                this.sync_and_save_tool_props();
                                                 cx.notify();
                                             }))
                                             .child(div().text_xs().text_color(theme.text_primary).child("24")),
