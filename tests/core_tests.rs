@@ -432,6 +432,54 @@ fn test_blur_and_pixelate_undo_redo_pixel_restoration() {
     );
 }
 
+#[test]
+fn test_ocr_recognition_with_hybrid_engine() {
+    use pixora::ocr::recognition::recognize_text_from_image;
+
+    let test_img_path = "C:/Users/Admin/.gemini/antigravity/brain/0a21d654-ba7d-4227-96a2-37fa85f98aba/.user_uploaded/media_1794385840467_034bea47.png";
+    if let Ok(dyn_img) = image::open(test_img_path) {
+        let rgba = dyn_img.to_rgba8();
+        let sub = image::imageops::crop_imm(&rgba, 35, 55, 950, 260).to_image();
+
+        let ocr_res = recognize_text_from_image(&sub, Some("auto")).expect("OCR must succeed");
+        println!("\nRecognized text:\n{}", ocr_res.full_text);
+
+        // Must recognize authentic Russian words, NOT English transliterated gibberish
+        assert!(
+            ocr_res.full_text.contains("студия"),
+            "OCR must recognize 'студия', instead of gibberish"
+        );
+        assert!(
+            ocr_res.full_text.contains("создания"),
+            "OCR must recognize 'создания', instead of 'c03AaHHR'"
+        );
+        assert!(
+            ocr_res.full_text.contains("скриншотов"),
+            "OCR must recognize 'скриншотов', instead of 'CKPMHWOTOB'"
+        );
+        assert!(
+            ocr_res.full_text.contains("Windows"),
+            "OCR must preserve English technical terms like 'Windows'"
+        );
+        assert!(
+            !ocr_res.full_text.contains("CKPMHWOTOB"),
+            "OCR must not contain pseudo-Latin transliteration 'CKPMHWOTOB'"
+        );
+        assert!(
+            !ocr_res.full_text.contains("CTYA\"R"),
+            "OCR must not contain pseudo-Latin transliteration 'CTYA\"R'"
+        );
+    }
+}
+
+#[test]
+fn test_ocr_on_empty_image_returns_error() {
+    use pixora::ocr::recognition::recognize_text_from_image;
+    let empty = image::RgbaImage::new(0, 0);
+    assert!(recognize_text_from_image(&empty, None).is_err());
+}
+
+
 
 
 

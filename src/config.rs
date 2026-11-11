@@ -14,6 +14,10 @@ fn default_hotkey_window() -> String {
     "Alt + PrintScreen".to_string()
 }
 
+fn default_ocr_language() -> String {
+    "auto".to_string()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
@@ -36,6 +40,8 @@ pub struct AppConfig {
     pub hotkey_fullscreen: String,
     #[serde(default = "default_hotkey_window")]
     pub hotkey_window: String,
+    #[serde(default = "default_ocr_language")]
+    pub ocr_language: String,
 }
 
 impl Default for AppConfig {
@@ -61,6 +67,7 @@ impl Default for AppConfig {
             hotkey_region: default_hotkey_region(),
             hotkey_fullscreen: default_hotkey_fullscreen(),
             hotkey_window: default_hotkey_window(),
+            ocr_language: default_ocr_language(),
         }
     }
 }

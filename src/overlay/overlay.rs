@@ -340,17 +340,19 @@ impl ScreenOverlayView {
 
     pub fn do_ocr(&mut self, cx: &mut Context<Self>) {
         let lang = self.config.language.resolve();
+        let ocr_pref = self.config.ocr_language.clone();
         if let Some(img) = self.prepare_final_image() {
             self.is_ocr_running = true;
             cx.notify();
 
-            match recognize_text_from_image(&img) {
+            match recognize_text_from_image(&img, Some(&ocr_pref)) {
                 Ok(output) => {
                     if output.full_text.trim().is_empty() {
                         self.show_toast(t(lang, "No text found in selected area", "Текст в выбранной области не найден"), cx);
                     } else {
                         let _ = copy_text_to_clipboard(&output.full_text);
-                        let preview: String = output.full_text.chars().take(28).collect();
+                        let first_line = output.full_text.lines().next().unwrap_or(&output.full_text);
+                        let preview: String = first_line.chars().take(28).collect();
                         self.show_toast(format!("{}: \"{}...\"", t(lang, "OCR copied", "Текст скопирован"), preview), cx);
                     }
                 }

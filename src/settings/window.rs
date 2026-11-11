@@ -550,6 +550,62 @@ impl SettingsWindowView {
                         div()
                             .text_sm()
                             .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(t(lang, "OCR Recognition Language", "Язык распознавания текста (OCR)")),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0x8A8A99))
+                            .child(t(
+                                lang,
+                                "Windows OCR model for text extraction (supports hybrid bilingual RU+EN refinement)",
+                                "Модель Windows OCR для извлечения текста (поддерживает гибридный режим RU+EN)",
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .pt_1()
+                            .child(render_size_chip(
+                                "chip-ocr-auto",
+                                t(lang, "Auto", "Авто (RU + EN)"),
+                                self.config.ocr_language == "auto",
+                                cx.listener(|this, _, _, cx| {
+                                    this.config.ocr_language = "auto".to_string();
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(render_size_chip(
+                                "chip-ocr-ru",
+                                "Русский",
+                                self.config.ocr_language == "ru",
+                                cx.listener(|this, _, _, cx| {
+                                    this.config.ocr_language = "ru".to_string();
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(render_size_chip(
+                                "chip-ocr-en",
+                                "English",
+                                self.config.ocr_language == "en",
+                                cx.listener(|this, _, _, cx| {
+                                    this.config.ocr_language = "en".to_string();
+                                    cx.notify();
+                                }),
+                            )),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1p5()
+                    .pt_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::MEDIUM)
                             .child(t(lang, "Default Stroke Width", "Толщина линий по умолчанию")),
                     )
                     .child(
