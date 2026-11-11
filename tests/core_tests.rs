@@ -571,7 +571,7 @@ fn test_github_release_checking() {
     let res = check_latest_release();
     assert!(res.is_ok(), "check_latest_release should succeed: {:?}", res.err());
     let info = res.unwrap();
-    assert_eq!(info.current_version, "0.14.0");
+    assert_eq!(info.current_version, env!("CARGO_PKG_VERSION"));
     assert!(!info.latest_version.is_empty());
     assert!(info.release_url.contains("github.com/Onzis/Pixora/releases"));
 }
