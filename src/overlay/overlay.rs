@@ -23,7 +23,7 @@ use crate::image::clipboard::{copy_image_to_clipboard, copy_text_to_clipboard};
 use crate::image::export::auto_save_screenshot;
 use crate::ocr::recognition::recognize_text_from_image;
 use crate::overlay::magnifier::{MagnifierInfo, render_magnifier};
-use crate::overlay::selection::{SelectionDragMode, SelectionState};
+use crate::overlay::selection::{ResizeHandle, SelectionDragMode, SelectionState};
 use crate::overlay::toolbar::{
     HoveredTooltip, TOOLBAR_MAIN_HEIGHT, TOOLBAR_TOTAL_HEIGHT, TOOLBAR_WIDTH,
     calculate_toolbar_position, generate_gradient_bitmap, generate_hue_strip_bitmap, hsv_to_rgb,
@@ -490,15 +490,24 @@ impl ScreenOverlayView {
         let px_f = f32::from(p.x);
         let py_f = f32::from(p.y);
 
-        // Ignore clicks on floating toolbar / property sub-bar / color palette
+        // 1. Selection resize handles ALWAYS take top priority!
+        // When clicking on or near any of the 8 handles (radius 12px), enter Resizing mode immediately.
+        if self.selection.is_active {
+            if let Some(handle) = self.selection.hit_test_handle(p, px(12.0)) {
+                self.drag_mode = SelectionDragMode::Resizing {
+                    handle,
+                    start_mouse: p,
+                    orig_bounds: self.selection.bounds,
+                };
+                cx.notify();
+                return;
+            }
+        }
+
+        // 2. Ignore clicks on floating toolbar / property sub-bar / color palette
         if self.selection.is_active {
             if let Some(tb) = self.current_toolbar_bounds {
-                let pad = px(12.0);
-                let safe_box = Bounds {
-                    origin: point(tb.origin.x - pad, tb.origin.y - pad),
-                    size: size(tb.size.width + pad * 2.0, tb.size.height + pad * 2.0),
-                };
-                if safe_box.contains(&p) {
+                if tb.contains(&p) {
                     if self.show_color_palette {
                         if let Some(gb) = self.gradient_field_bounds {
                             if gb.contains(&p) {
@@ -667,18 +676,7 @@ impl ScreenOverlayView {
             return;
         }
 
-        // 6. Select tool: check handles for resizing
-        if let Some(handle) = self.selection.hit_test_handle(p, px(10.0)) {
-            self.drag_mode = SelectionDragMode::Resizing {
-                handle,
-                start_mouse: p,
-                orig_bounds: self.selection.bounds,
-            };
-            cx.notify();
-            return;
-        }
-
-        // 7. Select tool: move existing selection
+        // 6. Select tool: move existing selection
         if self.selection.contains(p) {
             self.drag_mode = SelectionDragMode::Moving {
                 start_mouse: p,
@@ -688,7 +686,7 @@ impl ScreenOverlayView {
             return;
         }
 
-        // 8. Select tool: create new selection
+        // 7. Select tool: create new selection
         self.drag_mode = SelectionDragMode::Creating { start: p };
         self.selection = SelectionState::new(px_f, py_f, 0.0, 0.0);
         cx.notify();
@@ -1109,12 +1107,18 @@ impl Render for ScreenOverlayView {
         let current_drawing = self.current_drawing.clone();
 
         // Determine cursor style
+        // Determine cursor style with dedicated bidirectional resize cursors
         let cursor_style = if self.active_tool == ToolKind::Text {
             CursorStyle::IBeam
-        } else if self.active_tool == ToolKind::Select && selection.is_active {
-            if selection.hit_test_handle(self.cursor_pos, px(10.0)).is_some() {
-                CursorStyle::Crosshair
-            } else if selection.contains(self.cursor_pos) {
+        } else if selection.is_active {
+            if let Some(handle) = selection.hit_test_handle(self.cursor_pos, px(12.0)) {
+                match handle {
+                    ResizeHandle::Top | ResizeHandle::Bottom => CursorStyle::ResizeUpDown,
+                    ResizeHandle::Left | ResizeHandle::Right => CursorStyle::ResizeLeftRight,
+                    ResizeHandle::TopLeft | ResizeHandle::BottomRight => CursorStyle::ResizeUpLeftDownRight,
+                    ResizeHandle::TopRight | ResizeHandle::BottomLeft => CursorStyle::ResizeUpRightDownLeft,
+                }
+            } else if self.active_tool == ToolKind::Select && selection.contains(self.cursor_pos) {
                 CursorStyle::ClosedHand
             } else {
                 CursorStyle::Crosshair

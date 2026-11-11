@@ -63,6 +63,33 @@ fn test_selection_normalization_and_handles() {
     // Hit test bottom-right handle
     let handle_br = sel.hit_test_handle(point(px(200.0), px(300.0)), px(8.0));
     assert_eq!(handle_br, Some(ResizeHandle::BottomRight));
+
+    // Hit test bottom-center handle
+    let handle_b = sel.hit_test_handle(point(px(150.0), px(300.0)), px(8.0));
+    assert_eq!(handle_b, Some(ResizeHandle::Bottom));
+
+    // Hit test bottom-left handle
+    let handle_bl = sel.hit_test_handle(point(px(100.0), px(300.0)), px(8.0));
+    assert_eq!(handle_bl, Some(ResizeHandle::BottomLeft));
+
+    // Test dragging bottom handle downwards by 20px
+    let mut sel_mut = sel;
+    sel_mut.update_resize(ResizeHandle::Bottom, sel.bounds, point(px(0.0), px(20.0)));
+    assert_eq!(sel_mut.height(), 70.0);
+    assert_eq!(sel_mut.width(), 100.0);
+
+    // Test dragging bottom-right handle by (+15px, +25px)
+    sel_mut = sel;
+    sel_mut.update_resize(ResizeHandle::BottomRight, sel.bounds, point(px(15.0), px(25.0)));
+    assert_eq!(sel_mut.width(), 115.0);
+    assert_eq!(sel_mut.height(), 75.0);
+
+    // Test dragging bottom-left handle by (-10px, +30px)
+    sel_mut = sel;
+    sel_mut.update_resize(ResizeHandle::BottomLeft, sel.bounds, point(px(-10.0), px(30.0)));
+    assert_eq!(sel_mut.x(), 90.0);
+    assert_eq!(sel_mut.width(), 110.0);
+    assert_eq!(sel_mut.height(), 80.0);
 }
 
 #[test]

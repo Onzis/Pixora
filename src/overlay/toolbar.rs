@@ -121,7 +121,7 @@ pub fn calculate_toolbar_position(
     bar_width: f32,
     bar_height: f32,
 ) -> Point<Pixels> {
-    let margin = 10.0;
+    let margin = 14.0;
     let sel_x = f32::from(selection.origin.x);
     let sel_y = f32::from(selection.origin.y);
     let sel_w = f32::from(selection.size.width);
