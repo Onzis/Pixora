@@ -429,15 +429,49 @@ impl SettingsWindowView {
                 t(lang, "Sound effects", "Звуковые эффекты"),
                 t(
                     lang,
-                    "Play subtle camera shutter audio tone upon successful capture",
-                    "Воспроизводить щелчок затвора при успешном создании снимка",
+                    "Play camera shutter sound upon capture (ScreenFX)",
+                    "Воспроизводить щелчок затвора при создании снимка (ScreenFX)",
                 ),
                 self.config.sound_effects,
                 cx.listener(|this, _, _, cx| {
                     this.config.sound_effects = !this.config.sound_effects;
+                    if this.config.sound_effects {
+                        crate::system::sound::play_capture_sound();
+                    }
                     cx.notify();
                 }),
             ))
+            .when(self.config.sound_effects, |p| {
+                p.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .pb_1()
+                        .child(
+                            div()
+                                .id("btn-test-sound")
+                                .px_2p5()
+                                .py_1()
+                                .rounded_md()
+                                .bg(theme.bg_secondary)
+                                .border_1()
+                                .border_color(theme.border_subtle)
+                                .hover(|s| s.bg(theme.bg_hover))
+                                .cursor_pointer()
+                                .on_click(cx.listener(|_, _, _, _| {
+                                    crate::system::sound::play_capture_sound();
+                                }))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(theme.text_secondary)
+                                        .child(t(lang, "Play test sound", "Прослушать звук")),
+                                ),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex()

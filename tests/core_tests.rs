@@ -33,6 +33,15 @@ fn test_config_adjacent_path() {
 }
 
 #[test]
+fn test_sound_file_resolution_and_extraction() {
+    use pixora::system::sound::get_or_extract_sound_path;
+    let path = get_or_extract_sound_path().expect("Sound path must be resolved or extracted");
+    assert!(path.exists(), "Resolved sound file must exist on disk");
+    let meta = std::fs::metadata(&path).expect("Metadata must be readable");
+    assert!(meta.len() > 0, "Sound file must not be empty");
+}
+
+#[test]
 fn test_selection_normalization_and_handles() {
     // Normalization of inverted drag (dragging up-left)
     let sel = SelectionState::new(200.0, 300.0, -100.0, -50.0);

@@ -70,25 +70,4 @@ pub fn get_window_under_cursor_rect() -> Option<PhysicalRect> {
     }
 }
 
-#[cfg(windows)]
-pub fn play_capture_sound() {
-    unsafe {
-        unsafe extern "system" {
-            fn MessageBeep(uType: u32) -> i32;
-        }
-        let _ = MessageBeep(0);
-    }
-}
-
-#[cfg(not(windows))]
-pub fn get_active_window_rect() -> Option<PhysicalRect> {
-    None
-}
-
-#[cfg(not(windows))]
-pub fn get_window_under_cursor_rect() -> Option<PhysicalRect> {
-    None
-}
-
-#[cfg(not(windows))]
-pub fn play_capture_sound() {}
+pub use crate::system::sound::play_capture_sound;
