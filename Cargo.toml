@@ -7,6 +7,14 @@ description = "Pixora - Screen Capture & Annotation"
 license = "Apache-2.0"
 build = "build.rs"
 
+[lib]
+name = "pixora"
+path = "src/lib.rs"
+
+[[bin]]
+name = "Pixora"
+path = "src/main.rs"
+
 [dependencies]
 gpui = "0.2.2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

@@ -157,7 +157,7 @@ cargo build --release
 
 The resulting standalone executable is generated at:
 ```text
-target/release/pixora.exe
+target/release/Pixora.exe
 ```
 
 ---

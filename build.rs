@@ -38,9 +38,9 @@ BEGIN
             VALUE "CompanyName", "Onzi"
             VALUE "FileDescription", "Pixora Screen Capture"
             VALUE "FileVersion", "{major}.{minor}.{patch}.0"
-            VALUE "InternalName", "pixora.exe"
+            VALUE "InternalName", "Pixora.exe"
             VALUE "LegalCopyright", "Copyright (c) 2026 Onzi"
-            VALUE "OriginalFilename", "pixora.exe"
+            VALUE "OriginalFilename", "Pixora.exe"
             VALUE "ProductName", "Pixora"
             VALUE "ProductVersion", "{version}"
         END
@@ -49,9 +49,9 @@ BEGIN
             VALUE "CompanyName", "Onzi"
             VALUE "FileDescription", "Pixora Screen Capture"
             VALUE "FileVersion", "{major}.{minor}.{patch}.0"
-            VALUE "InternalName", "pixora.exe"
+            VALUE "InternalName", "Pixora.exe"
             VALUE "LegalCopyright", "Copyright (c) 2026 Onzi"
-            VALUE "OriginalFilename", "pixora.exe"
+            VALUE "OriginalFilename", "Pixora.exe"
             VALUE "ProductName", "Pixora"
             VALUE "ProductVersion", "{version}"
         END

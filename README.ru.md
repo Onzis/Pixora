@@ -157,7 +157,7 @@ cargo build --release
 
 Готовый бинарный файл создается по пути:
 ```text
-target/release/pixora.exe
+target/release/Pixora.exe
 ```
 
 ---
