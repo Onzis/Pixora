@@ -580,10 +580,10 @@ fn test_version_parsing_and_comparison() {
     assert_eq!(parse_version_tuple("0.14.0"), vec![0, 14, 0]);
     assert_eq!(parse_version_tuple("v0.14.0"), vec![0, 14, 0]);
     assert_eq!(parse_version_tuple("V1.2.3.4"), vec![1, 2, 3, 4]);
-    assert_eq!(parse_version_tuple("v0.16.0-alpha"), vec![0, 16, 0]);
+    assert_eq!(parse_version_tuple("v0.17.0-alpha"), vec![0, 17, 0]);
 
     assert!(is_newer_version("0.14.0", "0.14.1"));
-    assert!(is_newer_version("0.14.0", "0.16.0"));
+    assert!(is_newer_version("0.14.0", "0.17.0"));
     assert!(is_newer_version("0.14.0", "1.0.0"));
     assert!(is_newer_version("0.14.0", "v0.14.1"));
 
