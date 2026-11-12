@@ -1630,16 +1630,15 @@ impl Render for ScreenOverlayView {
                 );
 
                 // 2. Window info pill badge (Window name + Dimensions + Click to snap hint)
-                let badge_w = 480.0;
-                let badge_x = (f32::from(wb.origin.x) + (f32::from(wb.size.width) - badge_w) / 2.0)
-                    .clamp(16.0, (scr_w - badge_w - 16.0).max(16.0));
-                let badge_y = (f32::from(wb.origin.y) + 16.0)
-                    .clamp(16.0, (scr_h - 48.0).max(16.0));
+                let badge_w = 520.0;
+                let win_cx = f32::from(wb.origin.x) + f32::from(wb.size.width) / 2.0;
+                let badge_x = (win_cx - badge_w / 2.0).clamp(16.0, (scr_w - badge_w - 16.0).max(16.0));
+                let badge_y = (f32::from(wb.origin.y) + 16.0).clamp(16.0, (scr_h - 48.0).max(16.0));
 
                 let win_title = if !win.title.trim().is_empty() {
                     let mut s = win.title.trim().to_string();
-                    if s.chars().count() > 28 {
-                        s = s.chars().take(26).collect::<String>() + "…";
+                    if s.chars().count() > 24 {
+                        s = s.chars().take(22).collect::<String>() + "…";
                     }
                     format!("{} • ", s)
                 } else {
@@ -1649,79 +1648,104 @@ impl Render for ScreenOverlayView {
                 let dim_text = format!("{} × {}", f32::from(wb.size.width) as u32, f32::from(wb.size.height) as u32);
                 let hint_text = t(
                     lang,
-                    "Click to select window  •  Drag for custom area",
-                    "Клик — выбрать окно  •  Перетащите — область",
+                    "Click to select window",
+                    "Клик — выбрать окно",
                 );
 
                 root = root.child(
                     div()
                         .absolute()
-                        .left(px(badge_x))
                         .top(px(badge_y))
+                        .left(px(badge_x))
                         .w(px(badge_w))
-                        .py_2()
-                        .px_4()
-                        .rounded_full()
-                        .bg(rgba(0x131317FA))
-                        .border_1()
-                        .border_color(rgba(0x8174FFA0))
-                        .shadow_2xl()
                         .flex()
-                        .items_center()
-                        .justify_between()
+                        .justify_center()
                         .child(
                             div()
+                                .py_1p5()
+                                .px_4()
+                                .rounded_full()
+                                .bg(rgba(0x131317FA))
+                                .border_1()
+                                .border_color(rgba(0x8174FFA0))
+                                .shadow_2xl()
                                 .flex()
                                 .items_center()
-                                .gap_2()
+                                .gap_2p5()
+                                .flex_shrink_0()
                                 .child(
                                     svg()
                                         .path("icons/window.svg")
                                         .size_3p5()
-                                        .text_color(rgb(0x8174FF)),
+                                        .text_color(rgb(0x8174FF))
+                                        .flex_shrink_0(),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_1()
+                                        .flex_shrink_0()
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                .text_color(rgb(0xF2F2F5))
+                                                .child(win_title),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(rgb(0x9D8CFF))
+                                                .child(dim_text),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .w(px(1.0))
+                                        .h(px(12.0))
+                                        .bg(rgba(0xFFFFFF30))
+                                        .flex_shrink_0(),
                                 )
                                 .child(
                                     div()
                                         .text_xs()
-                                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                                        .text_color(rgb(0xF2F2F5))
-                                        .child(format!("{}{}", win_title, dim_text)),
+                                        .text_color(rgb(0xA2A2B0))
+                                        .flex_shrink_0()
+                                        .child(hint_text),
                                 ),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(0xA2A2B0))
-                                .child(hint_text),
                         ),
                 );
             } else {
                 root = root.child(
                     div()
                         .absolute()
-                        .left(px((scr_w - 420.0) / 2.0))
                         .top(px((scr_h - 44.0) / 2.0))
-                        .w(px(420.0))
-                        .py_2()
-                        .px_4()
-                        .rounded_full()
-                        .bg(rgba(0x151519F0))
-                        .border_1()
-                        .border_color(rgba(0xFFFFFF20))
-                        .shadow_2xl()
+                        .left(px(0.0))
+                        .w(screen_bounds.size.width)
                         .flex()
-                        .items_center()
                         .justify_center()
                         .child(
                             div()
-                                .text_xs()
-                                .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(rgb(0xD0D0D8))
-                                .child(t(
-                                    lang,
-                                    "Drag to select area  •  Space for fullscreen  •  Esc to cancel",
-                                    "Выделите область  •  Пробел — весь экран  •  Esc — отмена",
-                                )),
+                                .py_2()
+                                .px_5()
+                                .rounded_full()
+                                .bg(rgba(0x151519F0))
+                                .border_1()
+                                .border_color(rgba(0xFFFFFF20))
+                                .shadow_2xl()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(rgb(0xD0D0D8))
+                                        .child(t(
+                                            lang,
+                                            "Drag to select area  •  Space for fullscreen  •  Esc to cancel",
+                                            "Выделите область  •  Пробел — весь экран  •  Esc — отмена",
+                                        )),
+                                ),
                         ),
                 );
             }
