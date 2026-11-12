@@ -13,7 +13,7 @@ use smallvec::smallvec;
 use crate::capture::region::crop_region;
 use crate::capture::screen::ScreenCapture;
 use crate::config::AppConfig;
-use crate::editor::annotations::Annotation;
+use crate::editor::annotations::{Annotation, calculate_arrow_geometry};
 use crate::editor::canvas::render_annotations_to_image;
 use crate::editor::history::EditHistory;
 use crate::editor::properties::ToolProperties;
@@ -1257,30 +1257,24 @@ impl Render for ScreenOverlayView {
                             }
                         }
                         Annotation::Arrow { from, to, color, width } => {
+                            let geom = calculate_arrow_geometry(
+                                (f32::from(from.x), f32::from(from.y)),
+                                (f32::from(to.x), f32::from(to.y)),
+                                *width,
+                            );
+
                             let mut pb = PathBuilder::stroke(px(*width));
-                            pb.move_to(*from);
-                            pb.line_to(*to);
+                            pb.move_to(point(px(geom.shaft_from.0), px(geom.shaft_from.1)));
+                            pb.line_to(point(px(geom.shaft_to.0), px(geom.shaft_to.1)));
                             if let Ok(p) = pb.build() {
                                 window.paint_path(p, *color);
                             }
 
-                            let dx = f32::from(to.x) - f32::from(from.x);
-                            let dy = f32::from(to.y) - f32::from(from.y);
-                            let len = (dx * dx + dy * dy).sqrt();
-                            if len > 5.0 {
-                                let head_len = (*width * 3.5).clamp(12.0, 24.0);
-                                let angle = dy.atan2(dx);
-                                let arrow_angle = 0.5;
-
-                                let ax1 = f32::from(to.x) - head_len * (angle - arrow_angle).cos();
-                                let ay1 = f32::from(to.y) - head_len * (angle - arrow_angle).sin();
-                                let ax2 = f32::from(to.x) - head_len * (angle + arrow_angle).cos();
-                                let ay2 = f32::from(to.y) - head_len * (angle + arrow_angle).sin();
-
+                            if geom.has_head {
                                 let mut head_b = PathBuilder::fill();
-                                head_b.move_to(*to);
-                                head_b.line_to(point(px(ax1), px(ay1)));
-                                head_b.line_to(point(px(ax2), px(ay2)));
+                                head_b.move_to(point(px(geom.tip.0), px(geom.tip.1)));
+                                head_b.line_to(point(px(geom.left_wing.0), px(geom.left_wing.1)));
+                                head_b.line_to(point(px(geom.right_wing.0), px(geom.right_wing.1)));
                                 head_b.close();
                                 if let Ok(hp) = head_b.build() {
                                     window.paint_path(hp, *color);

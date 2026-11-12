@@ -611,6 +611,83 @@ fn test_settings_window_tracking() {
     clear_settings_window_handle();
 }
 
+#[test]
+fn test_arrow_geometry_scaling_and_proportions() {
+    use pixora::editor::annotations::calculate_arrow_geometry;
+
+    // Test across various stroke widths from 1px to 60px
+    for width in [1.0, 2.0, 4.0, 8.0, 16.0, 24.0, 40.0, 60.0] {
+        let from = (100.0, 100.0);
+        let to = (300.0, 100.0);
+        let geom = calculate_arrow_geometry(from, to, width);
+
+        assert!(geom.has_head, "Arrow of length 200 must have an arrowhead");
+
+        // Tip must be exactly at target 'to'
+        assert_eq!(geom.tip, to);
+
+        // Arrowhead base width (distance between wings) must be strictly wider than shaft thickness
+        let wing_w = (geom.left_wing.1 - geom.right_wing.1).abs();
+        assert!(
+            wing_w > width * 1.5,
+            "For width {}, wing width {} must be > 1.5 * width",
+            width,
+            wing_w
+        );
+
+        // Shaft must end before the tip (never poke past the tip)
+        assert!(
+            geom.shaft_to.0 < geom.tip.0,
+            "Shaft end {} must be strictly before tip {}",
+            geom.shaft_to.0,
+            geom.tip.0
+        );
+
+        // Shaft must extend into the arrowhead base so there is no gap
+        let base_x = (geom.left_wing.0 + geom.right_wing.0) / 2.0;
+        assert!(
+            geom.shaft_to.0 >= base_x,
+            "Shaft end {} must enter arrowhead base {}",
+            geom.shaft_to.0,
+            base_x
+        );
+    }
+
+    // Short arrow test
+    let short_geom = calculate_arrow_geometry((0.0, 0.0), (20.0, 0.0), 10.0);
+    assert!(short_geom.has_head);
+    assert!(short_geom.shaft_to.0 <= short_geom.tip.0);
+    assert!(short_geom.shaft_from.0 <= short_geom.shaft_to.0);
+}
+
+#[test]
+fn test_arrow_render_to_image_at_thick_stroke() {
+    use pixora::editor::annotations::Annotation;
+    use pixora::editor::canvas::render_annotations_to_image;
+
+    let mut img = image::RgbaImage::new(400, 400);
+
+    // Thick 30px arrow
+    let annotations = vec![
+        Annotation::Arrow {
+            from: gpui::point(gpui::px(50.0), gpui::px(200.0)),
+            to: gpui::point(gpui::px(350.0), gpui::px(200.0)),
+            color: gpui::rgb(0xFF453A),
+            width: 30.0,
+        },
+    ];
+
+    render_annotations_to_image(&mut img, &annotations, 0.0, 0.0);
+
+    // Verify tip pixel at (349, 200) is painted
+    let tip_pixel = img.get_pixel(349, 200);
+    assert!(tip_pixel[3] > 0, "Tip pixel should be painted");
+
+    // Verify pixels beyond the tip (e.g. 365, 200) are NOT painted (shaft did not poke through)
+    let beyond_tip = img.get_pixel(365, 200);
+    assert_eq!(beyond_tip[3], 0, "Pixels beyond tip must not be painted");
+}
+
 
 
 

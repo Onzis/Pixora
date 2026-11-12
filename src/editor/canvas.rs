@@ -1,4 +1,4 @@
-use crate::editor::annotations::Annotation;
+use crate::editor::annotations::{Annotation, calculate_arrow_geometry};
 use crate::image::processing::{apply_blur, apply_pixelate};
 use gpui::Rgba;
 use image::{Rgba as ImageRgba, RgbaImage};
@@ -58,24 +58,29 @@ pub fn render_annotations_to_image(
                 let x2 = f32::from(to.x) - offset_x;
                 let y2 = f32::from(to.y) - offset_y;
 
-                draw_line(image, x1, y1, x2, y2, *width, *color, false);
+                let geom = calculate_arrow_geometry((x1, y1), (x2, y2), *width);
 
-                // Draw arrowhead
-                let dx = x2 - x1;
-                let dy = y2 - y1;
-                let len = (dx * dx + dy * dy).sqrt();
-                if len > 5.0 {
-                    let head_len = (*width * 4.0).clamp(14.0, 32.0);
-                    let angle = dy.atan2(dx);
-                    let arrow_angle = 0.5;
+                // 1. Shaft line (stops inside arrowhead base, never pokes past tip)
+                draw_line(
+                    image,
+                    geom.shaft_from.0,
+                    geom.shaft_from.1,
+                    geom.shaft_to.0,
+                    geom.shaft_to.1,
+                    *width,
+                    *color,
+                    false,
+                );
 
-                    let ax1 = x2 - head_len * (angle - arrow_angle).cos();
-                    let ay1 = y2 - head_len * (angle - arrow_angle).sin();
-                    let ax2 = x2 - head_len * (angle + arrow_angle).cos();
-                    let ay2 = y2 - head_len * (angle + arrow_angle).sin();
-
-                    draw_line(image, x2, y2, ax1, ay1, *width, *color, false);
-                    draw_line(image, x2, y2, ax2, ay2, *width, *color, false);
+                // 2. Arrowhead filled triangle
+                if geom.has_head {
+                    draw_filled_triangle(
+                        image,
+                        geom.tip,
+                        geom.left_wing,
+                        geom.right_wing,
+                        *color,
+                    );
                 }
             }
             Annotation::Pencil {
@@ -269,6 +274,66 @@ fn draw_line(
 
         cx += x_step;
         cy += y_step;
+    }
+}
+
+fn draw_filled_triangle(
+    image: &mut RgbaImage,
+    p1: (f32, f32),
+    p2: (f32, f32),
+    p3: (f32, f32),
+    color: Rgba,
+) {
+    let img_w = image.width() as f32;
+    let img_h = image.height() as f32;
+    if img_w <= 0.0 || img_h <= 0.0 {
+        return;
+    }
+
+    let min_x = (p1.0.min(p2.0).min(p3.0) - 1.0).floor().max(0.0) as i32;
+    let max_x = (p1.0.max(p2.0).max(p3.0) + 1.0).ceil().min(img_w - 1.0) as i32;
+    let min_y = (p1.1.min(p2.1).min(p3.1) - 1.0).floor().max(0.0) as i32;
+    let max_y = (p1.1.max(p2.1).max(p3.1) + 1.0).ceil().min(img_h - 1.0) as i32;
+
+    if min_x > max_x || min_y > max_y {
+        return;
+    }
+
+    let edge = |ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32| -> f32 {
+        (px - ax) * (by - ay) - (py - ay) * (bx - ax)
+    };
+
+    // 3x3 supersampling for high-quality antialiased triangle edges
+    const SAMPLES: [(f32, f32); 9] = [
+        (-0.33, -0.33), (0.0, -0.33), (0.33, -0.33),
+        (-0.33,  0.0 ), (0.0,  0.0 ), (0.33,  0.0 ),
+        (-0.33,  0.33), (0.0,  0.33), (0.33,  0.33),
+    ];
+
+    for py in min_y..=max_y {
+        for px in min_x..=max_x {
+            let cx = px as f32 + 0.5;
+            let cy = py as f32 + 0.5;
+            let mut inside_count = 0;
+
+            for &(ox, oy) in &SAMPLES {
+                let sx = cx + ox;
+                let sy = cy + oy;
+
+                let w0 = edge(p1.0, p1.1, p2.0, p2.1, sx, sy);
+                let w1 = edge(p2.0, p2.1, p3.0, p3.1, sx, sy);
+                let w2 = edge(p3.0, p3.1, p1.0, p1.1, sx, sy);
+
+                if (w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0) || (w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0) {
+                    inside_count += 1;
+                }
+            }
+
+            if inside_count > 0 {
+                let alpha = (inside_count as f32) / 9.0;
+                put_pixel_blended(image, px, py, color, alpha);
+            }
+        }
     }
 }
 
