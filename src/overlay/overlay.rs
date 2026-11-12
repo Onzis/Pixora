@@ -332,6 +332,30 @@ impl ScreenOverlayView {
         self.render_image = Arc::new(RenderImage::new(smallvec![frame]));
     }
 
+    pub fn cancel_selection(&mut self, cx: &mut Context<Self>) {
+        self.selection.is_active = false;
+        self.selection = SelectionState::new(0.0, 0.0, 0.0, 0.0);
+        self.drag_mode = SelectionDragMode::None;
+        self.active_tool = ToolKind::Select;
+        self.history = EditHistory::new();
+        self.rebuild_render_image();
+        self.current_drawing = None;
+        self.drawing_start = None;
+        self.snap_candidate = None;
+        self.text_input_mode = false;
+        self.text_input_buffer.clear();
+        self.hex_input_mode = false;
+        self.show_color_palette = false;
+        self.numeric_input_mode = None;
+        self.numeric_input_buffer.clear();
+        self.tool_props.current_badge_number = 1;
+
+        if self.config.window_snapping {
+            self.hovered_window = self.detected_windows.iter().find(|w| w.bounds.contains(&self.cursor_pos)).cloned();
+        }
+        cx.notify();
+    }
+
     pub fn do_undo(&mut self, cx: &mut Context<Self>) {
         if self.history.undo() {
             let max_badge = self
@@ -612,7 +636,27 @@ impl ScreenOverlayView {
             cx.notify();
         }
 
-        // 2. Eyedropper mode: picks pixel color, applies it to stroke_color, copies HEX, and notifies
+        // 4. When no selection is active, any click MUST create a selection or snap to window!
+        if !self.selection.is_active {
+            self.active_tool = ToolKind::Select;
+            if self.config.window_snapping {
+                if let Some(hovered) = &self.hovered_window {
+                    if hovered.bounds.contains(&p) {
+                        self.snap_candidate = Some(hovered.clone());
+                    }
+                } else if let Some(found) = self.detected_windows.iter().find(|w| w.bounds.contains(&p)) {
+                    self.snap_candidate = Some(found.clone());
+                }
+            }
+
+            self.drag_mode = SelectionDragMode::Creating { start: p };
+            self.selection = SelectionState::new(px_f, py_f, 0.0, 0.0);
+            cx.notify();
+            return;
+        }
+
+        // 5. Active selection mode tools:
+        // Eyedropper mode: picks pixel color, applies it to stroke_color, copies HEX, and notifies
         if self.active_tool == ToolKind::Eyedropper {
             let img_x = (px_f.round() as u32).min(self.capture.bounds.width.saturating_sub(1));
             let img_y = (py_f.round() as u32).min(self.capture.bounds.height.saturating_sub(1));
@@ -630,7 +674,7 @@ impl ScreenOverlayView {
             return;
         }
 
-        // 3. Text tool placement
+        // Text tool placement
         if self.active_tool == ToolKind::Text {
             self.text_input_mode = true;
             self.text_input_pos = p;
@@ -639,7 +683,7 @@ impl ScreenOverlayView {
             return;
         }
 
-        // 4. Number step badge placement
+        // Number step badge placement
         if self.active_tool == ToolKind::NumberBadge {
             let badge = Annotation::NumberBadge {
                 center: p,
@@ -653,7 +697,7 @@ impl ScreenOverlayView {
             return;
         }
 
-        // 5. Drawing tools (Pencil, Marker, Arrow, Line, Rect, Ellipse, Blur, Pixelate)
+        // Drawing tools (Pencil, Marker, Arrow, Line, Rect, Ellipse, Blur, Pixelate)
         if self.active_tool != ToolKind::Select {
             self.drawing_start = Some(p);
             match self.active_tool {
@@ -743,12 +787,15 @@ impl ScreenOverlayView {
             return;
         }
 
-        // 7. Select tool: create new selection (and store candidate for instant click-snap)
-        if self.config.window_snapping && !self.selection.is_active {
+        // 7. Select tool: clicking outside existing selection cancels old selection and starts a new one!
+        self.cancel_selection(cx);
+        if self.config.window_snapping {
             if let Some(hovered) = &self.hovered_window {
                 if hovered.bounds.contains(&p) {
                     self.snap_candidate = Some(hovered.clone());
                 }
+            } else if let Some(found) = self.detected_windows.iter().find(|w| w.bounds.contains(&p)) {
+                self.snap_candidate = Some(found.clone());
             }
         }
 
@@ -934,11 +981,8 @@ impl ScreenOverlayView {
 
         // Cancel accidental tiny tap selection (< 12px)
         if self.selection.width() < 12.0 || self.selection.height() < 12.0 {
-            self.selection.is_active = false;
-            if self.config.window_snapping {
-                self.hovered_window = self.detected_windows.iter().find(|w| w.bounds.contains(&self.cursor_pos)).cloned();
-            }
-            cx.notify();
+            self.cancel_selection(cx);
+            return;
         }
     }
 
@@ -1118,12 +1162,14 @@ impl ScreenOverlayView {
         }
 
         if key == "escape" {
-            if self.selection.is_active {
-                self.selection.is_active = false;
-                if self.config.window_snapping {
-                    self.hovered_window = self.detected_windows.iter().find(|w| w.bounds.contains(&self.cursor_pos)).cloned();
-                }
+            if self.show_color_palette {
+                self.show_color_palette = false;
+                self.hex_input_mode = false;
                 cx.notify();
+                return;
+            }
+            if self.selection.is_active {
+                self.cancel_selection(cx);
                 return;
             }
             window.remove_window();
@@ -1348,193 +1394,197 @@ impl Render for ScreenOverlayView {
                     window.paint_quad(fill(bounds, rgba(0x00000055)));
                 }
 
-                // Render vector annotations
-                let all_annotations = annotations.iter().chain(current_drawing.iter());
-                for ann in all_annotations {
-                    match ann {
-                        Annotation::Line { from, to, color, width } => {
-                            let mut pb = PathBuilder::stroke(px(*width));
-                            pb.move_to(*from);
-                            pb.line_to(*to);
-                            if let Ok(p) = pb.build() {
-                                window.paint_path(p, *color);
-                            }
-                        }
-                        Annotation::Arrow { from, to, color, width } => {
-                            let geom = calculate_arrow_geometry(
-                                (f32::from(from.x), f32::from(from.y)),
-                                (f32::from(to.x), f32::from(to.y)),
-                                *width,
-                            );
-
-                            let mut pb = PathBuilder::stroke(px(*width));
-                            pb.move_to(point(px(geom.shaft_from.0), px(geom.shaft_from.1)));
-                            pb.line_to(point(px(geom.shaft_to.0), px(geom.shaft_to.1)));
-                            if let Ok(p) = pb.build() {
-                                window.paint_path(p, *color);
-                            }
-
-                            if geom.has_head {
-                                let mut head_b = PathBuilder::fill();
-                                head_b.move_to(point(px(geom.tip.0), px(geom.tip.1)));
-                                head_b.line_to(point(px(geom.left_wing.0), px(geom.left_wing.1)));
-                                head_b.line_to(point(px(geom.right_wing.0), px(geom.right_wing.1)));
-                                head_b.close();
-                                if let Ok(hp) = head_b.build() {
-                                    window.paint_path(hp, *color);
-                                }
-                            }
-                        }
-                        Annotation::Pencil { points, color, width } => {
-                            if points.len() >= 2 {
+                // Render vector annotations only when a selection is active
+                if selection.is_active {
+                    let all_annotations = annotations.iter().chain(current_drawing.iter());
+                    for ann in all_annotations {
+                        match ann {
+                            Annotation::Line { from, to, color, width } => {
                                 let mut pb = PathBuilder::stroke(px(*width));
-                                pb.move_to(points[0]);
-                                for pt in &points[1..] {
-                                    pb.line_to(*pt);
-                                }
+                                pb.move_to(*from);
+                                pb.line_to(*to);
                                 if let Ok(p) = pb.build() {
                                     window.paint_path(p, *color);
                                 }
                             }
-                        }
-                        Annotation::Marker { points, color, width } => {
-                            if points.len() >= 2 {
-                                let mut marker_c = *color;
-                                marker_c.a = 0.35;
-                                let mut pb = PathBuilder::stroke(px(*width * 3.0));
-                                pb.move_to(points[0]);
-                                for pt in &points[1..] {
-                                    pb.line_to(*pt);
-                                }
-                                if let Ok(p) = pb.build() {
-                                    window.paint_path(p, marker_c);
-                                }
-                            }
-                        }
-                        Annotation::Rectangle { bounds, color, filled, width } => {
-                            if *filled {
-                                window.paint_quad(fill(*bounds, *color));
-                            } else {
+                            Annotation::Arrow { from, to, color, width } => {
+                                let geom = calculate_arrow_geometry(
+                                    (f32::from(from.x), f32::from(from.y)),
+                                    (f32::from(to.x), f32::from(to.y)),
+                                    *width,
+                                );
+
                                 let mut pb = PathBuilder::stroke(px(*width));
-                                let o = bounds.origin;
-                                let s = bounds.size;
-                                pb.move_to(o);
-                                pb.line_to(point(o.x + s.width, o.y));
-                                pb.line_to(point(o.x + s.width, o.y + s.height));
-                                pb.line_to(point(o.x, o.y + s.height));
-                                pb.close();
+                                pb.move_to(point(px(geom.shaft_from.0), px(geom.shaft_from.1)));
+                                pb.line_to(point(px(geom.shaft_to.0), px(geom.shaft_to.1)));
                                 if let Ok(p) = pb.build() {
                                     window.paint_path(p, *color);
                                 }
+
+                                if geom.has_head {
+                                    let mut head_b = PathBuilder::fill();
+                                    head_b.move_to(point(px(geom.tip.0), px(geom.tip.1)));
+                                    head_b.line_to(point(px(geom.left_wing.0), px(geom.left_wing.1)));
+                                    head_b.line_to(point(px(geom.right_wing.0), px(geom.right_wing.1)));
+                                    head_b.close();
+                                    if let Ok(hp) = head_b.build() {
+                                        window.paint_path(hp, *color);
+                                    }
+                                }
                             }
-                        }
-                        // Mathematically exact smooth Bézier ellipse (NOT a quad/square!)
-                        Annotation::Ellipse { bounds, color, filled, width } => {
-                            let cx = f32::from(bounds.origin.x) + f32::from(bounds.size.width) / 2.0;
-                            let cy = f32::from(bounds.origin.y) + f32::from(bounds.size.height) / 2.0;
-                            let rx = (f32::from(bounds.size.width) / 2.0).abs();
-                            let ry = (f32::from(bounds.size.height) / 2.0).abs();
-
-                            if rx > 1.0 && ry > 1.0 {
-                                let kx = rx * 0.55228475;
-                                let ky = ry * 0.55228475;
-
-                                let mut pb = if *filled {
-                                    PathBuilder::fill()
-                                } else {
-                                    PathBuilder::stroke(px(*width))
-                                };
-
-                                pb.move_to(point(px(cx), px(cy - ry)));
-                                pb.cubic_bezier_to(
-                                    point(px(cx + rx), px(cy)),
-                                    point(px(cx + kx), px(cy - ry)),
-                                    point(px(cx + rx), px(cy - ky)),
-                                );
-                                pb.cubic_bezier_to(
-                                    point(px(cx), px(cy + ry)),
-                                    point(px(cx + rx), px(cy + ky)),
-                                    point(px(cx + kx), px(cy + ry)),
-                                );
-                                pb.cubic_bezier_to(
-                                    point(px(cx - rx), px(cy)),
-                                    point(px(cx - kx), px(cy + ry)),
-                                    point(px(cx - rx), px(cy + ky)),
-                                );
-                                pb.cubic_bezier_to(
-                                    point(px(cx), px(cy - ry)),
-                                    point(px(cx - rx), px(cy - ky)),
-                                    point(px(cx - kx), px(cy - ry)),
-                                );
-
+                            Annotation::Pencil { points, color, width } => {
+                                if points.len() >= 2 {
+                                    let mut pb = PathBuilder::stroke(px(*width));
+                                    pb.move_to(points[0]);
+                                    for pt in &points[1..] {
+                                        pb.line_to(*pt);
+                                    }
+                                    if let Ok(p) = pb.build() {
+                                        window.paint_path(p, *color);
+                                    }
+                                }
+                            }
+                            Annotation::Marker { points, color, width } => {
+                                if points.len() >= 2 {
+                                    let mut marker_c = *color;
+                                    marker_c.a = 0.35;
+                                    let mut pb = PathBuilder::stroke(px(*width * 3.0));
+                                    pb.move_to(points[0]);
+                                    for pt in &points[1..] {
+                                        pb.line_to(*pt);
+                                    }
+                                    if let Ok(p) = pb.build() {
+                                        window.paint_path(p, marker_c);
+                                    }
+                                }
+                            }
+                            Annotation::Rectangle { bounds, color, filled, width } => {
                                 if *filled {
+                                    window.paint_quad(fill(*bounds, *color));
+                                } else {
+                                    let mut pb = PathBuilder::stroke(px(*width));
+                                    let o = bounds.origin;
+                                    let s = bounds.size;
+                                    pb.move_to(o);
+                                    pb.line_to(point(o.x + s.width, o.y));
+                                    pb.line_to(point(o.x + s.width, o.y + s.height));
+                                    pb.line_to(point(o.x, o.y + s.height));
                                     pb.close();
-                                }
-                                if let Ok(path) = pb.build() {
-                                    window.paint_path(path, *color);
+                                    if let Ok(p) = pb.build() {
+                                        window.paint_path(p, *color);
+                                    }
                                 }
                             }
-                        }
-                        Annotation::Blur { .. } | Annotation::Pixelate { .. } => {}
-                        Annotation::NumberBadge { center, color, radius, .. } => {
-                            let badge_bounds = Bounds {
-                                origin: point(center.x - px(*radius), center.y - px(*radius)),
-                                size: size(px(*radius * 2.0), px(*radius * 2.0)),
-                            };
-                            window.paint_quad(fill(badge_bounds, *color));
-                            window.paint_quad(outline(badge_bounds, rgb(0xFFFFFF), BorderStyle::Solid));
-                        }
-                        _ => {}
-                    }
-                }
+                            // Mathematically exact smooth Bézier ellipse (NOT a quad/square!)
+                            Annotation::Ellipse { bounds, color, filled, width } => {
+                                let cx = f32::from(bounds.origin.x) + f32::from(bounds.size.width) / 2.0;
+                                let cy = f32::from(bounds.origin.y) + f32::from(bounds.size.height) / 2.0;
+                                let rx = (f32::from(bounds.size.width) / 2.0).abs();
+                                let ry = (f32::from(bounds.size.height) / 2.0).abs();
 
-                // Live preview indicator only while actively dragging Blur or Pixelate
-                if let Some(drawing) = &current_drawing {
-                    match drawing {
-                        Annotation::Blur { bounds, .. } => {
-                            window.paint_quad(fill(*bounds, rgba(0x8174FF22)));
-                            window.paint_quad(outline(*bounds, rgba(0x8174FF88), BorderStyle::Dashed));
+                                if rx > 1.0 && ry > 1.0 {
+                                    let kx = rx * 0.55228475;
+                                    let ky = ry * 0.55228475;
+
+                                    let mut pb = if *filled {
+                                        PathBuilder::fill()
+                                    } else {
+                                        PathBuilder::stroke(px(*width))
+                                    };
+
+                                    pb.move_to(point(px(cx), px(cy - ry)));
+                                    pb.cubic_bezier_to(
+                                        point(px(cx + rx), px(cy)),
+                                        point(px(cx + kx), px(cy - ry)),
+                                        point(px(cx + rx), px(cy - ky)),
+                                    );
+                                    pb.cubic_bezier_to(
+                                        point(px(cx), px(cy + ry)),
+                                        point(px(cx + rx), px(cy + ky)),
+                                        point(px(cx + kx), px(cy + ry)),
+                                    );
+                                    pb.cubic_bezier_to(
+                                        point(px(cx - rx), px(cy)),
+                                        point(px(cx - kx), px(cy + ry)),
+                                        point(px(cx - rx), px(cy + ky)),
+                                    );
+                                    pb.cubic_bezier_to(
+                                        point(px(cx), px(cy - ry)),
+                                        point(px(cx - rx), px(cy - ky)),
+                                        point(px(cx - kx), px(cy - ry)),
+                                    );
+
+                                    if *filled {
+                                        pb.close();
+                                    }
+                                    if let Ok(path) = pb.build() {
+                                        window.paint_path(path, *color);
+                                    }
+                                }
+                            }
+                            Annotation::Blur { .. } | Annotation::Pixelate { .. } => {}
+                            Annotation::NumberBadge { center, color, radius, .. } => {
+                                let badge_bounds = Bounds {
+                                    origin: point(center.x - px(*radius), center.y - px(*radius)),
+                                    size: size(px(*radius * 2.0), px(*radius * 2.0)),
+                                };
+                                window.paint_quad(fill(badge_bounds, *color));
+                                window.paint_quad(outline(badge_bounds, rgb(0xFFFFFF), BorderStyle::Solid));
+                            }
+                            _ => {}
                         }
-                        Annotation::Pixelate { bounds, .. } => {
-                            window.paint_quad(fill(*bounds, rgba(0x30D15822)));
-                            window.paint_quad(outline(*bounds, rgba(0x30D15888), BorderStyle::Dashed));
+                    }
+
+                    // Live preview indicator only while actively dragging Blur or Pixelate
+                    if let Some(drawing) = &current_drawing {
+                        match drawing {
+                            Annotation::Blur { bounds, .. } => {
+                                window.paint_quad(fill(*bounds, rgba(0x8174FF22)));
+                                window.paint_quad(outline(*bounds, rgba(0x8174FF88), BorderStyle::Dashed));
+                            }
+                            Annotation::Pixelate { bounds, .. } => {
+                                window.paint_quad(fill(*bounds, rgba(0x30D15822)));
+                                window.paint_quad(outline(*bounds, rgba(0x30D15888), BorderStyle::Dashed));
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
             })
             .size_full(),
         );
 
-        // Render text annotations as crisp UI elements
-        for ann in &self.history.annotations {
-            if let Annotation::Text { origin, text, color, font_size } = ann {
-                root = root.child(
-                    div()
-                        .absolute()
-                        .left(origin.x)
-                        .top(origin.y)
-                        .text_size(px(*font_size))
-                        .text_color(*color)
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(text.clone()),
-                );
-            }
-            if let Annotation::NumberBadge { center, number, radius, .. } = ann {
-                root = root.child(
-                    div()
-                        .absolute()
-                        .left(center.x - px(*radius))
-                        .top(center.y - px(*radius))
-                        .size(px(*radius * 2.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgb(0xFFFFFF))
-                        .child(number.to_string()),
-                );
+        // Render text annotations as crisp UI elements only when selection is active
+        if self.selection.is_active {
+            for ann in &self.history.annotations {
+                if let Annotation::Text { origin, text, color, font_size } = ann {
+                    root = root.child(
+                        div()
+                            .absolute()
+                            .left(origin.x)
+                            .top(origin.y)
+                            .text_size(px(*font_size))
+                            .text_color(*color)
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(text.clone()),
+                    );
+                }
+                if let Annotation::NumberBadge { center, number, radius, .. } = ann {
+                    root = root.child(
+                        div()
+                            .absolute()
+                            .left(center.x - px(*radius))
+                            .top(center.y - px(*radius))
+                            .size(px(*radius * 2.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(rgb(0xFFFFFF))
+                            .child(number.to_string()),
+                    );
+                }
             }
         }
 

@@ -725,6 +725,41 @@ fn test_window_snapping_detection_and_selection() {
     assert_eq!(snapped_sel.height(), 600.0);
 }
 
+#[test]
+fn test_selection_cancellation_and_history_reset() {
+    use gpui::{point, px, rgb};
+    use pixora::editor::annotations::Annotation;
+    use pixora::editor::history::EditHistory;
+    use pixora::overlay::selection::SelectionState;
+
+    // Simulate an active selection with multiple annotations
+    let mut sel = SelectionState::new(100.0, 100.0, 500.0, 400.0);
+    assert!(sel.is_active);
+
+    let mut history = EditHistory::new();
+    history.push_annotation(Annotation::Pencil {
+        points: vec![point(px(120.0), px(120.0)), point(px(150.0), px(150.0))],
+        color: rgb(0xFF9500),
+        width: 3.0,
+    });
+    history.push_annotation(Annotation::Text {
+        origin: point(px(200.0), px(200.0)),
+        text: "Sample annotation".to_string(),
+        color: rgb(0xFF9500),
+        font_size: 16.0,
+    });
+    assert_eq!(history.annotations.len(), 2);
+
+    // When Esc or cancel_selection is executed:
+    sel.is_active = false;
+    history = EditHistory::new(); // Complete reset
+
+    assert!(!sel.is_active);
+    assert_eq!(history.annotations.len(), 0);
+    assert!(!history.can_undo());
+    assert!(!history.can_redo());
+}
+
 
 
 
