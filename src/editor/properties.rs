@@ -15,7 +15,7 @@ impl Default for ToolProperties {
     fn default() -> Self {
         Self {
             stroke_color: rgb(0xFF453A),
-            stroke_width: 3.5,
+            stroke_width: 6.0,
             font_size: 18.0,
             blur_radius: 12,
             pixelate_block: 10,

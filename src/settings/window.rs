@@ -714,51 +714,6 @@ impl SettingsWindowView {
                             )),
                     ),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1p5()
-                    .pt_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(t(lang, "Default Stroke Width", "Толщина линий по умолчанию")),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(render_size_chip(
-                                "chip-2px",
-                                t(lang, "2px Thin", "2px Тонкая"),
-                                (self.config.default_stroke_width - 2.0).abs() < 0.1,
-                                cx.listener(|this, _, _, cx| {
-                                    this.config.default_stroke_width = 2.0;
-                                    cx.notify();
-                                }),
-                            ))
-                            .child(render_size_chip(
-                                "chip-4px",
-                                t(lang, "4px Medium", "4px Средняя"),
-                                (self.config.default_stroke_width - 4.0).abs() < 0.1,
-                                cx.listener(|this, _, _, cx| {
-                                    this.config.default_stroke_width = 4.0;
-                                    cx.notify();
-                                }),
-                            ))
-                            .child(render_size_chip(
-                                "chip-8px",
-                                t(lang, "8px Bold", "8px Толстая"),
-                                (self.config.default_stroke_width - 8.0).abs() < 0.1,
-                                cx.listener(|this, _, _, cx| {
-                                    this.config.default_stroke_width = 8.0;
-                                    cx.notify();
-                                }),
-                            )),
-                    ),
-            )
     }
 
     fn render_shortcuts_tab(&self, cx: &mut Context<Self>) -> gpui::Div {

@@ -19,7 +19,7 @@ fn default_ocr_language() -> String {
 }
 
 fn default_stroke_width() -> f32 {
-    3.0
+    6.0
 }
 
 fn default_font_size() -> f32 {
