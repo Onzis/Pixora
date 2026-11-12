@@ -127,7 +127,7 @@ pub fn render_magnifier(
         .border_1()
         .border_color(rgba(0xFFFFFF28))
         .rounded_xl()
-        .shadow_2xl()
+        .shadow_md()
         .p(px(padding))
         .flex()
         .flex_col()
