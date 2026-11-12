@@ -48,6 +48,12 @@ pub enum NumericInputTarget {
     FontSize,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowSnapCandidate {
+    pub bounds: Bounds<Pixels>,
+    pub title: String,
+}
+
 pub struct ScreenOverlayView {
     pub capture: ScreenCapture,
     pub render_image: Arc<RenderImage>,
@@ -69,6 +75,11 @@ pub struct ScreenOverlayView {
 
     pub toast_message: Option<(String, Instant)>,
     pub is_ocr_running: bool,
+
+    // Window snapping
+    pub detected_windows: Vec<WindowSnapCandidate>,
+    pub hovered_window: Option<WindowSnapCandidate>,
+    pub snap_candidate: Option<WindowSnapCandidate>,
 
     // Text annotation editing
     pub text_input_mode: bool,
@@ -141,6 +152,43 @@ impl ScreenOverlayView {
         };
         let custom_hex = config.default_color_hex.trim_start_matches('#').to_string();
 
+        let mut detected_windows = Vec::new();
+        if config.window_snapping {
+            let max_w = capture.bounds.width as f32;
+            let max_h = capture.bounds.height as f32;
+            let raw_windows = crate::system::windows::enumerate_visible_windows();
+            for win in raw_windows {
+                let win_x = (win.bounds.x - capture.bounds.x) as f32;
+                let win_y = (win.bounds.y - capture.bounds.y) as f32;
+                let win_w = win.bounds.width as f32;
+                let win_h = win.bounds.height as f32;
+
+                let cl_x = win_x.max(0.0);
+                let cl_y = win_y.max(0.0);
+                let cl_r = (win_x + win_w).min(max_w);
+                let cl_b = (win_y + win_h).min(max_h);
+
+                let cl_w = cl_r - cl_x;
+                let cl_h = cl_b - cl_y;
+
+                if cl_w >= 40.0 && cl_h >= 40.0 {
+                    detected_windows.push(WindowSnapCandidate {
+                        bounds: Bounds {
+                            origin: point(px(cl_x), px(cl_y)),
+                            size: size(px(cl_w), px(cl_h)),
+                        },
+                        title: win.title,
+                    });
+                }
+            }
+        }
+
+        let hovered_window = if config.window_snapping {
+            detected_windows.iter().find(|w| w.bounds.contains(&initial_cursor)).cloned()
+        } else {
+            None
+        };
+
         Self {
             capture,
             render_image,
@@ -162,6 +210,10 @@ impl ScreenOverlayView {
 
             toast_message: None,
             is_ocr_running: false,
+
+            detected_windows,
+            hovered_window,
+            snap_candidate: None,
 
             text_input_mode: false,
             text_input_pos: point(px(0.0), px(0.0)),
@@ -691,7 +743,15 @@ impl ScreenOverlayView {
             return;
         }
 
-        // 7. Select tool: create new selection
+        // 7. Select tool: create new selection (and store candidate for instant click-snap)
+        if self.config.window_snapping && !self.selection.is_active {
+            if let Some(hovered) = &self.hovered_window {
+                if hovered.bounds.contains(&p) {
+                    self.snap_candidate = Some(hovered.clone());
+                }
+            }
+        }
+
         self.drag_mode = SelectionDragMode::Creating { start: p };
         self.selection = SelectionState::new(px_f, py_f, 0.0, 0.0);
         cx.notify();
@@ -774,6 +834,13 @@ impl ScreenOverlayView {
         let max_h = self.capture.bounds.height as f32;
         match self.drag_mode {
             SelectionDragMode::Creating { start } => {
+                let drag_dist = ((px_f - f32::from(start.x)).powi(2) + (py_f - f32::from(start.y)).powi(2)).sqrt();
+                if drag_dist > 5.0 {
+                    self.snap_candidate = None;
+                    if self.hovered_window.is_some() {
+                        self.hovered_window = None;
+                    }
+                }
                 let cur_x = px_f.clamp(0.0, max_w);
                 let cur_y = py_f.clamp(0.0, max_h);
                 let w = cur_x - f32::from(start.x);
@@ -805,9 +872,19 @@ impl ScreenOverlayView {
                 cx.notify();
             }
             SelectionDragMode::None => {
+                let mut should_notify = false;
+                if self.config.window_snapping && !self.selection.is_active {
+                    let prev_hover = self.hovered_window.as_ref().map(|w| w.bounds);
+                    let new_hover = self.detected_windows.iter().find(|w| w.bounds.contains(&p)).cloned();
+                    let new_bounds = new_hover.as_ref().map(|w| w.bounds);
+                    if prev_hover != new_bounds {
+                        self.hovered_window = new_hover;
+                        should_notify = true;
+                    }
+                }
                 let show_mag = self.active_tool == ToolKind::Eyedropper
                     || (self.config.show_magnifier && !self.selection.is_active);
-                if show_mag {
+                if show_mag || should_notify {
                     cx.notify();
                 }
             }
@@ -839,9 +916,28 @@ impl ScreenOverlayView {
             return;
         }
 
+        // Check if an instant window snap was clicked
+        if let Some(snapped) = self.snap_candidate.take() {
+            let b = snapped.bounds;
+            self.selection = SelectionState::new(
+                f32::from(b.origin.x),
+                f32::from(b.origin.y),
+                f32::from(b.size.width),
+                f32::from(b.size.height),
+            );
+            self.selection.is_active = true;
+            self.hovered_window = None;
+            self.drag_mode = SelectionDragMode::None;
+            cx.notify();
+            return;
+        }
+
         // Cancel accidental tiny tap selection (< 12px)
         if self.selection.width() < 12.0 || self.selection.height() < 12.0 {
             self.selection.is_active = false;
+            if self.config.window_snapping {
+                self.hovered_window = self.detected_windows.iter().find(|w| w.bounds.contains(&self.cursor_pos)).cloned();
+            }
             cx.notify();
         }
     }
@@ -1022,6 +1118,14 @@ impl ScreenOverlayView {
         }
 
         if key == "escape" {
+            if self.selection.is_active {
+                self.selection.is_active = false;
+                if self.config.window_snapping {
+                    self.hovered_window = self.detected_windows.iter().find(|w| w.bounds.contains(&self.cursor_pos)).cloned();
+                }
+                cx.notify();
+                return;
+            }
             window.remove_window();
             return;
         }
@@ -1503,38 +1607,124 @@ impl Render for ScreenOverlayView {
             }
         }
 
-        // CleanShot instruction badge before selection
-        if !selection.is_active && self.drag_mode == SelectionDragMode::None {
+        // CleanShot instruction badge or window snap highlight before selection
+        let is_creating = matches!(self.drag_mode, SelectionDragMode::Creating { .. });
+        if !selection.is_active && !is_creating {
             let scr_w = f32::from(screen_bounds.size.width);
             let scr_h = f32::from(screen_bounds.size.height);
-            root = root.child(
-                div()
-                    .absolute()
-                    .left(px((scr_w - 420.0) / 2.0))
-                    .top(px((scr_h - 44.0) / 2.0))
-                    .w(px(420.0))
-                    .py_2()
-                    .px_4()
-                    .rounded_full()
-                    .bg(rgba(0x151519F0))
-                    .border_1()
-                    .border_color(rgba(0xFFFFFF20))
-                    .shadow_2xl()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(rgb(0xD0D0D8))
-                            .child(t(
-                                lang,
-                                "Drag to select area  •  Space for fullscreen  •  Esc to cancel",
-                                "Выделите область  •  Пробел — весь экран  •  Esc — отмена",
-                            )),
-                    ),
-            );
+
+            if let Some(win) = &self.hovered_window {
+                let wb = win.bounds;
+                // 1. Semi-transparent accent tint & highlight border over the detected window
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left(wb.origin.x)
+                        .top(wb.origin.y)
+                        .w(wb.size.width)
+                        .h(wb.size.height)
+                        .bg(rgba(0x8174FF16))
+                        .border_2()
+                        .border_color(rgba(0x8174FFCC))
+                        .rounded_lg(),
+                );
+
+                // 2. Window info pill badge (Window name + Dimensions + Click to snap hint)
+                let badge_w = 480.0;
+                let badge_x = (f32::from(wb.origin.x) + (f32::from(wb.size.width) - badge_w) / 2.0)
+                    .clamp(16.0, (scr_w - badge_w - 16.0).max(16.0));
+                let badge_y = (f32::from(wb.origin.y) + 16.0)
+                    .clamp(16.0, (scr_h - 48.0).max(16.0));
+
+                let win_title = if !win.title.trim().is_empty() {
+                    let mut s = win.title.trim().to_string();
+                    if s.chars().count() > 28 {
+                        s = s.chars().take(26).collect::<String>() + "…";
+                    }
+                    format!("{} • ", s)
+                } else {
+                    String::new()
+                };
+
+                let dim_text = format!("{} × {}", f32::from(wb.size.width) as u32, f32::from(wb.size.height) as u32);
+                let hint_text = t(
+                    lang,
+                    "Click to select window  •  Drag for custom area",
+                    "Клик — выбрать окно  •  Перетащите — область",
+                );
+
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left(px(badge_x))
+                        .top(px(badge_y))
+                        .w(px(badge_w))
+                        .py_2()
+                        .px_4()
+                        .rounded_full()
+                        .bg(rgba(0x131317FA))
+                        .border_1()
+                        .border_color(rgba(0x8174FFA0))
+                        .shadow_2xl()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    svg()
+                                        .path("icons/window.svg")
+                                        .size_3p5()
+                                        .text_color(rgb(0x8174FF)),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(rgb(0xF2F2F5))
+                                        .child(format!("{}{}", win_title, dim_text)),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0xA2A2B0))
+                                .child(hint_text),
+                        ),
+                );
+            } else {
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left(px((scr_w - 420.0) / 2.0))
+                        .top(px((scr_h - 44.0) / 2.0))
+                        .w(px(420.0))
+                        .py_2()
+                        .px_4()
+                        .rounded_full()
+                        .bg(rgba(0x151519F0))
+                        .border_1()
+                        .border_color(rgba(0xFFFFFF20))
+                        .shadow_2xl()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(rgb(0xD0D0D8))
+                                .child(t(
+                                    lang,
+                                    "Drag to select area  •  Space for fullscreen  •  Esc to cancel",
+                                    "Выделите область  •  Пробел — весь экран  •  Esc — отмена",
+                                )),
+                        ),
+                );
+            }
         }
 
         // CleanShot X Floating Toolbar: shown after releasing mouse (not while actively dragging creation)

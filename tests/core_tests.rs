@@ -17,6 +17,7 @@ fn test_config_defaults_and_serialization() {
     assert_eq!(config.blur_radius, 12);
     assert_eq!(config.pixelate_block, 10);
     assert!(config.auto_check_updates);
+    assert!(config.window_snapping);
 
     let json = serde_json::to_string(&config).expect("Must serialize to JSON");
     let deserialized: AppConfig = serde_json::from_str(&json).expect("Must deserialize from JSON");
@@ -25,6 +26,7 @@ fn test_config_defaults_and_serialization() {
     assert_eq!(config.blur_radius, deserialized.blur_radius);
     assert_eq!(config.pixelate_block, deserialized.pixelate_block);
     assert_eq!(config.default_font_size, deserialized.default_font_size);
+    assert_eq!(config.window_snapping, deserialized.window_snapping);
 }
 
 #[test]
@@ -266,7 +268,7 @@ fn test_svg_asset_source_loads_all_icons() {
 
     let assets = PixoraAssets;
     let list = assets.list("").expect("List icons");
-    assert_eq!(list.len(), 28);
+    assert_eq!(list.len(), 29);
 
     for path in list {
         let content = assets.load(&path).expect("Load svg").expect("Found icon");
@@ -687,6 +689,42 @@ fn test_arrow_render_to_image_at_thick_stroke() {
     let beyond_tip = img.get_pixel(365, 200);
     assert_eq!(beyond_tip[3], 0, "Pixels beyond tip must not be painted");
 }
+
+#[test]
+fn test_window_snapping_detection_and_selection() {
+    use gpui::{Bounds, point, px, size};
+    use pixora::overlay::overlay::WindowSnapCandidate;
+    use pixora::overlay::selection::SelectionState;
+
+    let candidate = WindowSnapCandidate {
+        bounds: Bounds {
+            origin: point(px(100.0), px(150.0)),
+            size: size(px(800.0), px(600.0)),
+        },
+        title: "Test Application Window".to_string(),
+    };
+
+    // Point inside the window
+    let pt_inside = point(px(200.0), px(300.0));
+    assert!(candidate.bounds.contains(&pt_inside));
+
+    // Point outside the window
+    let pt_outside = point(px(50.0), px(50.0));
+    assert!(!candidate.bounds.contains(&pt_outside));
+
+    // When clicked/snapped, SelectionState takes exact window bounds
+    let snapped_sel = SelectionState::new(
+        f32::from(candidate.bounds.origin.x),
+        f32::from(candidate.bounds.origin.y),
+        f32::from(candidate.bounds.size.width),
+        f32::from(candidate.bounds.size.height),
+    );
+    assert_eq!(snapped_sel.x(), 100.0);
+    assert_eq!(snapped_sel.y(), 150.0);
+    assert_eq!(snapped_sel.width(), 800.0);
+    assert_eq!(snapped_sel.height(), 600.0);
+}
+
 
 
 

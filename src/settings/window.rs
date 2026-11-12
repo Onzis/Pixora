@@ -644,6 +644,20 @@ impl SettingsWindowView {
                     cx.notify();
                 }),
             ))
+            .child(render_toggle(
+                "toggle-snapping",
+                t(lang, "Window snapping & auto-detection", "Привязка к окнам (Window Snapping)"),
+                t(
+                    lang,
+                    "Automatically highlight and snap to windows on hover and click",
+                    "Автоматически подсвечивать и выбирать окна при наведении и клике",
+                ),
+                self.config.window_snapping,
+                cx.listener(|this, _, _, cx| {
+                    this.config.window_snapping = !this.config.window_snapping;
+                    cx.notify();
+                }),
+            ))
             .child(
                 div()
                     .flex()

@@ -89,7 +89,10 @@ impl AssetSource for PixoraAssets {
                 r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>"#,
             ),
             "icons/app-icon.svg" => Some(
-                r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="#8174FF"/><path d="M7 11V8a1 1 0 0 1 1-1h3M21 7h3a1 1 0 0 1 1 1v3M25 21v3a1 1 0 0 1-1 1h-3M11 25H8a1 1 0 0 1-1-1v-3" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="16" r="4.5" stroke="#FFFFFF" stroke-width="1.75"/><circle cx="16" cy="16" r="2.2" fill="#50E3C2"/><circle cx="17.5" cy="14.5" r="0.75" fill="#FFFFFF"/><circle cx="16" cy="5" r="1" fill="#50E3C2"/></svg>"##,
+                r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="#8174FF"/><path d="M7 11V8a1 1 0 0 1 1-1h3M21 7h3a1 1 0 0 1 1-1v3M25 21v3a1 1 0 0 1-1 1h-3M11 25H8a1 1 0 0 1-1-1v-3" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="16" r="4.5" stroke="#FFFFFF" stroke-width="1.75"/><circle cx="16" cy="16" r="2.2" fill="#50E3C2"/><circle cx="17.5" cy="14.5" r="0.75" fill="#FFFFFF"/><circle cx="16" cy="5" r="1" fill="#50E3C2"/></svg>"##,
+            ),
+            "icons/window.svg" => Some(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="2" y1="9" x2="22" y2="9"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="10" y1="6" x2="10.01" y2="6"/></svg>"#,
             ),
             _ => None,
         };
@@ -127,6 +130,7 @@ impl AssetSource for PixoraAssets {
             "icons/info.svg".into(),
             "icons/folder.svg".into(),
             "icons/app-icon.svg".into(),
+            "icons/window.svg".into(),
         ])
     }
 }
