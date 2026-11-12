@@ -564,6 +564,18 @@ impl ScreenOverlayView {
     pub fn handle_right_mouse_down(
         &mut self,
         _ev: &MouseDownEvent,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        // Intentionally absorbed on mouse down.
+        // Actions are executed on mouse up to prevent the subsequent mouse-up event
+        // from leaking through to the underlying desktop/browser window and triggering
+        // its native context menu.
+    }
+
+    pub fn handle_right_mouse_up(
+        &mut self,
+        _ev: &MouseUpEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1341,6 +1353,12 @@ impl Render for ScreenOverlayView {
                 MouseButton::Left,
                 cx.listener(|this, ev, window, cx| {
                     this.handle_mouse_up(ev, window, cx);
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Right,
+                cx.listener(|this, ev, window, cx| {
+                    this.handle_right_mouse_up(ev, window, cx);
                 }),
             )
             .on_scroll_wheel(cx.listener(|this, ev, window, cx| {
