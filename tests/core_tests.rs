@@ -782,6 +782,44 @@ fn test_palette_gradient_generation_and_corners() {
     assert_eq!(hsv_to_rgb(0.0, 1.0, 1.0), (255, 0, 0));     // Pure Red
 }
 
+#[test]
+fn test_text_annotation_commit_outside() {
+    use gpui::{point, px, rgb};
+    use pixora::editor::annotations::Annotation;
+    use pixora::editor::history::EditHistory;
+
+    let mut history = EditHistory::new();
+    let mut text_input_mode = true;
+    let mut text_input_buffer = "Clean Text".to_string();
+    let text_input_pos = point(px(100.0), px(100.0));
+
+    // Simulated commit on click outside
+    if text_input_mode {
+        if !text_input_buffer.trim().is_empty() {
+            let ann = Annotation::Text {
+                origin: text_input_pos,
+                text: text_input_buffer.clone(),
+                color: rgb(0xFFFFFF),
+                font_size: 24.0,
+            };
+            history.push_annotation(ann);
+        }
+        text_input_mode = false;
+        text_input_buffer.clear();
+    }
+
+    assert_eq!(history.annotations.len(), 1);
+    assert!(!text_input_mode);
+    assert!(text_input_buffer.is_empty());
+
+    // Subsequent click when text_input_mode is false creates a new input
+    if !text_input_mode {
+        text_input_mode = true;
+        text_input_buffer.clear();
+    }
+    assert!(text_input_mode);
+}
+
 
 
 

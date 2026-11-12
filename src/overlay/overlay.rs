@@ -371,6 +371,22 @@ impl ScreenOverlayView {
         cx.notify();
     }
 
+    pub fn commit_text_input(&mut self) {
+        if self.text_input_mode {
+            if !self.text_input_buffer.trim().is_empty() {
+                let ann = Annotation::Text {
+                    origin: self.text_input_pos,
+                    text: self.text_input_buffer.clone(),
+                    color: self.tool_props.stroke_color,
+                    font_size: self.tool_props.font_size,
+                };
+                self.history.push_annotation(ann);
+            }
+            self.text_input_mode = false;
+            self.text_input_buffer.clear();
+        }
+    }
+
     pub fn do_undo(&mut self, cx: &mut Context<Self>) {
         if self.history.undo() {
             let max_badge = self
@@ -436,6 +452,7 @@ impl ScreenOverlayView {
     }
 
     pub fn do_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_text_input();
         let lang = self.config.language.resolve();
         if let Some(final_img) = self.prepare_final_image() {
             if let Err(e) = copy_image_to_clipboard(&final_img) {
@@ -452,6 +469,7 @@ impl ScreenOverlayView {
     }
 
     pub fn do_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_text_input();
         let lang = self.config.language.resolve();
         if let Some(final_img) = self.prepare_final_image() {
             match auto_save_screenshot(&final_img, &self.config) {
@@ -479,6 +497,7 @@ impl ScreenOverlayView {
     }
 
     pub fn do_ocr(&mut self, cx: &mut Context<Self>) {
+        self.commit_text_input();
         let lang = self.config.language.resolve();
         let ocr_pref = self.config.ocr_language.clone();
         if let Some(img) = self.prepare_final_image() {
@@ -638,6 +657,7 @@ impl ScreenOverlayView {
         // When clicking on or near any of the 8 handles (radius 12px), enter Resizing mode immediately.
         if self.selection.is_active {
             if let Some(handle) = self.selection.hit_test_handle(p, px(12.0)) {
+                self.commit_text_input();
                 self.drag_mode = SelectionDragMode::Resizing {
                     handle,
                     start_mouse: p,
@@ -653,6 +673,7 @@ impl ScreenOverlayView {
             if self.show_color_palette {
                 if let Some(gb) = self.gradient_field_bounds {
                     if gb.contains(&p) {
+                        self.commit_text_input();
                         self.palette_drag_mode = PaletteDragMode::SaturationValue;
                         let rel_x = (px_f - f32::from(gb.origin.x)).clamp(0.0, f32::from(gb.size.width));
                         let rel_y = (py_f - f32::from(gb.origin.y)).clamp(0.0, f32::from(gb.size.height));
@@ -662,6 +683,7 @@ impl ScreenOverlayView {
                 }
                 if let Some(hb) = self.hue_slider_bounds {
                     if hb.contains(&p) {
+                        self.commit_text_input();
                         self.palette_drag_mode = PaletteDragMode::Hue;
                         let rel_x = (px_f - f32::from(hb.origin.x)).clamp(0.0, f32::from(hb.size.width));
                         self.set_picker_hue(rel_x / f32::from(hb.size.width) * 360.0, cx);
@@ -670,31 +692,24 @@ impl ScreenOverlayView {
                 }
                 if let Some(pb) = self.palette_panel_bounds {
                     if pb.contains(&p) {
+                        self.commit_text_input();
                         return;
                     }
                 }
             }
             if let Some(tb) = self.current_toolbar_bounds {
                 if tb.contains(&p) {
+                    self.commit_text_input();
                     return;
                 }
             }
         }
 
-        // 1. Text input submission if clicking outside
+        // 3. Text input submission if clicking on empty space / outside
         if self.text_input_mode {
-            if !self.text_input_buffer.trim().is_empty() {
-                let ann = Annotation::Text {
-                    origin: self.text_input_pos,
-                    text: self.text_input_buffer.clone(),
-                    color: self.tool_props.stroke_color,
-                    font_size: self.tool_props.font_size,
-                };
-                self.history.push_annotation(ann);
-            }
-            self.text_input_mode = false;
-            self.text_input_buffer.clear();
+            self.commit_text_input();
             cx.notify();
+            return;
         }
 
         // Close color palette modal if open
@@ -1187,17 +1202,7 @@ impl ScreenOverlayView {
         // 2. Handling Text Annotation typing (supports Space, Russian/Cyrillic, and layout switching)
         if self.text_input_mode {
             if key == "enter" {
-                if !self.text_input_buffer.trim().is_empty() {
-                    let ann = Annotation::Text {
-                        origin: self.text_input_pos,
-                        text: self.text_input_buffer.clone(),
-                        color: self.tool_props.stroke_color,
-                        font_size: self.tool_props.font_size,
-                    };
-                    self.history.push_annotation(ann);
-                }
-                self.text_input_mode = false;
-                self.text_input_buffer.clear();
+                self.commit_text_input();
                 cx.notify();
                 return;
             } else if key == "escape" {
@@ -1685,6 +1690,9 @@ impl Render for ScreenOverlayView {
                     .border_1()
                     .border_color(theme.accent)
                     .shadow_lg()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
                     .child(
                         div()
                             .text_size(px(self.tool_props.font_size))
