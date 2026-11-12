@@ -3838,7 +3838,7 @@ dependencies = [
 
 [[package]]
 name = "pixora"
-version = "0.17.1"
+version = "0.18.0"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
