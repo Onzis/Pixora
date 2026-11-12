@@ -389,29 +389,49 @@ pub fn rgb_to_cmyk(r: u8, g: u8, b: u8) -> (u8, u8, u8, u8) {
 }
 
 pub fn generate_gradient_bitmap(hue: f32, width: u32, height: u32) -> Arc<RenderImage> {
-    let mut img = RgbaImage::new(width, height);
+    let (hr, hg, hb) = hsv_to_rgb(hue, 1.0, 1.0);
+    let r_h = hr as f32;
+    let g_h = hg as f32;
+    let b_h = hb as f32;
+    let mut buf = vec![0u8; (width * height * 4) as usize];
+    let inv_w = 1.0 / (width - 1).max(1) as f32;
+    let inv_h = 1.0 / (height - 1).max(1) as f32;
+
     for y in 0..height {
-        let v = 1.0 - (y as f32 / (height - 1).max(1) as f32);
+        let v = 1.0 - (y as f32 * inv_h);
+        let row_offset = (y * width * 4) as usize;
         for x in 0..width {
-            let s = x as f32 / (width - 1).max(1) as f32;
-            let (r, g, b) = hsv_to_rgb(hue, s, v);
-            // GPUI RenderImage expects BGRA
-            img.put_pixel(x, y, image::Rgba([b, g, r, 255]));
+            let s = x as f32 * inv_w;
+            let r = (v * (255.0 + s * (r_h - 255.0))).round() as u8;
+            let g = (v * (255.0 + s * (g_h - 255.0))).round() as u8;
+            let b = (v * (255.0 + s * (b_h - 255.0))).round() as u8;
+            let px_idx = row_offset + (x * 4) as usize;
+            buf[px_idx] = b;
+            buf[px_idx + 1] = g;
+            buf[px_idx + 2] = r;
+            buf[px_idx + 3] = 255;
         }
     }
+    let img = RgbaImage::from_raw(width, height, buf).expect("valid buffer");
     let frame = Frame::new(img);
     Arc::new(RenderImage::new(smallvec![frame]))
 }
 
 pub fn generate_hue_strip_bitmap(width: u32, height: u32) -> Arc<RenderImage> {
-    let mut img = RgbaImage::new(width, height);
+    let mut buf = vec![0u8; (width * height * 4) as usize];
+    let inv_w = 1.0 / (width - 1).max(1) as f32;
     for x in 0..width {
-        let h = (x as f32 / (width - 1).max(1) as f32) * 360.0;
+        let h = (x as f32 * inv_w) * 360.0;
         let (r, g, b) = hsv_to_rgb(h, 1.0, 1.0);
         for y in 0..height {
-            img.put_pixel(x, y, image::Rgba([b, g, r, 255]));
+            let px_idx = ((y * width + x) * 4) as usize;
+            buf[px_idx] = b;
+            buf[px_idx + 1] = g;
+            buf[px_idx + 2] = r;
+            buf[px_idx + 3] = 255;
         }
     }
+    let img = RgbaImage::from_raw(width, height, buf).expect("valid buffer");
     let frame = Frame::new(img);
     Arc::new(RenderImage::new(smallvec![frame]))
 }

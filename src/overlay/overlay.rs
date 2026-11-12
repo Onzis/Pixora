@@ -95,6 +95,7 @@ pub struct ScreenOverlayView {
     pub custom_hex_input: String,
     pub hex_input_mode: bool,
     pub current_toolbar_bounds: Option<Bounds<Pixels>>,
+    pub palette_panel_bounds: Option<Bounds<Pixels>>,
     pub palette_drag_mode: PaletteDragMode,
     pub picker_hue: f32,
     pub picker_sat: f32,
@@ -226,11 +227,12 @@ impl ScreenOverlayView {
             custom_hex_input: custom_hex,
             hex_input_mode: false,
             current_toolbar_bounds: None,
+            palette_panel_bounds: None,
             palette_drag_mode: PaletteDragMode::None,
             picker_hue: 246.0,
             picker_sat: 0.55,
             picker_val: 1.0,
-            palette_gradient_image: Some(generate_gradient_bitmap(246.0, 310, 150)),
+            palette_gradient_image: Some(generate_gradient_bitmap(246.0, 160, 80)),
             palette_hue_strip_image: Some(generate_hue_strip_bitmap(448, 12)),
             gradient_field_bounds: None,
             hue_slider_bounds: None,
@@ -247,7 +249,7 @@ impl ScreenOverlayView {
         cx.notify();
     }
 
-    pub fn sync_and_save_tool_props(&mut self) {
+    pub fn sync_tool_props(&mut self) {
         self.config.default_stroke_width = self.tool_props.stroke_width;
         self.config.blur_radius = self.tool_props.blur_radius;
         self.config.pixelate_block = self.tool_props.pixelate_block;
@@ -257,7 +259,10 @@ impl ScreenOverlayView {
         let g = (self.tool_props.stroke_color.g * 255.0).round().clamp(0.0, 255.0) as u8;
         let b = (self.tool_props.stroke_color.b * 255.0).round().clamp(0.0, 255.0) as u8;
         self.config.default_color_hex = format!("#{:02X}{:02X}{:02X}", r, g, b);
+    }
 
+    pub fn sync_and_save_tool_props(&mut self) {
+        self.sync_tool_props();
         let _ = self.config.save();
     }
 
@@ -269,19 +274,28 @@ impl ScreenOverlayView {
         self.picker_hue = h;
         self.picker_sat = s;
         self.picker_val = v;
-        self.palette_gradient_image = Some(generate_gradient_bitmap(h, 310, 150));
+        self.palette_gradient_image = Some(generate_gradient_bitmap(h, 160, 80));
         self.custom_hex_input = format!("{:02X}{:02X}{:02X}", r, g, b);
     }
 
     pub fn set_picker_hue(&mut self, hue: f32, cx: &mut Context<Self>) {
-        self.picker_hue = hue.clamp(0.0, 360.0);
-        self.palette_gradient_image = Some(generate_gradient_bitmap(self.picker_hue, 310, 150));
+        let hue = hue.clamp(0.0, 360.0);
+        if (self.picker_hue - hue).abs() < 0.2 {
+            return;
+        }
+        self.picker_hue = hue;
+        self.palette_gradient_image = Some(generate_gradient_bitmap(self.picker_hue, 160, 80));
         self.apply_hsv_to_color(cx);
     }
 
     pub fn set_picker_sat_val(&mut self, sat: f32, val: f32, cx: &mut Context<Self>) {
-        self.picker_sat = sat.clamp(0.0, 1.0);
-        self.picker_val = val.clamp(0.0, 1.0);
+        let sat = sat.clamp(0.0, 1.0);
+        let val = val.clamp(0.0, 1.0);
+        if (self.picker_sat - sat).abs() < 0.002 && (self.picker_val - val).abs() < 0.002 {
+            return;
+        }
+        self.picker_sat = sat;
+        self.picker_val = val;
         self.apply_hsv_to_color(cx);
     }
 
@@ -289,7 +303,7 @@ impl ScreenOverlayView {
         let (r, g, b) = hsv_to_rgb(self.picker_hue, self.picker_sat, self.picker_val);
         self.tool_props.stroke_color = rgb(((r as u32) << 16) | ((g as u32) << 8) | (b as u32));
         self.custom_hex_input = format!("{:02X}{:02X}{:02X}", r, g, b);
-        self.sync_and_save_tool_props();
+        self.sync_tool_props();
         cx.notify();
     }
 
@@ -346,6 +360,7 @@ impl ScreenOverlayView {
         self.text_input_buffer.clear();
         self.hex_input_mode = false;
         self.show_color_palette = false;
+        self.sync_and_save_tool_props();
         self.numeric_input_mode = None;
         self.numeric_input_buffer.clear();
         self.tool_props.current_badge_number = 1;
@@ -582,6 +597,7 @@ impl ScreenOverlayView {
         if self.show_color_palette {
             self.show_color_palette = false;
             self.hex_input_mode = false;
+            self.sync_and_save_tool_props();
             cx.notify();
             return;
         }
@@ -634,27 +650,32 @@ impl ScreenOverlayView {
 
         // 2. Ignore clicks on floating toolbar / property sub-bar / color palette
         if self.selection.is_active {
+            if self.show_color_palette {
+                if let Some(gb) = self.gradient_field_bounds {
+                    if gb.contains(&p) {
+                        self.palette_drag_mode = PaletteDragMode::SaturationValue;
+                        let rel_x = (px_f - f32::from(gb.origin.x)).clamp(0.0, f32::from(gb.size.width));
+                        let rel_y = (py_f - f32::from(gb.origin.y)).clamp(0.0, f32::from(gb.size.height));
+                        self.set_picker_sat_val(rel_x / f32::from(gb.size.width), 1.0 - (rel_y / f32::from(gb.size.height)), cx);
+                        return;
+                    }
+                }
+                if let Some(hb) = self.hue_slider_bounds {
+                    if hb.contains(&p) {
+                        self.palette_drag_mode = PaletteDragMode::Hue;
+                        let rel_x = (px_f - f32::from(hb.origin.x)).clamp(0.0, f32::from(hb.size.width));
+                        self.set_picker_hue(rel_x / f32::from(hb.size.width) * 360.0, cx);
+                        return;
+                    }
+                }
+                if let Some(pb) = self.palette_panel_bounds {
+                    if pb.contains(&p) {
+                        return;
+                    }
+                }
+            }
             if let Some(tb) = self.current_toolbar_bounds {
                 if tb.contains(&p) {
-                    if self.show_color_palette {
-                        if let Some(gb) = self.gradient_field_bounds {
-                            if gb.contains(&p) {
-                                self.palette_drag_mode = PaletteDragMode::SaturationValue;
-                                let rel_x = (px_f - f32::from(gb.origin.x)).clamp(0.0, f32::from(gb.size.width));
-                                let rel_y = (py_f - f32::from(gb.origin.y)).clamp(0.0, f32::from(gb.size.height));
-                                self.set_picker_sat_val(rel_x / f32::from(gb.size.width), 1.0 - (rel_y / f32::from(gb.size.height)), cx);
-                                return;
-                            }
-                        }
-                        if let Some(hb) = self.hue_slider_bounds {
-                            if hb.contains(&p) {
-                                self.palette_drag_mode = PaletteDragMode::Hue;
-                                let rel_x = (px_f - f32::from(hb.origin.x)).clamp(0.0, f32::from(hb.size.width));
-                                self.set_picker_hue(rel_x / f32::from(hb.size.width) * 360.0, cx);
-                                return;
-                            }
-                        }
-                    }
                     return;
                 }
             }
@@ -680,6 +701,7 @@ impl ScreenOverlayView {
         if self.show_color_palette {
             self.show_color_palette = false;
             self.hex_input_mode = false;
+            self.sync_and_save_tool_props();
             cx.notify();
         }
 
@@ -993,6 +1015,7 @@ impl ScreenOverlayView {
     ) {
         if self.palette_drag_mode != PaletteDragMode::None {
             self.palette_drag_mode = PaletteDragMode::None;
+            self.sync_and_save_tool_props();
             cx.notify();
             return;
         }
@@ -1212,6 +1235,7 @@ impl ScreenOverlayView {
             if self.show_color_palette {
                 self.show_color_palette = false;
                 self.hex_input_mode = false;
+                self.sync_and_save_tool_props();
                 cx.notify();
                 return;
             }
@@ -1899,7 +1923,10 @@ impl Render for ScreenOverlayView {
                     cx.stop_propagation();
                 })
                 .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                    this.palette_drag_mode = PaletteDragMode::None;
+                    if this.palette_drag_mode != PaletteDragMode::None {
+                        this.palette_drag_mode = PaletteDragMode::None;
+                        this.sync_and_save_tool_props();
+                    }
                     cx.stop_propagation();
                     cx.notify();
                 }));
@@ -2994,6 +3021,11 @@ impl Render for ScreenOverlayView {
                 };
                 let palette_left = f32::from(toolbar_pos.x) + (TOOLBAR_WIDTH - palette_w) / 2.0;
 
+                self.palette_panel_bounds = Some(Bounds {
+                    origin: point(px(palette_left), px(palette_top)),
+                    size: size(px(palette_w), px(palette_h)),
+                });
+
                 let grad_top = palette_top + 16.0 + 34.0;
                 let grad_left = palette_left + 16.0 + left_preview_w;
 
@@ -3066,7 +3098,10 @@ impl Render for ScreenOverlayView {
                             cx.stop_propagation();
                         })
                         .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                            this.palette_drag_mode = PaletteDragMode::None;
+                            if this.palette_drag_mode != PaletteDragMode::None {
+                                this.palette_drag_mode = PaletteDragMode::None;
+                                this.sync_and_save_tool_props();
+                            }
                             cx.stop_propagation();
                             cx.notify();
                         }))
@@ -3099,6 +3134,7 @@ impl Render for ScreenOverlayView {
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.show_color_palette = false;
                                             this.hex_input_mode = false;
+                                            this.sync_and_save_tool_props();
                                             cx.notify();
                                         }))
                                         .child(
@@ -3152,6 +3188,7 @@ impl Render for ScreenOverlayView {
                                             MouseButton::Left,
                                             cx.listener(|this, _, _, cx| {
                                                 this.palette_drag_mode = PaletteDragMode::None;
+                                                this.sync_and_save_tool_props();
                                                 cx.stop_propagation();
                                                 cx.notify();
                                             }),
@@ -3207,6 +3244,7 @@ impl Render for ScreenOverlayView {
                                     MouseButton::Left,
                                     cx.listener(|this, _, _, cx| {
                                         this.palette_drag_mode = PaletteDragMode::None;
+                                        this.sync_and_save_tool_props();
                                         cx.stop_propagation();
                                         cx.notify();
                                     }),
@@ -3382,6 +3420,7 @@ impl Render for ScreenOverlayView {
 
 impl Drop for ScreenOverlayView {
     fn drop(&mut self) {
+        self.sync_and_save_tool_props();
         crate::app::IS_OVERLAY_OPEN.store(false, std::sync::atomic::Ordering::SeqCst);
     }
 }

@@ -760,6 +760,28 @@ fn test_selection_cancellation_and_history_reset() {
     assert!(!history.can_redo());
 }
 
+#[test]
+fn test_palette_gradient_generation_and_corners() {
+    use pixora::overlay::toolbar::{generate_gradient_bitmap, generate_hue_strip_bitmap, hsv_to_rgb};
+
+    // Test red hue (0 degrees)
+    let grad = generate_gradient_bitmap(0.0, 160, 80);
+    assert_eq!(grad.frame_count(), 1);
+
+    // Test blue hue (240 degrees)
+    let grad_blue = generate_gradient_bitmap(240.0, 160, 80);
+    assert_eq!(grad_blue.frame_count(), 1);
+
+    // Test hue strip bitmap
+    let strip = generate_hue_strip_bitmap(448, 12);
+    assert_eq!(strip.frame_count(), 1);
+
+    // Check HSV to RGB math at corner cases
+    assert_eq!(hsv_to_rgb(0.0, 0.0, 1.0), (255, 255, 255)); // White
+    assert_eq!(hsv_to_rgb(0.0, 1.0, 0.0), (0, 0, 0));       // Black
+    assert_eq!(hsv_to_rgb(0.0, 1.0, 1.0), (255, 0, 0));     // Pure Red
+}
+
 
 
 
