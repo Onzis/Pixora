@@ -561,6 +561,41 @@ impl ScreenOverlayView {
         self.show_toast(format!("Copied {} to clipboard", hex), cx);
     }
 
+    pub fn handle_right_mouse_down(
+        &mut self,
+        _ev: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.show_color_palette {
+            self.show_color_palette = false;
+            self.hex_input_mode = false;
+            cx.notify();
+            return;
+        }
+
+        if self.numeric_input_mode.is_some() {
+            self.numeric_input_mode = None;
+            self.numeric_input_buffer.clear();
+            cx.notify();
+            return;
+        }
+
+        if self.text_input_mode {
+            self.text_input_mode = false;
+            self.text_input_buffer.clear();
+            cx.notify();
+            return;
+        }
+
+        if self.selection.is_active {
+            self.cancel_selection(cx);
+            return;
+        }
+
+        window.remove_window();
+    }
+
     pub fn handle_mouse_down(
         &mut self,
         ev: &MouseDownEvent,
@@ -1293,6 +1328,12 @@ impl Render for ScreenOverlayView {
                     this.handle_mouse_down(ev, window, cx);
                 }),
             )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, ev, window, cx| {
+                    this.handle_right_mouse_down(ev, window, cx);
+                }),
+            )
             .on_mouse_move(cx.listener(|this, ev, window, cx| {
                 this.handle_mouse_move(ev, window, cx);
             }))
@@ -1792,8 +1833,8 @@ impl Render for ScreenOverlayView {
                                         .text_color(rgb(0xD0D0D8))
                                         .child(t(
                                             lang,
-                                            "Drag to select area  •  Space for fullscreen  •  Esc to cancel",
-                                            "Выделите область  •  Пробел — весь экран  •  Esc — отмена",
+                                            "Drag to select area  •  Space for fullscreen  •  Esc / Right Click to cancel",
+                                            "Выделите область  •  Пробел — весь экран  •  Esc / ПКМ — отмена",
                                         )),
                                 ),
                         ),
