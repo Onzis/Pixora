@@ -299,7 +299,6 @@ impl Render for SettingsWindowView {
                                 div()
                                     .flex_1()
                                     .min_w(px(0.0))
-                                    .mr_4()
                                     .flex()
                                     .flex_col()
                                     .gap_0p5()
@@ -315,36 +314,6 @@ impl Render for SettingsWindowView {
                                             .text_xs()
                                             .text_color(theme.text_muted)
                                             .child(tab_subtitle),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .flex()
-                                    .items_center()
-                                    .gap_3()
-                                    .child(
-                                        div()
-                                            .id("btn-close-window")
-                                            .px_3()
-                                            .py_1()
-                                            .rounded_md()
-                                            .bg(theme.bg_surface)
-                                            .border_1()
-                                            .border_color(theme.border_subtle)
-                                            .hover(|s| s.bg(theme.bg_hover).text_color(theme.text_primary))
-                                            .cursor_pointer()
-                                            .on_click(cx.listener(|_, _, window, _| {
-                                                crate::app::clear_settings_window_handle();
-                                                window.remove_window();
-                                            }))
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                                    .text_color(theme.text_secondary)
-                                                    .child(t(lang, "Close", "Закрыть")),
-                                            ),
                                     ),
                             ),
                     )
