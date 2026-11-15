@@ -7,7 +7,7 @@ use crate::system::updater::{open_url, UpdateStatus, GITHUB_REPO_URL};
 use crate::theme::PixoraTheme;
 use gpui::{
     App, ClickEvent, Context, FocusHandle, IntoElement, KeyDownEvent, Render, ScrollHandle,
-    Window, div, prelude::*, px, rgb, rgba, svg,
+    Window, div, img, prelude::*, px, rgb, rgba, svg,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -180,7 +180,7 @@ impl Render for SettingsWindowView {
                     .border_color(theme.border_subtle)
                     .flex()
                     .flex_col()
-                    .justify_between()
+                    .justify_start()
                     .p_3p5()
                     .child(
                         div()
@@ -197,13 +197,13 @@ impl Render for SettingsWindowView {
                                     .py_1()
                                     .child(
                                         div()
-                                            .size_7()
+                                            .size(px(28.0))
+                                            .flex_shrink_0()
                                             .rounded_lg()
                                             .overflow_hidden()
                                             .child(
-                                                svg()
-                                                    .path("icons/app-icon.svg")
-                                                    .size_full(),
+                                                img("icons/app-icon.png")
+                                                    .size(px(28.0)),
                                             ),
                                     )
                                     .child(
@@ -272,31 +272,6 @@ impl Render for SettingsWindowView {
                                             cx.notify();
                                         }),
                                     )),
-                            ),
-                    )
-                    // Sidebar footer with auto-save confirmation
-                    .child(
-                        div()
-                            .px_2p5()
-                            .py_1p5()
-                            .rounded_md()
-                            .bg(theme.bg_secondary)
-                            .border_1()
-                            .border_color(theme.border_subtle)
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .size(px(6.0))
-                                    .rounded_full()
-                                    .bg(rgb(0x30D158)),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.text_secondary)
-                                    .child(t(lang, "Auto-saved", "Сохраняется автом.")),
                             ),
                     ),
             )
@@ -1179,13 +1154,13 @@ impl SettingsWindowView {
                     .gap_3p5()
                     .child(
                         div()
-                            .size(px(42.0))
+                            .size(px(48.0))
+                            .flex_shrink_0()
                             .rounded_xl()
                             .overflow_hidden()
                             .child(
-                                svg()
-                                    .path("icons/app-icon.svg")
-                                    .size_full(),
+                                img("icons/app-icon.png")
+                                    .size(px(48.0)),
                             ),
                     )
                     .child(

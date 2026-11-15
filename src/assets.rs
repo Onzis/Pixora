@@ -5,6 +5,10 @@ pub struct PixoraAssets;
 
 impl AssetSource for PixoraAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        if path == "icons/app-icon.png" {
+            return Ok(Some(Cow::Borrowed(include_bytes!("../assets/pixora_icon_128.png"))));
+        }
+
         let svg_str = match path {
             "icons/select.svg" => Some(
                 r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l7 18 3-7 7-3L3 3z"/></svg>"#,
