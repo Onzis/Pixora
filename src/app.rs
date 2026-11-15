@@ -363,7 +363,7 @@ impl PixoraApp {
         }
 
         let config = AppConfig::load();
-        let bounds = Bounds::centered(None, size(px(800.0), px(580.0)), cx);
+        let bounds = Bounds::centered(None, size(px(880.0), px(640.0)), cx);
 
         let window_options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),

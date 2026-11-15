@@ -62,3 +62,32 @@ pub fn open_folder_in_explorer(path: &Path) {
         .arg(path)
         .spawn();
 }
+
+pub fn choose_folder_dialog(initial_dir: &Path) -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        let script = format!(
+            "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.SelectedPath = '{}'; if ($f.ShowDialog() -eq 'OK') {{ Write-Output $f.SelectedPath }}",
+            initial_dir.display().to_string().replace('\'', "''")
+        );
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .ok()?;
+        if output.status.success() {
+            let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path_str.is_empty() {
+                let p = std::path::PathBuf::from(path_str);
+                if p.is_dir() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = initial_dir;
+    }
+    None
+}
