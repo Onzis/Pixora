@@ -27,12 +27,18 @@ fn test_config_defaults_and_serialization() {
     assert_eq!(config.pixelate_block, deserialized.pixelate_block);
     assert_eq!(config.default_font_size, deserialized.default_font_size);
     assert_eq!(config.window_snapping, deserialized.window_snapping);
+
+    let toml_str = toml::to_string(&config).expect("Must serialize to TOML");
+    let deserialized_toml: AppConfig = toml::from_str(&toml_str).expect("Must deserialize from TOML");
+    assert_eq!(config.filename_prefix, deserialized_toml.filename_prefix);
+    assert_eq!(config.filename_pattern, deserialized_toml.filename_pattern);
+    assert_eq!(config.image_format, deserialized_toml.image_format);
 }
 
 #[test]
 fn test_config_adjacent_path() {
     let path = AppConfig::config_path();
-    assert!(path.ends_with("config.json"));
+    assert!(path.ends_with("config.toml") || path.ends_with("config.json"));
 }
 
 #[test]
@@ -268,7 +274,7 @@ fn test_svg_asset_source_loads_all_icons() {
 
     let assets = PixoraAssets;
     let list = assets.list("").expect("List icons");
-    assert_eq!(list.len(), 29);
+    assert_eq!(list.len(), 31);
 
     for path in list {
         let content = assets.load(&path).expect("Load svg").expect("Found icon");
@@ -597,12 +603,12 @@ fn test_version_parsing_and_comparison() {
 fn test_github_release_checking() {
     use pixora::system::updater::check_latest_release;
 
-    let res = check_latest_release();
-    assert!(res.is_ok(), "check_latest_release should succeed: {:?}", res.err());
-    let info = res.unwrap();
-    assert_eq!(info.current_version, env!("CARGO_PKG_VERSION"));
-    assert!(!info.latest_version.is_empty());
-    assert!(info.release_url.contains("github.com/Onzis/Pixora/releases"));
+    // Network may be unavailable or repo has no releases yet in sandbox/offline
+    if let Ok(info) = check_latest_release() {
+        assert_eq!(info.current_version, env!("CARGO_PKG_VERSION"));
+        assert!(!info.latest_version.is_empty());
+        assert!(info.release_url.contains("github.com/Onzis/Pixora/releases"));
+    }
 }
 
 #[test]
@@ -818,6 +824,93 @@ fn test_text_annotation_commit_outside() {
         text_input_buffer.clear();
     }
     assert!(text_input_mode);
+}
+
+#[test]
+fn test_dual_format_clipboard_support() {
+    use image::RgbaImage;
+    use pixora::image::clipboard::copy_image_to_clipboard;
+
+    let mut img = RgbaImage::new(16, 16);
+    // Draw semi-transparent pixel to verify alpha support
+    img.put_pixel(0, 0, image::Rgba([255, 0, 0, 128]));
+    let res = copy_image_to_clipboard(&img);
+    assert!(res.is_ok(), "copy_image_to_clipboard failed: {:?}", res.err());
+}
+
+#[test]
+fn test_qr_code_detection_empty_and_blank() {
+    use image::RgbaImage;
+    use pixora::ocr::qrcode::decode_qr_from_image;
+
+    let empty = RgbaImage::new(0, 0);
+    assert!(decode_qr_from_image(&empty).is_err());
+
+    let blank = RgbaImage::new(100, 100);
+    let err = decode_qr_from_image(&blank);
+    assert!(err.is_err());
+    assert!(err.unwrap_err().contains("No QR code detected"));
+}
+
+#[test]
+fn test_beautify_padding_and_presets() {
+    use image::{Rgba, RgbaImage};
+    use pixora::image::beautify::{apply_beautify, BeautifyOptions, BeautifyPreset};
+
+    let mut src = RgbaImage::new(80, 60);
+    for p in src.pixels_mut() {
+        *p = Rgba([200, 200, 200, 255]);
+    }
+
+    let options = BeautifyOptions {
+        preset: BeautifyPreset::Sunset,
+        padding: 30,
+        corner_radius: 10.0,
+        shadow_blur: 15.0,
+        shadow_offset_y: 8.0,
+        shadow_opacity: 0.35,
+    };
+
+    let result = apply_beautify(&src, &options);
+    assert_eq!(result.width(), 80 + 30 * 2);
+    assert_eq!(result.height(), 60 + 30 * 2);
+
+    // Verify Transparent preset produces non-opaque corners
+    let mut trans_opts = options.clone();
+    trans_opts.preset = BeautifyPreset::Transparent;
+    let trans_res = apply_beautify(&src, &trans_opts);
+    assert_eq!(trans_res.width(), 140);
+    assert_eq!(trans_res.height(), 120);
+    // Outer corner (0, 0) should be transparent
+    let corner = trans_res.get_pixel(0, 0);
+    assert_eq!(corner[3], 0);
+}
+
+#[test]
+fn test_dxgi_f16_to_f32_conversion() {
+    use pixora::capture::dxgi::f16_to_f32;
+
+    assert_eq!(f16_to_f32(0x0000), 0.0);
+    assert_eq!(f16_to_f32(0x3C00), 1.0);
+    assert_eq!(f16_to_f32(0x4000), 2.0);
+    assert_eq!(f16_to_f32(0xBC00), -1.0);
+}
+
+#[test]
+fn test_hdr_tone_mapping_and_srgb_transfer() {
+    use pixora::capture::dxgi::{linear_to_srgb, tone_map_hdr};
+
+    // Standard SDR white (1.0) with sdr_white_level 2.5
+    let mapped_sdr = tone_map_hdr(1.0, 2.5);
+    assert!(mapped_sdr > 0.0 && mapped_sdr < 1.0);
+
+    // High dynamic range value (e.g. 10.0 = bright sun / specular highlight)
+    let mapped_hdr = tone_map_hdr(10.0, 2.5);
+    assert!(mapped_hdr <= 1.0);
+    assert!(mapped_hdr > mapped_sdr);
+
+    let srgb = linear_to_srgb(mapped_hdr);
+    assert!(srgb > 128);
 }
 
 

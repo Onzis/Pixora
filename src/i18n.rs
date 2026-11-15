@@ -18,6 +18,10 @@ pub enum AppLanguage {
 }
 
 impl AppLanguage {
+    pub fn is_ru(&self) -> bool {
+        matches!(self, AppLanguage::Ru)
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             AppLanguage::En => "English",

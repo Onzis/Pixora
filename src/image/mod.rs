@@ -1,3 +1,4 @@
+pub mod beautify;
 pub mod clipboard;
 pub mod crop;
 pub mod export;

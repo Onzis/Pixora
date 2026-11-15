@@ -21,6 +21,7 @@ use crate::editor::tools::ToolKind;
 use crate::i18n::t;
 use crate::image::clipboard::{copy_image_to_clipboard, copy_text_to_clipboard};
 use crate::image::export::auto_save_screenshot;
+use crate::ocr::qrcode::decode_qr_from_image;
 use crate::ocr::recognition::recognize_text_from_image;
 use crate::overlay::magnifier::{MagnifierInfo, render_magnifier};
 use crate::overlay::selection::{ResizeHandle, SelectionDragMode, SelectionState};
@@ -105,6 +106,10 @@ pub struct ScreenOverlayView {
     pub gradient_field_bounds: Option<Bounds<Pixels>>,
     pub hue_slider_bounds: Option<Bounds<Pixels>>,
     pub hovered_tooltip: Option<HoveredTooltip>,
+
+    // Beautify & Pin
+    pub is_beautify_active: bool,
+    pub beautify_preset_idx: usize,
 }
 
 impl ScreenOverlayView {
@@ -237,6 +242,8 @@ impl ScreenOverlayView {
             gradient_field_bounds: None,
             hue_slider_bounds: None,
             hovered_tooltip: None,
+            is_beautify_active: false,
+            beautify_preset_idx: 0,
         }
     }
 
@@ -448,7 +455,18 @@ impl ScreenOverlayView {
 
         let mut cropped = crop_region(&self.capture, crop_rect)?;
         render_annotations_to_image(&mut cropped, &self.history.annotations, sel_x, sel_y);
-        Some(cropped)
+
+        if self.is_beautify_active {
+            let presets = crate::image::beautify::BeautifyPreset::all();
+            let preset = presets[self.beautify_preset_idx % presets.len()];
+            let opts = crate::image::beautify::BeautifyOptions {
+                preset,
+                ..Default::default()
+            };
+            Some(crate::image::beautify::apply_beautify(&cropped, &opts))
+        } else {
+            Some(cropped)
+        }
     }
 
     pub fn do_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -496,6 +514,49 @@ impl ScreenOverlayView {
         }
     }
 
+    pub fn toggle_beautify(&mut self, cx: &mut Context<Self>) {
+        let lang = self.config.language.resolve();
+        let is_ru = lang.is_ru();
+        let presets = crate::image::beautify::BeautifyPreset::all();
+        if !self.is_beautify_active {
+            self.is_beautify_active = true;
+            self.beautify_preset_idx = 0;
+            let name = presets[0].display_name(is_ru);
+            self.show_toast(format!("{}: {}", t(lang, "Beautify enabled", "Фон подложки включён"), name), cx);
+        } else {
+            self.beautify_preset_idx += 1;
+            if self.beautify_preset_idx >= presets.len() {
+                self.is_beautify_active = false;
+                self.beautify_preset_idx = 0;
+                self.show_toast(t(lang, "Beautify disabled", "Фон подложки выключен"), cx);
+            } else {
+                let name = presets[self.beautify_preset_idx].display_name(is_ru);
+                self.show_toast(format!("{}: {}", t(lang, "Beautify", "Фон подложки"), name), cx);
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn do_pin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_text_input();
+        let lang = self.config.language.resolve();
+        if let Some(final_img) = self.prepare_final_image() {
+            let origin = point(px(self.selection.x()), px(self.selection.y()));
+            window.remove_window();
+            cx.spawn(move |_view, cx: &mut gpui::AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    let _ = cx.update(|app| {
+                        crate::pin::open_pinned_screenshot(app, final_img, Some(origin));
+                    });
+                }
+            })
+            .detach();
+        } else {
+            self.show_toast(t(lang, "Select an area first", "Сначала выделите область"), cx);
+        }
+    }
+
     pub fn do_ocr(&mut self, cx: &mut Context<Self>) {
         self.commit_text_input();
         let lang = self.config.language.resolve();
@@ -528,6 +589,31 @@ impl ScreenOverlayView {
             cx.notify();
         } else {
             self.show_toast(t(lang, "Select an area with text first", "Сначала выделите область с текстом"), cx);
+        }
+    }
+
+    pub fn do_qr_scan(&mut self, cx: &mut Context<Self>) {
+        self.commit_text_input();
+        let lang = self.config.language.resolve();
+        if let Some(img) = self.prepare_final_image() {
+            match decode_qr_from_image(&img) {
+                Ok(result) => {
+                    let _ = copy_text_to_clipboard(&result.content);
+                    let first_line = result.content.lines().next().unwrap_or(&result.content).trim();
+                    let char_count = first_line.chars().count();
+                    let preview: String = if char_count > 36 {
+                        format!("{}...", first_line.chars().take(36).collect::<String>())
+                    } else {
+                        first_line.to_string()
+                    };
+                    self.show_toast(format!("{}: \"{}\"", t(lang, "QR Code copied", "QR-код скопирован"), preview), cx);
+                }
+                Err(e) => {
+                    self.show_toast(format!("{}: {}", t(lang, "QR scan failed", "QR-код не найден"), e), cx);
+                }
+            }
+        } else {
+            self.show_toast(t(lang, "Select an area with QR code first", "Сначала выделите область с QR-кодом"), cx);
         }
     }
 
@@ -2127,6 +2213,42 @@ impl Render for ScreenOverlayView {
                             this.set_tooltip(t(lang, "Windows WinRT Text Recognition", "Распознавание текста (OCR)"), 473.0, *hovered, cx);
                         }),
                     ))
+                    .child(render_toolbar_text_button(
+                        "btn-qr".into(),
+                        "QR",
+                        false,
+                        theme_ref,
+                        cx.listener(|this, _, _, cx| {
+                            this.do_qr_scan(cx);
+                        }),
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "QR Code Scanner", "Сканировать QR-код"), 509.0, *hovered, cx);
+                        }),
+                    ))
+                    .child(render_toolbar_button(
+                        "btn-beautify".into(),
+                        "icons/sparkles.svg",
+                        self.is_beautify_active,
+                        theme_ref,
+                        cx.listener(|this, _, _, cx| {
+                            this.toggle_beautify(cx);
+                        }),
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Beautify & Gradient Background", "Красивый фон и подложка"), 545.0, *hovered, cx);
+                        }),
+                    ))
+                    .child(render_toolbar_button(
+                        "btn-pin".into(),
+                        "icons/pin.svg",
+                        false,
+                        theme_ref,
+                        cx.listener(|this, _, window, cx| {
+                            this.do_pin(window, cx);
+                        }),
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Pin to Screen (Always on Top)", "Закрепить поверх окон"), 581.0, *hovered, cx);
+                        }),
+                    ))
                     .child(render_toolbar_button(
                         "btn-undo".into(),
                         "icons/undo.svg",
@@ -2136,7 +2258,7 @@ impl Render for ScreenOverlayView {
                             this.do_undo(cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Undo (Ctrl+Z)", "Отменить (Ctrl+Z)"), 511.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Undo (Ctrl+Z)", "Отменить (Ctrl+Z)"), 617.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -2148,7 +2270,7 @@ impl Render for ScreenOverlayView {
                             this.do_redo(cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Redo (Ctrl+Y)", "Повторить (Ctrl+Y)"), 547.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Redo (Ctrl+Y)", "Повторить (Ctrl+Y)"), 653.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -2160,7 +2282,7 @@ impl Render for ScreenOverlayView {
                             this.do_save(window, cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Save to PNG (Ctrl+S)", "Сохранить в PNG (Ctrl+S)"), 583.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Save to PNG (Ctrl+S)", "Сохранить в PNG (Ctrl+S)"), 689.0, *hovered, cx);
                         }),
                     ))
                     .child(
@@ -2177,7 +2299,7 @@ impl Render for ScreenOverlayView {
                             .cursor_pointer()
                             .shadow_md()
                             .on_hover(cx.listener(move |this, hovered, _, cx| {
-                                this.set_tooltip(t(lang, "Copy to Clipboard (Ctrl+C)", "Копировать в буфер (Ctrl+C)"), 637.0, *hovered, cx);
+                                this.set_tooltip(t(lang, "Copy to Clipboard (Ctrl+C)", "Копировать в буфер (Ctrl+C)"), 743.0, *hovered, cx);
                             }))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.do_copy(window, cx);
@@ -2210,7 +2332,7 @@ impl Render for ScreenOverlayView {
                             .hover(|s| s.bg(rgba(0xFF453A22)).border_color(rgb(0xFF453A)))
                             .cursor_pointer()
                             .on_hover(cx.listener(move |this, hovered, _, cx| {
-                                this.set_tooltip(t(lang, "Close Overlay (Esc)", "Закрыть (Esc)"), 691.0, *hovered, cx);
+                                this.set_tooltip(t(lang, "Close Overlay (Esc)", "Закрыть (Esc)"), 797.0, *hovered, cx);
                             }))
                             .on_click(cx.listener(|_, _, window, _| {
                                 window.remove_window();

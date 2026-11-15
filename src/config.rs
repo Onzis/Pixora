@@ -46,6 +46,18 @@ fn default_window_snapping() -> bool {
     true
 }
 
+fn default_filename_pattern() -> String {
+    "Pixora_%Y-%m-%d_%H-%M-%S".to_string()
+}
+
+fn default_image_format() -> String {
+    "png".to_string()
+}
+
+fn default_jpeg_quality() -> u8 {
+    90
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
@@ -54,6 +66,12 @@ pub struct AppConfig {
     pub auto_save_file: bool,
     pub save_directory: PathBuf,
     pub filename_prefix: String,
+    #[serde(default = "default_filename_pattern")]
+    pub filename_pattern: String,
+    #[serde(default = "default_image_format")]
+    pub image_format: String,
+    #[serde(default = "default_jpeg_quality")]
+    pub jpeg_quality: u8,
     pub show_dimensions: bool,
     pub show_magnifier: bool,
     pub magnifier_zoom: u32,
@@ -95,6 +113,9 @@ impl Default for AppConfig {
             auto_save_file: false,
             save_directory: save_dir,
             filename_prefix: "Pixora".to_string(),
+            filename_pattern: default_filename_pattern(),
+            image_format: default_image_format(),
+            jpeg_quality: default_jpeg_quality(),
             show_dimensions: true,
             show_magnifier: false,
             magnifier_zoom: 4,
@@ -115,52 +136,99 @@ impl Default for AppConfig {
     }
 }
 
+static LAST_CONFIG_MODIFIED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn has_config_file_changed() -> bool {
+    let path = AppConfig::config_path();
+    if let Ok(meta) = std::fs::metadata(&path) {
+        if let Ok(modified) = meta.modified() {
+            if let Ok(dur) = modified.duration_since(std::time::UNIX_EPOCH) {
+                let secs = dur.as_secs();
+                let last = LAST_CONFIG_MODIFIED.swap(secs, std::sync::atomic::Ordering::SeqCst);
+                if last != 0 && last != secs {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 impl AppConfig {
     pub fn adjacent_config_path() -> Option<PathBuf> {
         let exe = std::env::current_exe().ok()?;
         let dir = exe.parent()?;
-        Some(dir.join("config.json"))
+        let toml_path = dir.join("config.toml");
+        if toml_path.exists() {
+            return Some(toml_path);
+        }
+        let json_path = dir.join("config.json");
+        if json_path.exists() {
+            return Some(json_path);
+        }
+        Some(toml_path)
     }
 
     pub fn appdata_config_path() -> PathBuf {
         dirs::config_dir()
-            .map(|p| p.join("Pixora").join("config.json"))
-            .unwrap_or_else(|| PathBuf::from("config.json"))
+            .map(|p| p.join("Pixora").join("config.toml"))
+            .unwrap_or_else(|| PathBuf::from("config.toml"))
     }
 
     pub fn config_path() -> PathBuf {
         if let Some(adj) = Self::adjacent_config_path() {
+            if adj.exists() {
+                return adj;
+            }
+        }
+        let appdata = Self::appdata_config_path();
+        if appdata.exists() {
+            return appdata;
+        }
+        let appdata_json = appdata.with_file_name("config.json");
+        if appdata_json.exists() {
+            return appdata_json;
+        }
+        if let Some(adj) = Self::adjacent_config_path() {
             return adj;
         }
-        Self::appdata_config_path()
+        appdata
+    }
+
+    pub fn load_from_str(data: &str) -> Result<Self, String> {
+        // Try TOML first
+        if let Ok(cfg) = toml::from_str::<AppConfig>(data) {
+            return Ok(cfg);
+        }
+        // Fallback to JSON
+        if let Ok(cfg) = serde_json::from_str::<AppConfig>(data) {
+            return Ok(cfg);
+        }
+        Err("Failed to parse config as TOML or JSON".to_string())
     }
 
     pub fn load() -> Self {
-        let adjacent_opt = Self::adjacent_config_path();
-        let appdata_path = Self::appdata_config_path();
-
-        // 1. Check if config.json exists next to exe
-        if let Some(ref adj) = adjacent_opt {
-            if adj.exists() {
-                if let Ok(data) = std::fs::read_to_string(adj) {
-                    if let Ok(config) = serde_json::from_str(&data) {
-                        return config;
-                    }
+        let path = Self::config_path();
+        if path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&path) {
+                if let Ok(config) = Self::load_from_str(&data) {
+                    return config;
                 }
             }
         }
 
-        // 2. Migration fallback: check if config.json exists in AppData
-        if appdata_path.exists() {
-            if let Ok(data) = std::fs::read_to_string(&appdata_path) {
-                if let Ok(config) = serde_json::from_str::<AppConfig>(&data) {
+        // Migration fallback: check if config.json exists in AppData
+        let appdata_json = Self::appdata_config_path().with_file_name("config.json");
+        if appdata_json.exists() {
+            if let Ok(data) = std::fs::read_to_string(&appdata_json) {
+                if let Ok(config) = Self::load_from_str(&data) {
                     let _ = config.save();
                     return config;
                 }
             }
         }
 
-        // 3. New default config
+        // New default config
         let config = Self::default();
         let _ = config.save();
         config
@@ -168,19 +236,26 @@ impl AppConfig {
 
     pub fn save(&self) -> Result<(), std::io::Error> {
         let path = Self::config_path();
-        if let Some(parent) = path.parent() {
+        let toml_path = if path.extension().and_then(|e| e.to_str()) == Some("json") {
+            path.with_extension("toml")
+        } else {
+            path
+        };
+
+        if let Some(parent) = toml_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, &json)?;
+        let toml_str = toml::to_string_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        std::fs::write(&toml_path, &toml_str)?;
 
         // Also keep appdata in sync
         let appdata = Self::appdata_config_path();
-        if path != appdata {
+        if toml_path != appdata {
             if let Some(parent) = appdata.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            let _ = std::fs::write(&appdata, &json);
+            let _ = std::fs::write(&appdata, &toml_str);
         }
 
         Ok(())

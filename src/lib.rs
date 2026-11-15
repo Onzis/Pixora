@@ -9,6 +9,7 @@ pub mod i18n;
 pub mod image;
 pub mod ocr;
 pub mod overlay;
+pub mod pin;
 pub mod settings;
 pub mod shortcuts;
 pub mod system;

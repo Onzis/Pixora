@@ -135,6 +135,7 @@ pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
 #[cfg(windows)]
 pub fn get_active_window_rect() -> Option<PhysicalRect> {
     use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect};
 
     unsafe {
@@ -144,24 +145,31 @@ pub fn get_active_window_rect() -> Option<PhysicalRect> {
         }
 
         let mut rect = RECT::default();
-        if GetWindowRect(hwnd, &mut rect).is_ok() {
-            let width = (rect.right - rect.left).max(0) as u32;
-            let height = (rect.bottom - rect.top).max(0) as u32;
-            Some(PhysicalRect {
-                x: rect.left,
-                y: rect.top,
-                width,
-                height,
-            })
-        } else {
-            None
+        let hr = DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut rect as *mut _ as *mut _,
+            std::mem::size_of::<RECT>() as u32,
+        );
+        if hr.is_err() && GetWindowRect(hwnd, &mut rect).is_err() {
+            return None;
         }
+
+        let width = (rect.right - rect.left).max(0) as u32;
+        let height = (rect.bottom - rect.top).max(0) as u32;
+        Some(PhysicalRect {
+            x: rect.left,
+            y: rect.top,
+            width,
+            height,
+        })
     }
 }
 
 #[cfg(windows)]
 pub fn get_window_under_cursor_rect() -> Option<PhysicalRect> {
     use windows::Win32::Foundation::{POINT, RECT};
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
     use windows::Win32::UI::WindowsAndMessaging::{
         GA_ROOT, GetAncestor, GetCursorPos, GetWindowRect, WindowFromPoint,
     };
@@ -181,18 +189,24 @@ pub fn get_window_under_cursor_rect() -> Option<PhysicalRect> {
         let target = if root.0.is_null() { hwnd_pt } else { root };
 
         let mut rect = RECT::default();
-        if GetWindowRect(target, &mut rect).is_ok() {
-            let width = (rect.right - rect.left).max(0) as u32;
-            let height = (rect.bottom - rect.top).max(0) as u32;
-            Some(PhysicalRect {
-                x: rect.left,
-                y: rect.top,
-                width,
-                height,
-            })
-        } else {
-            None
+        let hr = DwmGetWindowAttribute(
+            target,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut rect as *mut _ as *mut _,
+            std::mem::size_of::<RECT>() as u32,
+        );
+        if hr.is_err() && GetWindowRect(target, &mut rect).is_err() {
+            return None;
         }
+
+        let width = (rect.right - rect.left).max(0) as u32;
+        let height = (rect.bottom - rect.top).max(0) as u32;
+        Some(PhysicalRect {
+            x: rect.left,
+            y: rect.top,
+            width,
+            height,
+        })
     }
 }
 

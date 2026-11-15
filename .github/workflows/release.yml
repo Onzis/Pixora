@@ -1,0 +1,72 @@
+name: Release Build and Packaging
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build Windows Release
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: clippy
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets
+
+      - name: Run Tests
+        run: cargo test --all-targets
+
+      - name: Build Release Binary
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Generate Changelog with git-cliff
+        uses: orhun/git-cliff-action@v3
+        with:
+          config: cliff.toml
+          args: --verbose --latest
+        env:
+          OUTPUT: RELEASE_NOTES.md
+
+      - name: Package Release Archive
+        shell: pwsh
+        run: |
+          $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "v0.18.0" }
+          $distDir = "dist/Pixora-$tag-x86_64-windows"
+          New-Item -ItemType Directory -Force -Path $distDir
+          Copy-Item "target/x86_64-pc-windows-msvc/release/Pixora.exe" -Destination "$distDir/Pixora.exe"
+          if (Test-Path "LICENSE") {
+            Copy-Item "LICENSE" -Destination "$distDir/LICENSE"
+          }
+          if (Test-Path "README.md") {
+            Copy-Item "README.md" -Destination "$distDir/README.md"
+          }
+          Compress-Archive -Path "$distDir/*" -DestinationPath "Pixora-$tag-windows-x64.zip" -Force
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          body_path: RELEASE_NOTES.md
+          files: |
+            target/x86_64-pc-windows-msvc/release/Pixora.exe
+            Pixora-*-windows-x64.zip
+          draft: false
+          prerelease: false
