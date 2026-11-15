@@ -70,29 +70,91 @@ impl PinnedScreenshotView {
     pub fn start_native_drag(&self, _window: &mut Window) {}
 
     #[cfg(windows)]
-    pub fn resize_native_window(&self, window: &mut Window, width: f32, height: f32) {
+    pub fn get_max_pinned_dimensions(&self, window: &mut Window) -> (f32, f32) {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
         use windows::Win32::Foundation::HWND;
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        };
+
+        if let Ok(handle) = HasWindowHandle::window_handle(window) {
+            if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
+                let hwnd = HWND(win32_handle.hwnd.get() as *mut _);
+                let hmonitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+                let mut mi = MONITORINFO {
+                    cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                    ..Default::default()
+                };
+                if unsafe { GetMonitorInfoW(hmonitor, &mut mi).as_bool() } {
+                    let scale = window.scale_factor();
+                    // Keep 16px away from monitor/taskbar edges to prevent DWM DirectFlip mode flickering
+                    let max_w = (((mi.rcWork.right - mi.rcWork.left) as f32 / scale) - 16.0).max(100.0);
+                    let max_h = (((mi.rcWork.bottom - mi.rcWork.top) as f32 / scale) - 16.0).max(100.0);
+                    return (max_w, max_h);
+                }
+            }
+        }
+        (1800.0, 1000.0)
+    }
+
+    #[cfg(not(windows))]
+    pub fn get_max_pinned_dimensions(&self, _window: &mut Window) -> (f32, f32) {
+        (1800.0, 1000.0)
+    }
+
+    #[cfg(windows)]
+    pub fn resize_native_window(&self, window: &mut Window, width: f32, height: f32) {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use windows::Win32::Foundation::{HWND, RECT};
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        };
         use windows::Win32::UI::WindowsAndMessaging::{
-            SetWindowPos, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER,
+            GetWindowRect, SetWindowPos, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOZORDER,
         };
 
         let scale = window.scale_factor();
-        let phys_w = (width * scale).round() as i32;
-        let phys_h = (height * scale).round() as i32;
+        let phys_w = (width * scale).round().max(48.0) as i32;
+        let phys_h = (height * scale).round().max(48.0) as i32;
 
         if let Ok(handle) = window.window_handle() {
             if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
                 let hwnd = HWND(win32_handle.hwnd.get() as *mut _);
                 unsafe {
+                    let mut rect = RECT::default();
+                    let _ = GetWindowRect(hwnd, &mut rect);
+
+                    let hmonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                    let mut mi = MONITORINFO {
+                        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                        ..Default::default()
+                    };
+                    let (work_right, work_bottom, work_left, work_top) =
+                        if GetMonitorInfoW(hmonitor, &mut mi).as_bool() {
+                            (mi.rcWork.right, mi.rcWork.bottom, mi.rcWork.left, mi.rcWork.top)
+                        } else {
+                            (1920, 1080, 0, 0)
+                        };
+
+                    // Clamp position so the window stays within the visible monitor work area
+                    let mut new_left = rect.left;
+                    let mut new_top = rect.top;
+
+                    if new_left + phys_w > work_right {
+                        new_left = (work_right - phys_w).max(work_left);
+                    }
+                    if new_top + phys_h > work_bottom {
+                        new_top = (work_bottom - phys_h).max(work_top);
+                    }
+
                     let _ = SetWindowPos(
                         hwnd,
                         None,
-                        0,
-                        0,
+                        new_left,
+                        new_top,
                         phys_w,
                         phys_h,
-                        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+                        SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS,
                     );
                 }
             }
@@ -162,18 +224,24 @@ impl Render for PinnedScreenshotView {
                         this.opacity = (this.opacity - 0.05).max(0.20);
                     }
                 } else {
+                    let (max_w, max_h) = this.get_max_pinned_dimensions(window);
+                    let orig_w = this.image.width() as f32;
+                    let orig_h = this.image.height() as f32;
+
+                    // Clamping maximum zoom to prevent matching full monitor bounds (avoids DWM DirectFlip flicker)
+                    let max_allowed_zoom = (max_w / orig_w).min(max_h / orig_h).min(5.0).max(1.0);
+                    let min_allowed_zoom = 0.15f32;
+
                     let old_zoom = this.zoom;
                     if delta > 0.0 {
-                        this.zoom = (this.zoom + 0.1).min(3.5);
+                        this.zoom = (this.zoom + 0.1).min(max_allowed_zoom);
                     } else if delta < 0.0 {
-                        this.zoom = (this.zoom - 0.1).max(0.25);
+                        this.zoom = (this.zoom - 0.1).max(min_allowed_zoom);
                     }
+
                     if (this.zoom - old_zoom).abs() > 0.001 {
-                        let orig_w = this.image.width() as f32;
-                        let orig_h = this.image.height() as f32;
                         let cur_w = orig_w * this.zoom;
                         let cur_h = orig_h * this.zoom;
-                        window.resize(size(px(cur_w), px(cur_h)));
                         this.resize_native_window(window, cur_w, cur_h);
                     }
                 }
