@@ -103,8 +103,7 @@ impl PinnedScreenshotView {
     }
 
     #[cfg(windows)]
-    pub fn resize_native_window(&self, window: &mut Window, width: f32, height: f32) {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    pub fn perform_native_resize(hwnd_raw: isize, scale: f32, width: f32, height: f32) {
         use windows::Win32::Foundation::{HWND, RECT};
         use windows::Win32::Graphics::Gdi::{
             GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
@@ -113,65 +112,55 @@ impl PinnedScreenshotView {
             GetWindowRect, SetWindowPos, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOZORDER,
         };
 
-        let scale = window.scale_factor();
+        let hwnd = HWND(hwnd_raw as *mut _);
         let phys_w = (width * scale).round().max(48.0) as i32;
         let phys_h = (height * scale).round().max(48.0) as i32;
 
-        if let Ok(handle) = window.window_handle() {
-            if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
-                let hwnd = HWND(win32_handle.hwnd.get() as *mut _);
-                unsafe {
-                    let mut rect = RECT::default();
-                    let _ = GetWindowRect(hwnd, &mut rect);
+        unsafe {
+            let mut rect = RECT::default();
+            let _ = GetWindowRect(hwnd, &mut rect);
 
-                    let hmonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-                    let mut mi = MONITORINFO {
-                        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-                        ..Default::default()
-                    };
-                    let (work_right, work_bottom, work_left, work_top) =
-                        if GetMonitorInfoW(hmonitor, &mut mi).as_bool() {
-                            (mi.rcWork.right, mi.rcWork.bottom, mi.rcWork.left, mi.rcWork.top)
-                        } else {
-                            (1920, 1080, 0, 0)
-                        };
+            let hmonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            let mut mi = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            let (work_right, work_bottom, work_left, work_top) =
+                if GetMonitorInfoW(hmonitor, &mut mi).as_bool() {
+                    (mi.rcWork.right, mi.rcWork.bottom, mi.rcWork.left, mi.rcWork.top)
+                } else {
+                    (1920, 1080, 0, 0)
+                };
 
-                    // Clamp position so the window stays within the visible monitor work area
-                    let mut new_left = rect.left;
-                    let mut new_top = rect.top;
+            // Clamp position so the window stays within the visible monitor work area
+            let mut new_left = rect.left;
+            let mut new_top = rect.top;
 
-                    if new_left + phys_w > work_right {
-                        new_left = (work_right - phys_w).max(work_left);
-                    }
-                    if new_top + phys_h > work_bottom {
-                        new_top = (work_bottom - phys_h).max(work_top);
-                    }
-
-                    let _ = SetWindowPos(
-                        hwnd,
-                        None,
-                        new_left,
-                        new_top,
-                        phys_w,
-                        phys_h,
-                        SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS,
-                    );
-                }
+            if new_left + phys_w > work_right {
+                new_left = (work_right - phys_w).max(work_left);
             }
+            if new_top + phys_h > work_bottom {
+                new_top = (work_bottom - phys_h).max(work_top);
+            }
+
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                new_left,
+                new_top,
+                phys_w,
+                phys_h,
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS,
+            );
         }
     }
 
     #[cfg(not(windows))]
-    pub fn resize_native_window(&self, _window: &mut Window, _width: f32, _height: f32) {}
+    pub fn perform_native_resize(_hwnd_raw: isize, _scale: f32, _width: f32, _height: f32) {}
 }
 
 impl Render for PinnedScreenshotView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let orig_w = self.image.width() as f32;
-        let orig_h = self.image.height() as f32;
-        let cur_w = orig_w * self.zoom;
-        let cur_h = orig_h * self.zoom;
-
         let render_img = self.render_image.clone();
         let opacity = self.opacity;
         let zoom_pct = (self.zoom * 100.0).round() as u32;
@@ -179,8 +168,7 @@ impl Render for PinnedScreenshotView {
 
         div()
             .id("pinned-window-root")
-            .w(px(cur_w))
-            .h(px(cur_h))
+            .size_full()
             .relative()
             .bg(rgb(0x18181B))
             .cursor(CursorStyle::Arrow)
@@ -223,14 +211,14 @@ impl Render for PinnedScreenshotView {
                     } else if delta < 0.0 {
                         this.opacity = (this.opacity - 0.05).max(0.20);
                     }
+                    cx.notify();
                 } else {
                     let (max_w, max_h) = this.get_max_pinned_dimensions(window);
                     let orig_w = this.image.width() as f32;
                     let orig_h = this.image.height() as f32;
 
-                    // Clamping maximum zoom to prevent matching full monitor bounds (avoids DWM DirectFlip flicker)
-                    let max_allowed_zoom = (max_w / orig_w).min(max_h / orig_h).min(5.0).max(1.0);
                     let min_allowed_zoom = 0.15f32;
+                    let max_allowed_zoom = (max_w / orig_w).min(max_h / orig_h).min(5.0).max(min_allowed_zoom);
 
                     let old_zoom = this.zoom;
                     if delta > 0.0 {
@@ -242,36 +230,47 @@ impl Render for PinnedScreenshotView {
                     if (this.zoom - old_zoom).abs() > 0.001 {
                         let cur_w = orig_w * this.zoom;
                         let cur_h = orig_h * this.zoom;
-                        this.resize_native_window(window, cur_w, cur_h);
+                        let scale = window.scale_factor();
+
+                        #[cfg(windows)]
+                        let hwnd_raw = {
+                            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                            window.window_handle().ok().and_then(|handle| {
+                                if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
+                                    Some(win32_handle.hwnd.get() as isize)
+                                } else {
+                                    None
+                                }
+                            })
+                        };
+
+                        cx.spawn(move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                            let cx = cx.clone();
+                            async move {
+                                #[cfg(windows)]
+                                if let Some(hwnd) = hwnd_raw {
+                                    Self::perform_native_resize(hwnd, scale, cur_w, cur_h);
+                                }
+                                let _ = cx.update(|app| {
+                                    let _ = this.update(app, |_view, cx| {
+                                        cx.notify();
+                                    });
+                                });
+                            }
+                        })
+                        .detach();
                     }
                 }
-                cx.notify();
-                cx.spawn(move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                    let cx = cx.clone();
-                    async move {
-                        let _ = cx.update(|app| {
-                            let _ = this.update(app, |_view, cx| {
-                                cx.notify();
-                            });
-                        });
-                    }
-                })
-                .detach();
             }))
-            // Image canvas explicitly sized to target zoomed dimensions - scales proportionally without cropping
+            // Image canvas fills 100% of the window - scales proportionally without cropping
             .child(
                 canvas(
                     |_, _, _| (),
                     move |bounds, _, window, _cx| {
-                        let draw_bounds = Bounds {
-                            origin: bounds.origin,
-                            size: size(px(cur_w), px(cur_h)),
-                        };
-                        let _ = window.paint_image(draw_bounds, Corners::default(), render_img.clone(), 0, false);
+                        let _ = window.paint_image(bounds, Corners::default(), render_img.clone(), 0, false);
                     },
                 )
-                .w(px(cur_w))
-                .h(px(cur_h))
+                .size_full()
                 .opacity(opacity),
             )
             // Floating control badge (zoom percentage and close button) on hover
@@ -357,7 +356,7 @@ pub fn open_pinned_screenshot(cx: &mut gpui::App, image: RgbaImage, initial_orig
             use windows::Win32::UI::WindowsAndMessaging::{
                 BringWindowToTop, GetWindowLongW, SetForegroundWindow, SetWindowLongW,
                 SetWindowPos, GWL_EXSTYLE, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED,
-                SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, WS_EX_TOPMOST, WS_POPUP,
+                SWP_NOSIZE, SWP_SHOWWINDOW, WS_EX_TOPMOST, WS_POPUP,
             };
 
             if let Ok(handle) = window.window_handle() {
@@ -393,14 +392,42 @@ pub fn open_pinned_screenshot(cx: &mut gpui::App, image: RgbaImage, initial_orig
                             std::mem::size_of::<u32>() as u32,
                         );
 
+                        let mut rect = windows::Win32::Foundation::RECT::default();
+                        let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect);
+                        let hmonitor = windows::Win32::Graphics::Gdi::MonitorFromWindow(
+                            hwnd,
+                            windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST,
+                        );
+                        let mut mi = windows::Win32::Graphics::Gdi::MONITORINFO {
+                            cbSize: std::mem::size_of::<windows::Win32::Graphics::Gdi::MONITORINFO>() as u32,
+                            ..Default::default()
+                        };
+                        let (work_right, work_bottom, work_left, work_top) =
+                            if windows::Win32::Graphics::Gdi::GetMonitorInfoW(hmonitor, &mut mi).as_bool() {
+                                (mi.rcWork.right, mi.rcWork.bottom, mi.rcWork.left, mi.rcWork.top)
+                            } else {
+                                (1920, 1080, 0, 0)
+                            };
+
+                        let w = rect.right - rect.left;
+                        let h = rect.bottom - rect.top;
+                        let mut new_left = rect.left;
+                        let mut new_top = rect.top;
+                        if new_left + w > work_right {
+                            new_left = (work_right - w).max(work_left);
+                        }
+                        if new_top + h > work_bottom {
+                            new_top = (work_bottom - h).max(work_top);
+                        }
+
                         let _ = SetWindowPos(
                             hwnd,
                             Some(HWND_TOPMOST),
+                            new_left,
+                            new_top,
                             0,
                             0,
-                            0,
-                            0,
-                            SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+                            SWP_NOSIZE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
                         );
 
                         let _ = BringWindowToTop(hwnd);
