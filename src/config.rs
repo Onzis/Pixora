@@ -158,15 +158,7 @@ impl AppConfig {
     pub fn adjacent_config_path() -> Option<PathBuf> {
         let exe = std::env::current_exe().ok()?;
         let dir = exe.parent()?;
-        let toml_path = dir.join("config.toml");
-        if toml_path.exists() {
-            return Some(toml_path);
-        }
-        let json_path = dir.join("config.json");
-        if json_path.exists() {
-            return Some(json_path);
-        }
-        Some(toml_path)
+        Some(dir.join("config.toml"))
     }
 
     pub fn appdata_config_path() -> PathBuf {
@@ -185,10 +177,6 @@ impl AppConfig {
         if appdata.exists() {
             return appdata;
         }
-        let appdata_json = appdata.with_file_name("config.json");
-        if appdata_json.exists() {
-            return appdata_json;
-        }
         if let Some(adj) = Self::adjacent_config_path() {
             return adj;
         }
@@ -200,29 +188,47 @@ impl AppConfig {
         if let Ok(cfg) = toml::from_str::<AppConfig>(data) {
             return Ok(cfg);
         }
-        // Fallback to JSON
+        // Fallback to JSON for seamless migration of old configs
         if let Ok(cfg) = serde_json::from_str::<AppConfig>(data) {
             return Ok(cfg);
         }
-        Err("Failed to parse config as TOML or JSON".to_string())
+        Err("Failed to parse config as TOML".to_string())
     }
 
     pub fn load() -> Self {
-        let path = Self::config_path();
-        if path.exists() {
-            if let Ok(data) = std::fs::read_to_string(&path) {
-                if let Ok(config) = Self::load_from_str(&data) {
-                    return config;
+        // Migrate and clean up any legacy adjacent config.json
+        if let Some(exe) = std::env::current_exe().ok() {
+            if let Some(dir) = exe.parent() {
+                let legacy_json = dir.join("config.json");
+                if legacy_json.exists() {
+                    if let Ok(data) = std::fs::read_to_string(&legacy_json) {
+                        if let Ok(config) = Self::load_from_str(&data) {
+                            let _ = config.save();
+                        }
+                    }
+                    let _ = std::fs::remove_file(&legacy_json);
                 }
             }
         }
 
-        // Migration fallback: check if config.json exists in AppData
-        let appdata_json = Self::appdata_config_path().with_file_name("config.json");
-        if appdata_json.exists() {
-            if let Ok(data) = std::fs::read_to_string(&appdata_json) {
+        // Migrate and clean up any legacy AppData config.json
+        let legacy_appdata_json = dirs::config_dir()
+            .map(|p| p.join("Pixora").join("config.json"));
+        if let Some(path) = legacy_appdata_json {
+            if path.exists() {
+                if let Ok(data) = std::fs::read_to_string(&path) {
+                    if let Ok(config) = Self::load_from_str(&data) {
+                        let _ = config.save();
+                    }
+                }
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+
+        let path = Self::config_path();
+        if path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&path) {
                 if let Ok(config) = Self::load_from_str(&data) {
-                    let _ = config.save();
                     return config;
                 }
             }
@@ -235,15 +241,15 @@ impl AppConfig {
     }
 
     pub fn save(&self) -> Result<(), std::io::Error> {
-        let path = Self::config_path();
-        let toml_path = if path.extension().and_then(|e| e.to_str()) == Some("json") {
-            path.with_extension("toml")
-        } else {
-            path
-        };
+        let toml_path = Self::config_path();
 
         if let Some(parent) = toml_path.parent() {
             let _ = std::fs::create_dir_all(parent);
+            // Delete old config.json if present
+            let old_json = parent.join("config.json");
+            if old_json.exists() {
+                let _ = std::fs::remove_file(&old_json);
+            }
         }
         let toml_str = toml::to_string_pretty(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
@@ -254,6 +260,10 @@ impl AppConfig {
         if toml_path != appdata {
             if let Some(parent) = appdata.parent() {
                 let _ = std::fs::create_dir_all(parent);
+                let old_appdata_json = parent.join("config.json");
+                if old_appdata_json.exists() {
+                    let _ = std::fs::remove_file(&old_appdata_json);
+                }
             }
             let _ = std::fs::write(&appdata, &toml_str);
         }

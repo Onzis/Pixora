@@ -38,7 +38,7 @@ fn test_config_defaults_and_serialization() {
 #[test]
 fn test_config_adjacent_path() {
     let path = AppConfig::config_path();
-    assert!(path.ends_with("config.toml") || path.ends_with("config.json"));
+    assert!(path.ends_with("config.toml"));
 }
 
 #[test]
