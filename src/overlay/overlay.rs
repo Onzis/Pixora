@@ -595,10 +595,29 @@ impl ScreenOverlayView {
     pub fn do_qr_scan(&mut self, cx: &mut Context<Self>) {
         self.commit_text_input();
         let lang = self.config.language.resolve();
-        if let Some(img) = self.prepare_final_image() {
+        let img_opt = if self.selection.is_active {
+            let sel_x = self.selection.x();
+            let sel_y = self.selection.y();
+            let sel_w = self.selection.width();
+            let sel_h = self.selection.height();
+            let crop_rect = PhysicalRect {
+                x: sel_x.round() as i32,
+                y: sel_y.round() as i32,
+                width: sel_w.round().max(1.0) as u32,
+                height: sel_h.round().max(1.0) as u32,
+            };
+            crop_region(&self.capture, crop_rect).or_else(|| self.prepare_final_image())
+        } else {
+            self.prepare_final_image()
+        };
+
+        if let Some(img) = img_opt {
             match decode_qr_from_image(&img) {
                 Ok(result) => {
                     let _ = copy_text_to_clipboard(&result.content);
+                    if self.config.sound_effects {
+                        play_capture_sound();
+                    }
                     let first_line = result.content.lines().next().unwrap_or(&result.content).trim();
                     let char_count = first_line.chars().count();
                     let preview: String = if char_count > 36 {
@@ -606,7 +625,11 @@ impl ScreenOverlayView {
                     } else {
                         first_line.to_string()
                     };
-                    self.show_toast(format!("{}: \"{}\"", t(lang, "QR Code copied", "QR-код скопирован"), preview), cx);
+                    let label = match result.format.as_deref() {
+                        Some("QR_CODE") | None => t(lang, "QR Code copied", "QR-код скопирован"),
+                        Some(_) => t(lang, "Code copied", "Код скопирован"),
+                    };
+                    self.show_toast(format!("{}: \"{}\"", label, preview), cx);
                 }
                 Err(e) => {
                     self.show_toast(format!("{}: {}", t(lang, "QR scan failed", "QR-код не найден"), e), cx);

@@ -853,6 +853,74 @@ fn test_qr_code_detection_empty_and_blank() {
 }
 
 #[test]
+fn test_qr_code_decoding_tight_crop_and_inverted() {
+    use image::{Rgba, RgbaImage};
+    use pixora::ocr::qrcode::decode_qr_from_image;
+    use rxing::qrcode::QRCodeWriter;
+    use rxing::Writer;
+    use rxing::BarcodeFormat;
+
+    let writer = QRCodeWriter::default();
+    let bit_matrix = writer
+        .encode("https://pixora.app/test", &BarcodeFormat::QR_CODE, 100, 100)
+        .expect("should encode QR");
+
+    let w = bit_matrix.getWidth();
+    let h = bit_matrix.getHeight();
+    let mut img = RgbaImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let color = if bit_matrix.get(x, y) {
+                Rgba([0, 0, 0, 255])
+            } else {
+                Rgba([255, 255, 255, 255])
+            };
+            img.put_pixel(x, y, color);
+        }
+    }
+
+    // 1. Standard QR decode
+    let res = decode_qr_from_image(&img).expect("should decode standard QR");
+    assert_eq!(res.content, "https://pixora.app/test");
+
+    // 2. Inverted QR decode (dark theme: white on black)
+    let mut inverted = img.clone();
+    for p in inverted.pixels_mut() {
+        p[0] = 255 - p[0];
+        p[1] = 255 - p[1];
+        p[2] = 255 - p[2];
+    }
+    let res_inv = decode_qr_from_image(&inverted).expect("should decode inverted QR");
+    assert_eq!(res_inv.content, "https://pixora.app/test");
+
+    // 3. Tightly cropped QR decode (0 quiet zone padding)
+    let mut min_x = w;
+    let mut min_y = h;
+    let mut max_x = 0;
+    let mut max_y = 0;
+    for y in 0..h {
+        for x in 0..w {
+            if bit_matrix.get(x, y) {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+    let tight_w = max_x - min_x + 1;
+    let tight_h = max_y - min_y + 1;
+    let mut tight_img = RgbaImage::new(tight_w, tight_h);
+    for y in 0..tight_h {
+        for x in 0..tight_w {
+            tight_img.put_pixel(x, y, *img.get_pixel(min_x + x, min_y + y));
+        }
+    }
+    let res_tight = decode_qr_from_image(&tight_img).expect("should decode tightly cropped QR");
+    assert_eq!(res_tight.content, "https://pixora.app/test");
+}
+
+#[test]
 fn test_beautify_padding_and_presets() {
     use image::{Rgba, RgbaImage};
     use pixora::image::beautify::{apply_beautify, BeautifyOptions, BeautifyPreset};
