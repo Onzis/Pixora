@@ -81,31 +81,6 @@ impl SettingsWindowView {
                     let _ = this.update(app, |view, cx| {
                         let now_str = chrono::Local::now().format("%H:%M:%S").to_string();
                         view.last_checked_time = Some(now_str);
-                        let lang = view.config.language.resolve();
-                        match &status {
-                            UpdateStatus::UpToDate { version } => {
-                                view.status_message = Some(format!(
-                                    "{}: v{}",
-                                    t(lang, "Pixora is up to date", "У вас установлена последняя версия"),
-                                    version
-                                ));
-                            }
-                            UpdateStatus::Available { latest, .. } => {
-                                view.status_message = Some(format!(
-                                    "{}: v{}",
-                                    t(lang, "New update available", "Доступно обновление"),
-                                    latest
-                                ));
-                            }
-                            UpdateStatus::Error(e) => {
-                                view.status_message = Some(format!(
-                                    "{}: {}",
-                                    t(lang, "Update check failed", "Не удалось проверить обновления"),
-                                    e
-                                ));
-                            }
-                            _ => {}
-                        }
                         view.update_status = status;
                         cx.notify();
                     });
@@ -195,10 +170,10 @@ impl Render for SettingsWindowView {
                     }
                 }
             }))
-            // Left Navigation Sidebar
+            // Left Navigation Sidebar (190px)
             .child(
                 div()
-                    .w(px(220.0))
+                    .w(px(190.0))
                     .flex_shrink_0()
                     .bg(theme.bg_surface)
                     .border_r_1()
@@ -206,23 +181,23 @@ impl Render for SettingsWindowView {
                     .flex()
                     .flex_col()
                     .justify_between()
-                    .p_4()
+                    .p_3p5()
                     .child(
                         div()
                             .flex()
                             .flex_col()
-                            .gap_4()
+                            .gap_3p5()
                             // Brand header
                             .child(
                                 div()
                                     .flex()
                                     .items_center()
-                                    .gap_3()
-                                    .px_2()
+                                    .gap_2p5()
+                                    .px_1p5()
                                     .py_1()
                                     .child(
                                         div()
-                                            .size_8()
+                                            .size_7()
                                             .rounded_lg()
                                             .overflow_hidden()
                                             .child(
@@ -237,7 +212,7 @@ impl Render for SettingsWindowView {
                                             .flex_col()
                                             .child(
                                                 div()
-                                                    .text_base()
+                                                    .text_sm()
                                                     .font_weight(gpui::FontWeight::BOLD)
                                                     .text_color(theme.text_primary)
                                                     .child("Pixora"),
@@ -302,9 +277,9 @@ impl Render for SettingsWindowView {
                     // Sidebar footer with auto-save confirmation
                     .child(
                         div()
-                            .px_2()
-                            .py_2()
-                            .rounded_lg()
+                            .px_2p5()
+                            .py_1p5()
+                            .rounded_md()
                             .bg(theme.bg_secondary)
                             .border_1()
                             .border_color(theme.border_subtle)
@@ -321,7 +296,7 @@ impl Render for SettingsWindowView {
                                 div()
                                     .text_xs()
                                     .text_color(theme.text_secondary)
-                                    .child(t(lang, "Auto-saved", "Сохраняется автоматически")),
+                                    .child(t(lang, "Auto-saved", "Сохраняется автом.")),
                             ),
                     ),
             )
@@ -340,19 +315,22 @@ impl Render for SettingsWindowView {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .px_8()
-                            .py_4()
+                            .px_6()
+                            .py_3p5()
                             .border_b_1()
                             .border_color(theme.border_subtle)
                             .bg(theme.bg_dark)
                             .child(
                                 div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .mr_4()
                                     .flex()
                                     .flex_col()
                                     .gap_0p5()
                                     .child(
                                         div()
-                                            .text_lg()
+                                            .text_base()
                                             .font_weight(gpui::FontWeight::SEMIBOLD)
                                             .text_color(theme.text_primary)
                                             .child(tab_title),
@@ -366,29 +344,15 @@ impl Render for SettingsWindowView {
                             )
                             .child(
                                 div()
+                                    .flex_shrink_0()
                                     .flex()
                                     .items_center()
                                     .gap_3()
-                                    .when_some(self.status_message.as_ref(), |p, msg| {
-                                        p.child(
-                                            div()
-                                                .px_2p5()
-                                                .py_1()
-                                                .rounded_full()
-                                                .bg(rgba(0x8174FF1F))
-                                                .border_1()
-                                                .border_color(rgba(0x8174FF40))
-                                                .text_xs()
-                                                .text_color(theme.accent)
-                                                .font_weight(gpui::FontWeight::MEDIUM)
-                                                .child(msg.clone()),
-                                        )
-                                    })
                                     .child(
                                         div()
                                             .id("btn-close-window")
-                                            .px_3p5()
-                                            .py_1p5()
+                                            .px_3()
+                                            .py_1()
                                             .rounded_md()
                                             .bg(theme.bg_surface)
                                             .border_1()
@@ -417,9 +381,9 @@ impl Render for SettingsWindowView {
                             .min_h(px(0.0))
                             .overflow_y_scroll()
                             .track_scroll(&self.scroll_handle)
-                            .px_8()
-                            .py_6()
-                            .pb_16()
+                            .px_6()
+                            .py_5()
+                            .pb_8()
                             .child(match tab {
                                 SettingsTab::General => self.render_general_tab(cx),
                                 SettingsTab::Capture => self.render_capture_tab(cx),
@@ -439,20 +403,20 @@ impl SettingsWindowView {
 
         let system_lang = detect_system_language();
         let auto_label = match system_lang {
-            AppLanguage::Ru => t(lang, "Auto (System: RU)", "Авто (Система: RU)"),
-            AppLanguage::En => t(lang, "Auto (System: EN)", "Авто (Система: EN)"),
+            AppLanguage::Ru => t(lang, "Auto (RU)", "Авто (RU)"),
+            AppLanguage::En => t(lang, "Auto (EN)", "Авто (EN)"),
         };
 
         div()
             .flex()
             .flex_col()
-            .gap_6()
-            // Section 1: Language & Interface
+            .gap_4()
+            // Section 1: Language
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .gap_1p5()
                     .child(render_section_title(t(lang, "Interface Language", "Язык интерфейса")))
                     .child(
                         div()
@@ -460,12 +424,16 @@ impl SettingsWindowView {
                             .bg(theme.bg_surface)
                             .border_1()
                             .border_color(theme.border_subtle)
-                            .p_4()
+                            .px_4()
+                            .py_3()
                             .flex()
                             .items_center()
                             .justify_between()
                             .child(
                                 div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .mr_3()
                                     .flex()
                                     .flex_col()
                                     .gap_0p5()
@@ -482,13 +450,14 @@ impl SettingsWindowView {
                                             .text_color(theme.text_secondary)
                                             .child(t(
                                                 lang,
-                                                "Choose interface language or follow Windows system locale",
-                                                "Выберите язык программы или используйте язык Windows автоматически",
+                                                "Choose program language or follow Windows locale",
+                                                "Язык программы или язык Windows автоматически",
                                             )),
                                     ),
                             )
                             .child(
                                 div()
+                                    .flex_shrink_0()
                                     .flex()
                                     .items_center()
                                     .gap_1()
@@ -532,7 +501,7 @@ impl SettingsWindowView {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .gap_1p5()
                     .child(render_section_title(t(lang, "System & Behavior", "Система и поведение")))
                     .child(
                         div()
@@ -546,8 +515,8 @@ impl SettingsWindowView {
                                 t(lang, "Run at Windows startup", "Автозапуск при старте Windows"),
                                 t(
                                     lang,
-                                    "Launch Pixora automatically in the background when logging into Windows",
-                                    "Автоматически запускать Pixora в фоне при входе в Windows",
+                                    "Launch Pixora automatically in background when logging in",
+                                    "Автоматически запускать Pixora в фоне при входе в систему",
                                 ),
                                 render_switch(
                                     "toggle-startup",
@@ -564,8 +533,8 @@ impl SettingsWindowView {
                                 t(lang, "Auto-copy to clipboard", "Автокопирование в буфер"),
                                 t(
                                     lang,
-                                    "Automatically copy screenshot to clipboard immediately after selection or capture",
-                                    "Автоматически копировать снимок в буфер сразу после выделения или захвата",
+                                    "Copy screenshot immediately after selection or capture",
+                                    "Копировать снимок в буфер сразу после выделения или захвата",
                                 ),
                                 render_switch(
                                     "toggle-autocopy",
@@ -582,13 +551,14 @@ impl SettingsWindowView {
                                 t(lang, "Sound effects", "Звуковые эффекты"),
                                 t(
                                     lang,
-                                    "Play camera shutter sound upon capture (ScreenFX)",
-                                    "Воспроизводить щелчок затвора при создании снимка (ScreenFX)",
+                                    "Play shutter sound upon capture (ScreenFX)",
+                                    "Воспроизводить щелчок затвора при создании снимка",
                                 ),
                                 div()
+                                    .flex_shrink_0()
                                     .flex()
                                     .items_center()
-                                    .gap_3()
+                                    .gap_2p5()
                                     .when(self.config.sound_effects, |p| {
                                         p.child(
                                             div()
@@ -609,7 +579,7 @@ impl SettingsWindowView {
                                                         .text_xs()
                                                         .font_weight(gpui::FontWeight::MEDIUM)
                                                         .text_color(theme.text_secondary)
-                                                        .child(t(lang, "Test Sound", "Прослушать")),
+                                                        .child(t(lang, "Test", "Прослушать")),
                                                 ),
                                         )
                                     })
@@ -632,7 +602,7 @@ impl SettingsWindowView {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .gap_1p5()
                     .child(render_section_title(t(lang, "Screenshots Storage", "Сохранение снимков")))
                     .child(
                         div()
@@ -641,69 +611,55 @@ impl SettingsWindowView {
                             .border_1()
                             .border_color(theme.border_subtle)
                             .overflow_hidden()
-                            // Folder row
+                            // Folder row (compact single-row design)
                             .child(
                                 div()
-                                    .p_4()
+                                    .px_4()
+                                    .py_3()
                                     .flex()
-                                    .flex_col()
+                                    .items_center()
+                                    .justify_between()
                                     .gap_3()
                                     .child(
                                         div()
+                                            .flex_1()
+                                            .min_w(px(0.0))
                                             .flex()
-                                            .items_center()
-                                            .justify_between()
+                                            .flex_col()
+                                            .gap_1()
                                             .child(
                                                 div()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .gap_0p5()
-                                                    .child(
-                                                        div()
-                                                            .text_sm()
-                                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                                            .text_color(theme.text_primary)
-                                                            .child(t(lang, "Screenshots Directory", "Папка со снимками")),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_xs()
-                                                            .text_color(theme.text_secondary)
-                                                            .child(t(
-                                                                lang,
-                                                                "Target folder for auto-saved screenshots and quick saves",
-                                                                "Каталог по умолчанию для автоматического сохранения файлов",
-                                                            )),
-                                                    ),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
+                                                    .text_sm()
+                                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                                    .text_color(theme.text_primary)
+                                                    .child(t(lang, "Screenshots Directory", "Папка со снимками")),
+                                            )
                                             .child(
                                                 div()
-                                                    .flex_1()
-                                                    .min_w(px(0.0))
                                                     .overflow_hidden()
-                                                    .px_3()
-                                                    .py_2()
-                                                    .rounded_lg()
+                                                    .px_2p5()
+                                                    .py_1()
+                                                    .rounded_md()
                                                     .bg(theme.bg_secondary)
                                                     .border_1()
                                                     .border_color(theme.border_subtle)
                                                     .text_xs()
                                                     .text_color(theme.text_secondary)
                                                     .child(save_dir),
-                                            )
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
                                             .child(
                                                 div()
                                                     .id("btn-browse-folder")
-                                                    .flex_shrink_0()
                                                     .px_3()
-                                                    .py_2()
-                                                    .rounded_lg()
+                                                    .py_1p5()
+                                                    .rounded_md()
                                                     .bg(theme.bg_secondary)
                                                     .border_1()
                                                     .border_color(theme.border_subtle)
@@ -726,13 +682,12 @@ impl SettingsWindowView {
                                             .child(
                                                 div()
                                                     .id("btn-open-folder")
-                                                    .flex_shrink_0()
                                                     .flex()
                                                     .items_center()
                                                     .gap_1p5()
                                                     .px_3()
-                                                    .py_2()
-                                                    .rounded_lg()
+                                                    .py_1p5()
+                                                    .rounded_md()
                                                     .bg(theme.bg_surface)
                                                     .border_1()
                                                     .border_color(theme.border_subtle)
@@ -744,14 +699,14 @@ impl SettingsWindowView {
                                                     .child(
                                                         svg()
                                                             .path("icons/folder.svg")
-                                                            .size(px(14.0))
+                                                            .size(px(13.0))
                                                             .text_color(theme.text_secondary),
                                                     )
                                                     .child(
                                                         div()
                                                             .text_xs()
                                                             .text_color(theme.text_primary)
-                                                            .child(t(lang, "Open Folder", "Открыть папку")),
+                                                            .child(t(lang, "Open Folder", "Открыть")),
                                                     ),
                                             ),
                                     ),
@@ -785,13 +740,13 @@ impl SettingsWindowView {
         div()
             .flex()
             .flex_col()
-            .gap_6()
+            .gap_4()
             // Section 1: Overlay Tools & Snapping
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .gap_1p5()
                     .child(render_section_title(t(lang, "Interactive Overlay & Snapping", "Интерактивный оверлей и привязка")))
                     .child(
                         div()
@@ -805,8 +760,8 @@ impl SettingsWindowView {
                                 t(lang, "Show selection dimensions", "Размеры выделенной области"),
                                 t(
                                     lang,
-                                    "Display width and height pixel badge beside selection box (e.g. 1920 × 1080)",
-                                    "Отображать бейдж с точными размерами (пикселями) рядом с рамкой",
+                                    "Display width and height pixel badge beside selection box (1920 × 1080)",
+                                    "Отображать бейдж с шириной и высотой рядом с рамкой",
                                 ),
                                 render_switch(
                                     "toggle-dimensions",
@@ -823,8 +778,8 @@ impl SettingsWindowView {
                                 t(lang, "Pixel magnifier & loupe", "Экранная пиксельная лупа"),
                                 t(
                                     lang,
-                                    "Display zoomed pixel grid, coordinates and HEX color inspector near the cursor",
-                                    "Отображать увеличенную сетку пикселей, координаты и HEX-код цвета около курсора",
+                                    "Display zoomed pixel grid, coordinates and HEX color near the cursor",
+                                    "Отображать увеличенную сетку пикселей, координаты и HEX-код цвета",
                                 ),
                                 render_switch(
                                     "toggle-magnifier",
@@ -860,7 +815,7 @@ impl SettingsWindowView {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .gap_1p5()
                     .child(render_section_title(t(lang, "Text Recognition (OCR)", "Распознавание текста (OCR)")))
                     .child(
                         div()
@@ -868,12 +823,16 @@ impl SettingsWindowView {
                             .bg(theme.bg_surface)
                             .border_1()
                             .border_color(theme.border_subtle)
-                            .p_4()
+                            .px_4()
+                            .py_3()
                             .flex()
                             .items_center()
                             .justify_between()
                             .child(
                                 div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .mr_3()
                                     .flex()
                                     .flex_col()
                                     .gap_0p5()
@@ -890,13 +849,14 @@ impl SettingsWindowView {
                                             .text_color(theme.text_secondary)
                                             .child(t(
                                                 lang,
-                                                "Windows OCR model for text extraction (supports hybrid bilingual RU+EN mode)",
-                                                "Модель Windows OCR для извлечения текста (поддерживает гибридный режим RU+EN)",
+                                                "Windows OCR model for text extraction (supports hybrid mode)",
+                                                "Модель Windows OCR (поддерживает гибридный режим RU+EN)",
                                             )),
                                     ),
                             )
                             .child(
                                 div()
+                                    .flex_shrink_0()
                                     .flex()
                                     .items_center()
                                     .gap_1()
@@ -907,7 +867,7 @@ impl SettingsWindowView {
                                     .border_color(theme.border_subtle)
                                     .child(render_segmented_chip(
                                         "chip-ocr-auto",
-                                        t(lang, "Auto (RU + EN)", "Авто (RU + EN)"),
+                                        t(lang, "Auto (RU+EN)", "Авто (RU+EN)"),
                                         self.config.ocr_language == "auto",
                                         cx.listener(|this, _, _, cx| {
                                             this.config.ocr_language = "auto".to_string();
@@ -944,7 +904,7 @@ impl SettingsWindowView {
         let global_shortcuts = [
             (
                 t(lang, "Region Capture", "Снимок области"),
-                t(lang, "Capture selected screen area with interactive overlay", "Захват выбранной области экрана с интерактивной панелью"),
+                t(lang, "Capture selected area with interactive overlay", "Захват выбранной области экрана с панелью инструментов"),
                 &self.config.hotkey_region,
                 ShortcutRebindTarget::Region,
             ),
@@ -975,13 +935,13 @@ impl SettingsWindowView {
         div()
             .flex()
             .flex_col()
-            .gap_6()
+            .gap_4()
             // Section 1: Global Rebindable Hotkeys
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .gap_1p5()
                     .child(
                         div()
                             .flex()
@@ -1070,8 +1030,8 @@ impl SettingsWindowView {
                                                     .gap_2()
                                                     .child(
                                                         div()
-                                                            .px_3()
-                                                            .py_1p5()
+                                                            .px_2p5()
+                                                            .py_1()
                                                             .rounded_md()
                                                             .bg(theme.bg_secondary)
                                                             .border_1()
@@ -1100,8 +1060,8 @@ impl SettingsWindowView {
                                                                 ShortcutRebindTarget::Fullscreen => "btn-rebind-fs",
                                                                 ShortcutRebindTarget::Window => "btn-rebind-win",
                                                             })
-                                                            .px_3()
-                                                            .py_1p5()
+                                                            .px_2p5()
+                                                            .py_1()
                                                             .rounded_md()
                                                             .bg(if is_rebinding {
                                                                 theme.accent
@@ -1152,7 +1112,7 @@ impl SettingsWindowView {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .gap_1p5()
                     .child(render_section_title(t(lang, "In-Editor Keybindings", "Горячие клавиши в оверлее")))
                     .child(
                         div()
@@ -1172,7 +1132,7 @@ impl SettingsWindowView {
                                             .items_center()
                                             .justify_between()
                                             .px_4()
-                                            .py_2p5()
+                                            .py_2()
                                             .child(
                                                 div()
                                                     .text_xs()
@@ -1181,8 +1141,8 @@ impl SettingsWindowView {
                                             )
                                             .child(
                                                 div()
-                                                    .px_2p5()
-                                                    .py_1()
+                                                    .px_2()
+                                                    .py_0p5()
                                                     .rounded_md()
                                                     .bg(theme.bg_secondary)
                                                     .border_1()
@@ -1205,7 +1165,7 @@ impl SettingsWindowView {
         div()
             .flex()
             .flex_col()
-            .gap_6()
+            .gap_4()
             // Section 1: Hero Info Card
             .child(
                 div()
@@ -1213,13 +1173,13 @@ impl SettingsWindowView {
                     .bg(theme.bg_surface)
                     .border_1()
                     .border_color(theme.border_subtle)
-                    .p_5()
+                    .p_4()
                     .flex()
                     .items_center()
-                    .gap_4()
+                    .gap_3p5()
                     .child(
                         div()
-                            .size(px(48.0))
+                            .size(px(42.0))
                             .rounded_xl()
                             .overflow_hidden()
                             .child(
@@ -1233,7 +1193,7 @@ impl SettingsWindowView {
                             .flex_1()
                             .flex()
                             .flex_col()
-                            .gap_1()
+                            .gap_0p5()
                             .child(
                                 div()
                                     .flex()
@@ -1241,7 +1201,7 @@ impl SettingsWindowView {
                                     .gap_2()
                                     .child(
                                         div()
-                                            .text_base()
+                                            .text_sm()
                                             .font_weight(gpui::FontWeight::BOLD)
                                             .text_color(theme.text_primary)
                                             .child("Pixora"),
@@ -1285,7 +1245,7 @@ impl SettingsWindowView {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .gap_1p5()
                     .child(render_section_title(t(lang, "Source & Updates", "Исходный код и обновления")))
                     .child(
                         div()
@@ -1297,12 +1257,16 @@ impl SettingsWindowView {
                             // Row 1: GitHub Link
                             .child(
                                 div()
-                                    .p_4()
+                                    .px_4()
+                                    .py_3()
                                     .flex()
                                     .items_center()
                                     .justify_between()
                                     .child(
                                         div()
+                                            .flex_1()
+                                            .min_w(px(0.0))
+                                            .mr_3()
                                             .flex()
                                             .flex_col()
                                             .gap_0p5()
@@ -1323,6 +1287,7 @@ impl SettingsWindowView {
                                     .child(
                                         div()
                                             .id("btn-open-github")
+                                            .flex_shrink_0()
                                             .px_3()
                                             .py_1p5()
                                             .rounded_md()
@@ -1347,12 +1312,16 @@ impl SettingsWindowView {
                             // Row 2: Check Updates
                             .child(
                                 div()
-                                    .p_4()
+                                    .px_4()
+                                    .py_3()
                                     .flex()
                                     .items_center()
                                     .justify_between()
                                     .child(
                                         div()
+                                            .flex_1()
+                                            .min_w(px(0.0))
+                                            .mr_3()
                                             .flex()
                                             .flex_col()
                                             .gap_0p5()
@@ -1379,7 +1348,8 @@ impl SettingsWindowView {
                                     .child(
                                         div()
                                             .id("btn-check-updates")
-                                            .px_3p5()
+                                            .flex_shrink_0()
+                                            .px_3()
                                             .py_1p5()
                                             .rounded_md()
                                             .bg(theme.accent)
@@ -1427,12 +1397,12 @@ fn render_setting_row(
         .items_center()
         .justify_between()
         .px_4()
-        .py_3p5()
+        .py_3()
         .child(
             div()
                 .flex_1()
                 .min_w(px(0.0))
-                .mr_4()
+                .mr_3()
                 .flex()
                 .flex_col()
                 .gap_0p5()
@@ -1534,8 +1504,9 @@ fn render_segmented_chip(
 ) -> impl IntoElement {
     div()
         .id(id)
-        .px_3()
-        .py_1p5()
+        .flex_shrink_0()
+        .px_2p5()
+        .py_1()
         .rounded_md()
         .bg(if is_selected {
             rgb(0x8174FF)
