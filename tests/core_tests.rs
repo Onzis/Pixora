@@ -408,12 +408,12 @@ fn test_palette_color_formats_matching_reference() {
 fn test_i18n_language_detection_and_resolution() {
     use pixora::i18n::{detect_system_language, t, AppLanguage, LanguageChoice};
 
-    // System language detection test (on this Windows machine with Russian locale)
+    // System language detection test (returns either En or Ru without panicking)
     let detected = detect_system_language();
-    assert_eq!(detected, AppLanguage::Ru);
+    assert!(matches!(detected, AppLanguage::En | AppLanguage::Ru));
 
-    // Auto resolution test
-    assert_eq!(LanguageChoice::Auto.resolve(), AppLanguage::Ru);
+    // Auto resolution test dynamically matches system language
+    assert_eq!(LanguageChoice::Auto.resolve(), detected);
     assert_eq!(LanguageChoice::En.resolve(), AppLanguage::En);
     assert_eq!(LanguageChoice::Ru.resolve(), AppLanguage::Ru);
 
