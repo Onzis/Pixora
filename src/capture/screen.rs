@@ -9,17 +9,6 @@ pub struct ScreenCapture {
 
 #[cfg(windows)]
 pub fn capture_virtual_screen() -> Result<ScreenCapture, String> {
-    // 1. Try ultra-fast DXGI Desktop Duplication with HDR tone mapping
-    if let Ok(cap) = crate::capture::dxgi::capture_virtual_screen_dxgi() {
-        return Ok(cap);
-    }
-
-    // 2. Fallback to GDI BitBlt
-    capture_virtual_screen_gdi()
-}
-
-#[cfg(windows)]
-pub fn capture_virtual_screen_gdi() -> Result<ScreenCapture, String> {
     use windows::Win32::Graphics::Gdi::{
         BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC,
         DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, ROP_CODE, ReleaseDC, SRCCOPY,

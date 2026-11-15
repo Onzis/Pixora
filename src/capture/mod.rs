@@ -1,4 +1,3 @@
-pub mod dxgi;
 pub mod monitor;
 pub mod region;
 pub mod screen;

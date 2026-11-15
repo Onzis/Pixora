@@ -886,33 +886,6 @@ fn test_beautify_padding_and_presets() {
     assert_eq!(corner[3], 0);
 }
 
-#[test]
-fn test_dxgi_f16_to_f32_conversion() {
-    use pixora::capture::dxgi::f16_to_f32;
-
-    assert_eq!(f16_to_f32(0x0000), 0.0);
-    assert_eq!(f16_to_f32(0x3C00), 1.0);
-    assert_eq!(f16_to_f32(0x4000), 2.0);
-    assert_eq!(f16_to_f32(0xBC00), -1.0);
-}
-
-#[test]
-fn test_hdr_tone_mapping_and_srgb_transfer() {
-    use pixora::capture::dxgi::{linear_to_srgb, tone_map_hdr};
-
-    // Standard SDR white (1.0) with sdr_white_level 2.5
-    let mapped_sdr = tone_map_hdr(1.0, 2.5);
-    assert!(mapped_sdr > 0.0 && mapped_sdr < 1.0);
-
-    // High dynamic range value (e.g. 10.0 = bright sun / specular highlight)
-    let mapped_hdr = tone_map_hdr(10.0, 2.5);
-    assert!(mapped_hdr <= 1.0);
-    assert!(mapped_hdr > mapped_sdr);
-
-    let srgb = linear_to_srgb(mapped_hdr);
-    assert!(srgb > 128);
-}
-
 
 
 
