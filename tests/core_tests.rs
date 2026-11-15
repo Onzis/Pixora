@@ -886,6 +886,27 @@ fn test_beautify_padding_and_presets() {
     assert_eq!(corner[3], 0);
 }
 
+#[test]
+fn test_pinned_screenshot_channel_swap() {
+    let mut img = RgbaImage::new(10, 10);
+    // Fill with a distinct color: Red=200, Green=100, Blue=50, Alpha=255
+    for p in img.pixels_mut() {
+        *p = Rgba([200, 100, 50, 255]);
+    }
+
+    let mut bgra = img.clone();
+    for chunk in bgra.chunks_exact_mut(4) {
+        chunk.swap(0, 2);
+    }
+
+    let p0 = bgra.get_pixel(0, 0);
+    assert_eq!(p0[0], 50, "Blue should be swapped to index 0");
+    assert_eq!(p0[1], 100, "Green should remain at index 1");
+    assert_eq!(p0[2], 200, "Red should be swapped to index 2");
+    assert_eq!(p0[3], 255, "Alpha should remain intact");
+}
+
+
 
 
 
