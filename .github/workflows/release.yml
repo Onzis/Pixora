@@ -38,13 +38,20 @@ jobs:
       - name: Build Release Binary
         run: cargo build --release --target x86_64-pc-windows-msvc
 
-      - name: Generate Changelog with git-cliff
-        uses: orhun/git-cliff-action@v3
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
         with:
-          config: cliff.toml
-          args: --verbose --latest
+          tool: git-cliff
+
+      - name: Generate Changelog with git-cliff
+        shell: pwsh
         env:
-          OUTPUT: RELEASE_NOTES.md
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git-cliff --config cliff.toml --verbose --latest --output RELEASE_NOTES.md
+          if (-not (Test-Path "RELEASE_NOTES.md") -or (Get-Item "RELEASE_NOTES.md").Length -eq 0) {
+            "Release $env:GITHUB_REF_NAME" | Out-File -FilePath "RELEASE_NOTES.md" -Encoding utf8
+          }
 
       - name: Package Release Archive
         shell: pwsh
