@@ -179,9 +179,9 @@ impl Render for PinnedScreenshotView {
 
         div()
             .id("pinned-window-root")
-            .size_full()
+            .w(px(cur_w))
+            .h(px(cur_h))
             .relative()
-            .overflow_hidden()
             .bg(rgb(0x18181B))
             .cursor(CursorStyle::Arrow)
             .track_focus(&self.focus_handle)
@@ -246,6 +246,17 @@ impl Render for PinnedScreenshotView {
                     }
                 }
                 cx.notify();
+                cx.spawn(move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                    let cx = cx.clone();
+                    async move {
+                        let _ = cx.update(|app| {
+                            let _ = this.update(app, |_view, cx| {
+                                cx.notify();
+                            });
+                        });
+                    }
+                })
+                .detach();
             }))
             // Image canvas explicitly sized to target zoomed dimensions - scales proportionally without cropping
             .child(
