@@ -97,6 +97,8 @@ pub struct ScreenOverlayView {
     pub hex_input_mode: bool,
     pub current_toolbar_bounds: Option<Bounds<Pixels>>,
     pub palette_panel_bounds: Option<Bounds<Pixels>>,
+    pub shapes_panel_bounds: Option<Bounds<Pixels>>,
+    pub beautify_panel_bounds: Option<Bounds<Pixels>>,
     pub palette_drag_mode: PaletteDragMode,
     pub picker_hue: f32,
     pub picker_sat: f32,
@@ -237,6 +239,8 @@ impl ScreenOverlayView {
             hex_input_mode: false,
             current_toolbar_bounds: None,
             palette_panel_bounds: None,
+            shapes_panel_bounds: None,
+            beautify_panel_bounds: None,
             palette_drag_mode: PaletteDragMode::None,
             picker_hue: 246.0,
             picker_sat: 0.55,
@@ -735,6 +739,18 @@ impl ScreenOverlayView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.show_shapes_menu {
+            self.show_shapes_menu = false;
+            cx.notify();
+            return;
+        }
+
+        if self.show_beautify_menu {
+            self.show_beautify_menu = false;
+            cx.notify();
+            return;
+        }
+
         if self.show_color_palette {
             self.show_color_palette = false;
             self.hex_input_mode = false;
@@ -775,7 +791,42 @@ impl ScreenOverlayView {
         let px_f = f32::from(p.x);
         let py_f = f32::from(p.y);
 
-        // 1. Selection resize handles ALWAYS take top priority!
+        // 1. Floating panels (toolbar, palette, shapes dropdown, beautify dropdown) ALWAYS take precedence!
+        // Never let selection resize handles intercept clicks meant for floating menus or toolbar.
+        if self.selection.is_active {
+            let in_floating = self.current_toolbar_bounds.map_or(false, |b| b.contains(&p))
+                || (self.show_color_palette && self.palette_panel_bounds.map_or(false, |b| b.contains(&p)))
+                || (self.show_shapes_menu && self.shapes_panel_bounds.map_or(false, |b| b.contains(&p)))
+                || (self.show_beautify_menu && self.beautify_panel_bounds.map_or(false, |b| b.contains(&p)));
+
+            if in_floating {
+                if self.show_color_palette {
+                    if let Some(gb) = self.gradient_field_bounds {
+                        if gb.contains(&p) {
+                            self.commit_text_input();
+                            self.palette_drag_mode = PaletteDragMode::SaturationValue;
+                            let rel_x = (px_f - f32::from(gb.origin.x)).clamp(0.0, f32::from(gb.size.width));
+                            let rel_y = (py_f - f32::from(gb.origin.y)).clamp(0.0, f32::from(gb.size.height));
+                            self.set_picker_sat_val(rel_x / f32::from(gb.size.width), 1.0 - (rel_y / f32::from(gb.size.height)), cx);
+                            return;
+                        }
+                    }
+                    if let Some(hb) = self.hue_slider_bounds {
+                        if hb.contains(&p) {
+                            self.commit_text_input();
+                            self.palette_drag_mode = PaletteDragMode::Hue;
+                            let rel_x = (px_f - f32::from(hb.origin.x)).clamp(0.0, f32::from(hb.size.width));
+                            self.set_picker_hue(rel_x / f32::from(hb.size.width) * 360.0, cx);
+                            return;
+                        }
+                    }
+                }
+                self.commit_text_input();
+                return;
+            }
+        }
+
+        // 2. Selection resize handles take priority over canvas!
         // When clicking on or near any of the 8 handles (radius 12px), enter Resizing mode immediately.
         if self.selection.is_active {
             if let Some(handle) = self.selection.hit_test_handle(p, px(12.0)) {
@@ -790,43 +841,6 @@ impl ScreenOverlayView {
             }
         }
 
-        // 2. Ignore clicks on floating toolbar / property sub-bar / color palette
-        if self.selection.is_active {
-            if self.show_color_palette {
-                if let Some(gb) = self.gradient_field_bounds {
-                    if gb.contains(&p) {
-                        self.commit_text_input();
-                        self.palette_drag_mode = PaletteDragMode::SaturationValue;
-                        let rel_x = (px_f - f32::from(gb.origin.x)).clamp(0.0, f32::from(gb.size.width));
-                        let rel_y = (py_f - f32::from(gb.origin.y)).clamp(0.0, f32::from(gb.size.height));
-                        self.set_picker_sat_val(rel_x / f32::from(gb.size.width), 1.0 - (rel_y / f32::from(gb.size.height)), cx);
-                        return;
-                    }
-                }
-                if let Some(hb) = self.hue_slider_bounds {
-                    if hb.contains(&p) {
-                        self.commit_text_input();
-                        self.palette_drag_mode = PaletteDragMode::Hue;
-                        let rel_x = (px_f - f32::from(hb.origin.x)).clamp(0.0, f32::from(hb.size.width));
-                        self.set_picker_hue(rel_x / f32::from(hb.size.width) * 360.0, cx);
-                        return;
-                    }
-                }
-                if let Some(pb) = self.palette_panel_bounds {
-                    if pb.contains(&p) {
-                        self.commit_text_input();
-                        return;
-                    }
-                }
-            }
-            if let Some(tb) = self.current_toolbar_bounds {
-                if tb.contains(&p) {
-                    self.commit_text_input();
-                    return;
-                }
-            }
-        }
-
         // 3. Text input submission if clicking on empty space / outside
         if self.text_input_mode {
             self.commit_text_input();
@@ -834,7 +848,15 @@ impl ScreenOverlayView {
             return;
         }
 
-        // Close color palette modal if open
+        // Close open dropdowns if clicking outside on canvas
+        if self.show_shapes_menu {
+            self.show_shapes_menu = false;
+            cx.notify();
+        }
+        if self.show_beautify_menu {
+            self.show_beautify_menu = false;
+            cx.notify();
+        }
         if self.show_color_palette {
             self.show_color_palette = false;
             self.hex_input_mode = false;
@@ -1395,6 +1417,16 @@ impl ScreenOverlayView {
         }
 
         if key == "escape" {
+            if self.show_shapes_menu {
+                self.show_shapes_menu = false;
+                cx.notify();
+                return;
+            }
+            if self.show_beautify_menu {
+                self.show_beautify_menu = false;
+                cx.notify();
+                return;
+            }
             if self.show_color_palette {
                 self.show_color_palette = false;
                 self.hex_input_mode = false;
@@ -1496,8 +1528,14 @@ impl Render for ScreenOverlayView {
         let current_drawing = self.current_drawing.clone();
 
         // Determine cursor style
-        // Determine cursor style with dedicated bidirectional resize cursors
-        let cursor_style = if self.active_tool == ToolKind::Text {
+        let is_over_floating_panel = self.current_toolbar_bounds.map_or(false, |b| b.contains(&self.cursor_pos))
+            || (self.show_color_palette && self.palette_panel_bounds.map_or(false, |b| b.contains(&self.cursor_pos)))
+            || (self.show_shapes_menu && self.shapes_panel_bounds.map_or(false, |b| b.contains(&self.cursor_pos)))
+            || (self.show_beautify_menu && self.beautify_panel_bounds.map_or(false, |b| b.contains(&self.cursor_pos)));
+
+        let cursor_style = if is_over_floating_panel {
+            CursorStyle::Arrow
+        } else if self.active_tool == ToolKind::Text {
             CursorStyle::IBeam
         } else if selection.is_active {
             if let Some(handle) = selection.hit_test_handle(self.cursor_pos, px(12.0)) {
@@ -2164,6 +2202,7 @@ impl Render for ScreenOverlayView {
             // Main Toolbar with SVG Icons
             toolbar_col = toolbar_col.child(
                 div()
+                    .id("main-toolbar-panel")
                     .flex()
                     .items_center()
                     .gap_1()
@@ -2174,6 +2213,13 @@ impl Render for ScreenOverlayView {
                     .border_1()
                     .border_color(theme.border_subtle)
                     .shadow_2xl()
+                    .cursor_default()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .on_mouse_move(|_, _, cx| {
+                        cx.stop_propagation();
+                    })
                     // Group 1: Navigation
                     .child(render_toolbar_button(
                         "btn-select".into(),
@@ -3656,12 +3702,19 @@ impl Render for ScreenOverlayView {
                     (ToolKind::Line, "icons/line.svg", "Линия", "Line"),
                 ];
 
+                let shapes_bounds = Bounds {
+                    origin: point(px(shapes_left), px(shapes_top)),
+                    size: size(px(shapes_w), px(shapes_h)),
+                };
+                self.shapes_panel_bounds = Some(shapes_bounds);
+
                 let mut shapes_col = div()
+                    .id("shapes-dropdown-panel")
                     .absolute()
                     .left(px(shapes_left))
                     .top(px(shapes_top))
                     .w(px(shapes_w))
-                    .p_3()
+                    .p_2()
                     .rounded_xl()
                     .bg(theme.bg_surface)
                     .border_1()
@@ -3669,16 +3722,25 @@ impl Render for ScreenOverlayView {
                     .shadow_2xl()
                     .flex()
                     .flex_col()
-                    .gap_1()
+                    .gap_0p5()
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .on_mouse_move(|_, _, cx| {
+                        cx.stop_propagation();
+                    })
                     // Header
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .justify_between()
-                            .pb_2()
+                            .pb_1p5()
+                            .px_1()
                             .border_b_1()
                             .border_color(theme.border_subtle)
+                            .cursor_default()
                             .child(
                                 div()
                                     .text_sm()
@@ -3803,7 +3865,14 @@ impl Render for ScreenOverlayView {
                 let is_active = self.is_beautify_active;
                 let current_idx = self.beautify_preset_idx;
 
+                let b_bounds = Bounds {
+                    origin: point(px(b_left), px(b_top)),
+                    size: size(px(b_w), px(b_h)),
+                };
+                self.beautify_panel_bounds = Some(b_bounds);
+
                 let mut b_panel = div()
+                    .id("beautify-dropdown-panel")
                     .absolute()
                     .left(px(b_left))
                     .top(px(b_top))
@@ -3817,6 +3886,13 @@ impl Render for ScreenOverlayView {
                     .flex()
                     .flex_col()
                     .gap_2p5()
+                    .cursor_default()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .on_mouse_move(|_, _, cx| {
+                        cx.stop_propagation();
+                    })
                     // Header: Title + Toggle Switch + Close
                     .child(
                         div()
