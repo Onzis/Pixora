@@ -29,7 +29,7 @@ use crate::overlay::toolbar::{
     HoveredTooltip, TOOLBAR_MAIN_HEIGHT, TOOLBAR_TOTAL_HEIGHT, TOOLBAR_WIDTH,
     calculate_toolbar_position, generate_gradient_bitmap, generate_hue_strip_bitmap, hsv_to_rgb,
     parse_hex_color, render_blur_preset, render_color_swatch, render_toolbar_button,
-    render_toolbar_divider, render_toolbar_text_button, rgb_to_cmyk, rgb_to_hsl, rgb_to_hsv,
+    render_toolbar_divider, render_toolbar_dropdown_button, render_toolbar_text_button, rgb_to_cmyk, rgb_to_hsl, rgb_to_hsv,
 };
 use crate::system::windows::{PhysicalRect, play_capture_sound};
 use crate::theme::PixoraTheme;
@@ -2247,28 +2247,12 @@ impl Render for ScreenOverlayView {
                         let is_shape_active = active_tool.is_shape();
                         let current_shape_icon = self.last_used_shape.icon_path();
                         let is_menu_open = self.show_shapes_menu;
-                        div()
-                            .id("btn-shapes-dropdown")
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .px_2()
-                            .h(px(32.0))
-                            .rounded_lg()
-                            .cursor_pointer()
-                            .bg(if is_shape_active || is_menu_open {
-                                theme.bg_active
-                            } else {
-                                rgba(0x00000000)
-                            })
-                            .border_1()
-                            .border_color(if is_shape_active || is_menu_open {
-                                theme.accent
-                            } else {
-                                rgba(0x00000000)
-                            })
-                            .hover(|s| s.bg(theme.bg_hover))
-                            .on_click(cx.listener(|this, _, _, cx| {
+                        render_toolbar_dropdown_button(
+                            "btn-shapes-dropdown".into(),
+                            current_shape_icon,
+                            is_shape_active || is_menu_open,
+                            theme_ref,
+                            cx.listener(|this, _, _, cx| {
                                 this.show_shapes_menu = !this.show_shapes_menu;
                                 if this.show_shapes_menu {
                                     this.show_beautify_menu = false;
@@ -2278,35 +2262,16 @@ impl Render for ScreenOverlayView {
                                     this.active_tool = this.last_used_shape;
                                 }
                                 cx.notify();
-                            }))
-                            .on_hover(cx.listener(move |this, hovered, _, cx| {
+                            }),
+                            cx.listener(move |this, hovered, _, cx| {
                                 this.set_tooltip(
                                     t(lang, "Shapes (Dropdown Menu)", "Фигуры (выпадающий список)"),
                                     220.0,
                                     *hovered,
                                     cx,
                                 );
-                            }))
-                            .child(
-                                svg()
-                                    .path(current_shape_icon)
-                                    .size(px(18.0))
-                                    .text_color(if is_shape_active || is_menu_open {
-                                        theme.accent
-                                    } else {
-                                        theme.text_secondary
-                                    }),
-                            )
-                            .child(
-                                svg()
-                                    .path("icons/chevron-down.svg")
-                                    .size(px(10.0))
-                                    .text_color(if is_shape_active || is_menu_open {
-                                        theme.accent
-                                    } else {
-                                        theme.text_muted
-                                    }),
-                            )
+                            }),
+                        )
                     })
                     .child(render_toolbar_button(
                         "btn-text".into(),
@@ -2404,63 +2369,28 @@ impl Render for ScreenOverlayView {
                     .child({
                         let is_beautify = self.is_beautify_active;
                         let is_menu_open = self.show_beautify_menu;
-                        div()
-                            .id("btn-beautify")
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .px_2()
-                            .h(px(32.0))
-                            .rounded_lg()
-                            .cursor_pointer()
-                            .bg(if is_beautify || is_menu_open {
-                                theme.bg_active
-                            } else {
-                                rgba(0x00000000)
-                            })
-                            .border_1()
-                            .border_color(if is_beautify || is_menu_open {
-                                theme.accent
-                            } else {
-                                rgba(0x00000000)
-                            })
-                            .hover(|s| s.bg(theme.bg_hover))
-                            .on_click(cx.listener(|this, _, _, cx| {
+                        render_toolbar_dropdown_button(
+                            "btn-beautify".into(),
+                            "icons/sparkles.svg",
+                            is_beautify || is_menu_open,
+                            theme_ref,
+                            cx.listener(|this, _, _, cx| {
                                 this.show_beautify_menu = !this.show_beautify_menu;
                                 if this.show_beautify_menu {
                                     this.show_shapes_menu = false;
                                     this.show_color_palette = false;
                                 }
                                 cx.notify();
-                            }))
-                            .on_hover(cx.listener(move |this, hovered, _, cx| {
+                            }),
+                            cx.listener(move |this, hovered, _, cx| {
                                 this.set_tooltip(
                                     t(lang, "Beautify & Background (Thumbnails)", "Красивый фон и подложка (с миниатюрами)"),
                                     545.0,
                                     *hovered,
                                     cx,
                                 );
-                            }))
-                            .child(
-                                svg()
-                                    .path("icons/sparkles.svg")
-                                    .size(px(18.0))
-                                    .text_color(if is_beautify || is_menu_open {
-                                        theme.accent
-                                    } else {
-                                        theme.text_secondary
-                                    }),
-                            )
-                            .child(
-                                svg()
-                                    .path("icons/chevron-down.svg")
-                                    .size(px(10.0))
-                                    .text_color(if is_beautify || is_menu_open {
-                                        theme.accent
-                                    } else {
-                                        theme.text_muted
-                                    }),
-                            )
+                            }),
+                        )
                     })
                     .child(render_toolbar_button(
                         "btn-pin".into(),

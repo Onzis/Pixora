@@ -256,6 +256,68 @@ pub fn render_toolbar_text_button(
         )
 }
 
+pub fn render_toolbar_dropdown_button(
+    id: ElementId,
+    icon_path: &'static str,
+    is_active: bool,
+    theme: &PixoraTheme,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let bg_color = if is_active {
+        rgba(0x8174FF33)
+    } else {
+        theme.bg_secondary
+    };
+
+    let text_color = if is_active {
+        theme.accent
+    } else {
+        theme.text_secondary
+    };
+
+    let chevron_color = if is_active {
+        theme.accent
+    } else {
+        theme.text_muted
+    };
+
+    let border_color = if is_active {
+        theme.accent
+    } else {
+        theme.border_subtle
+    };
+
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(3.0))
+        .px(px(6.0))
+        .h(px(32.0))
+        .rounded_lg()
+        .bg(bg_color)
+        .border_1()
+        .border_color(border_color)
+        .hover(|s| s.bg(theme.bg_hover).border_color(theme.border_focus))
+        .cursor_pointer()
+        .on_hover(on_hover)
+        .on_click(on_click)
+        .child(
+            svg()
+                .path(icon_path)
+                .size(px(16.0))
+                .text_color(text_color),
+        )
+        .child(
+            svg()
+                .path("icons/chevron-down.svg")
+                .size(px(8.0))
+                .text_color(chevron_color),
+        )
+}
+
 pub fn render_toolbar_divider(theme: &PixoraTheme) -> impl IntoElement {
     div()
         .w(px(1.0))
