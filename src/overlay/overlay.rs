@@ -2216,32 +2216,6 @@ impl Render for ScreenOverlayView {
                             this.set_tooltip(t(lang, "Highlighter Marker", "Маркер"), 101.0, *hovered, cx);
                         }),
                     ))
-                    .child(render_toolbar_button(
-                        "btn-arrow".into(),
-                        "icons/arrow.svg",
-                        active_tool == ToolKind::Arrow,
-                        theme_ref,
-                        cx.listener(|this, _, _, cx| {
-                            this.active_tool = ToolKind::Arrow;
-                            cx.notify();
-                        }),
-                        cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Draw Arrow", "Стрелка"), 137.0, *hovered, cx);
-                        }),
-                    ))
-                    .child(render_toolbar_button(
-                        "btn-line".into(),
-                        "icons/line.svg",
-                        active_tool == ToolKind::Line,
-                        theme_ref,
-                        cx.listener(|this, _, _, cx| {
-                            this.active_tool = ToolKind::Line;
-                            cx.notify();
-                        }),
-                        cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Straight Line", "Прямая линия"), 173.0, *hovered, cx);
-                        }),
-                    ))
                     // Shapes dropdown button (Rectangle, Ellipse, Triangle, Star, Diamond, Arrow, Line)
                     .child({
                         let is_shape_active = active_tool.is_shape();
@@ -2266,7 +2240,7 @@ impl Render for ScreenOverlayView {
                             cx.listener(move |this, hovered, _, cx| {
                                 this.set_tooltip(
                                     t(lang, "Shapes (Dropdown Menu)", "Фигуры (выпадающий список)"),
-                                    220.0,
+                                    142.0,
                                     *hovered,
                                     cx,
                                 );
@@ -2283,7 +2257,7 @@ impl Render for ScreenOverlayView {
                             cx.notify();
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Text Annotation", "Текст"), 281.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Text Annotation", "Текст"), 183.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -2296,7 +2270,7 @@ impl Render for ScreenOverlayView {
                             cx.notify();
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Step Badge Counter", "Шаги / Нумерация"), 317.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Step Badge Counter", "Шаги / Нумерация"), 219.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_divider(theme_ref))
@@ -2311,7 +2285,7 @@ impl Render for ScreenOverlayView {
                             cx.notify();
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Blur Sensitive Region", "Размытие"), 358.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Blur Sensitive Region", "Размытие"), 260.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -2324,7 +2298,7 @@ impl Render for ScreenOverlayView {
                             cx.notify();
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Pixelate Mosaic", "Пикселизация"), 394.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Pixelate Mosaic", "Пикселизация"), 296.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -2337,7 +2311,7 @@ impl Render for ScreenOverlayView {
                             cx.notify();
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Eyedropper Color Picker", "Пипетка цвета"), 430.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Eyedropper Color Picker", "Пипетка цвета"), 332.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_divider(theme_ref))
@@ -2351,7 +2325,7 @@ impl Render for ScreenOverlayView {
                             this.do_ocr(cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Windows WinRT Text Recognition", "Распознавание текста (OCR)"), 473.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Windows WinRT Text Recognition", "Распознавание текста (OCR)"), 375.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_text_button(
@@ -2363,7 +2337,7 @@ impl Render for ScreenOverlayView {
                             this.do_qr_scan(cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "QR Code Scanner", "Сканировать QR-код"), 509.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "QR Code Scanner", "Сканировать QR-код"), 411.0, *hovered, cx);
                         }),
                     ))
                     .child({
@@ -2385,7 +2359,7 @@ impl Render for ScreenOverlayView {
                             cx.listener(move |this, hovered, _, cx| {
                                 this.set_tooltip(
                                     t(lang, "Beautify & Background (Thumbnails)", "Красивый фон и подложка (с миниатюрами)"),
-                                    545.0,
+                                    452.0,
                                     *hovered,
                                     cx,
                                 );
@@ -2401,7 +2375,7 @@ impl Render for ScreenOverlayView {
                             this.do_pin(window, cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Pin to Screen (Always on Top)", "Закрепить поверх окон"), 581.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Pin to Screen (Always on Top)", "Закрепить поверх окон"), 493.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -2413,7 +2387,7 @@ impl Render for ScreenOverlayView {
                             this.do_undo(cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Undo (Ctrl+Z)", "Отменить (Ctrl+Z)"), 617.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Undo (Ctrl+Z)", "Отменить (Ctrl+Z)"), 529.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -2425,7 +2399,7 @@ impl Render for ScreenOverlayView {
                             this.do_redo(cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Redo (Ctrl+Y)", "Повторить (Ctrl+Y)"), 653.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Redo (Ctrl+Y)", "Повторить (Ctrl+Y)"), 565.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -2437,7 +2411,7 @@ impl Render for ScreenOverlayView {
                             this.do_save(window, cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Save to PNG (Ctrl+S)", "Сохранить в PNG (Ctrl+S)"), 689.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Save to PNG (Ctrl+S)", "Сохранить в PNG (Ctrl+S)"), 601.0, *hovered, cx);
                         }),
                     ))
                     .child(
@@ -2454,7 +2428,7 @@ impl Render for ScreenOverlayView {
                             .cursor_pointer()
                             .shadow_md()
                             .on_hover(cx.listener(move |this, hovered, _, cx| {
-                                this.set_tooltip(t(lang, "Copy to Clipboard (Ctrl+C)", "Копировать в буфер (Ctrl+C)"), 743.0, *hovered, cx);
+                                this.set_tooltip(t(lang, "Copy to Clipboard (Ctrl+C)", "Копировать в буфер (Ctrl+C)"), 660.0, *hovered, cx);
                             }))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.do_copy(window, cx);
@@ -2487,7 +2461,7 @@ impl Render for ScreenOverlayView {
                             .hover(|s| s.bg(rgba(0xFF453A22)).border_color(rgb(0xFF453A)))
                             .cursor_pointer()
                             .on_hover(cx.listener(move |this, hovered, _, cx| {
-                                this.set_tooltip(t(lang, "Close Overlay (Esc)", "Закрыть (Esc)"), 797.0, *hovered, cx);
+                                this.set_tooltip(t(lang, "Close Overlay (Esc)", "Закрыть (Esc)"), 725.0, *hovered, cx);
                             }))
                             .on_click(cx.listener(|_, _, window, _| {
                                 window.remove_window();
@@ -3670,7 +3644,7 @@ impl Render for ScreenOverlayView {
                 } else {
                     f32::from(toolbar_pos.y) + bar_height + 8.0
                 };
-                let shapes_left = (f32::from(toolbar_pos.x) + 160.0).clamp(12.0, f32::from(screen_bounds.size.width) - shapes_w - 12.0);
+                let shapes_left = (f32::from(toolbar_pos.x) + 80.0).clamp(12.0, f32::from(screen_bounds.size.width) - shapes_w - 12.0);
 
                 let shapes_list = [
                     (ToolKind::Rectangle, "icons/rectangle.svg", "Прямоугольник", "Rectangle"),
@@ -3824,7 +3798,7 @@ impl Render for ScreenOverlayView {
                 } else {
                     f32::from(toolbar_pos.y) + bar_height + 8.0
                 };
-                let b_left = (f32::from(toolbar_pos.x) + 380.0).clamp(12.0, f32::from(screen_bounds.size.width) - b_w - 12.0);
+                let b_left = (f32::from(toolbar_pos.x) + 290.0).clamp(12.0, f32::from(screen_bounds.size.width) - b_w - 12.0);
 
                 let is_active = self.is_beautify_active;
                 let current_idx = self.beautify_preset_idx;
