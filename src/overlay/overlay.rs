@@ -114,6 +114,12 @@ pub struct ScreenOverlayView {
     pub beautify_preset_idx: usize,
     pub show_shapes_menu: bool,
     pub show_beautify_menu: bool,
+    pub shapes_btn_hovered: bool,
+    pub shapes_menu_hovered: bool,
+    pub shapes_hover_token: u32,
+    pub beautify_btn_hovered: bool,
+    pub beautify_menu_hovered: bool,
+    pub beautify_hover_token: u32,
     pub last_used_shape: ToolKind,
     pub preset_thumbnails: Vec<(crate::image::beautify::BeautifyPreset, Arc<RenderImage>)>,
 }
@@ -254,12 +260,64 @@ impl ScreenOverlayView {
             beautify_preset_idx: 0,
             show_shapes_menu: false,
             show_beautify_menu: false,
+            shapes_btn_hovered: false,
+            shapes_menu_hovered: false,
+            shapes_hover_token: 0,
+            beautify_btn_hovered: false,
+            beautify_menu_hovered: false,
+            beautify_hover_token: 0,
             last_used_shape: ToolKind::Rectangle,
             preset_thumbnails: crate::image::beautify::BeautifyPreset::all()
                 .iter()
                 .map(|&p| (p, crate::overlay::toolbar::generate_preset_thumbnail(p, 88, 54)))
                 .collect(),
         }
+    }
+
+    pub fn schedule_check_close_shapes_menu(&mut self, cx: &mut Context<Self>) {
+        self.shapes_hover_token = self.shapes_hover_token.wrapping_add(1);
+        let token = self.shapes_hover_token;
+        cx.spawn(move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                cx.background_executor().timer(Duration::from_millis(250)).await;
+                let _ = cx.update(|app| {
+                    let _ = this.update(app, |view, cx| {
+                        if view.shapes_hover_token == token
+                            && !view.shapes_btn_hovered
+                            && !view.shapes_menu_hovered
+                        {
+                            view.show_shapes_menu = false;
+                            cx.notify();
+                        }
+                    });
+                });
+            }
+        })
+        .detach();
+    }
+
+    pub fn schedule_check_close_beautify_menu(&mut self, cx: &mut Context<Self>) {
+        self.beautify_hover_token = self.beautify_hover_token.wrapping_add(1);
+        let token = self.beautify_hover_token;
+        cx.spawn(move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                cx.background_executor().timer(Duration::from_millis(250)).await;
+                let _ = cx.update(|app| {
+                    let _ = this.update(app, |view, cx| {
+                        if view.beautify_hover_token == token
+                            && !view.beautify_btn_hovered
+                            && !view.beautify_menu_hovered
+                        {
+                            view.show_beautify_menu = false;
+                            cx.notify();
+                        }
+                    });
+                });
+            }
+        })
+        .detach();
     }
 
     pub fn set_tooltip(&mut self, text: &'static str, rel_x: f32, hovered: bool, cx: &mut Context<Self>) {
@@ -2277,19 +2335,24 @@ impl Render for ScreenOverlayView {
                                 if this.show_shapes_menu {
                                     this.show_beautify_menu = false;
                                     this.show_color_palette = false;
-                                }
-                                if !this.active_tool.is_shape() {
-                                    this.active_tool = this.last_used_shape;
+                                    if !this.active_tool.is_shape() {
+                                        this.active_tool = this.last_used_shape;
+                                    }
                                 }
                                 cx.notify();
                             }),
                             cx.listener(move |this, hovered, _, cx| {
-                                this.set_tooltip(
-                                    t(lang, "Shapes (Dropdown Menu)", "Фигуры (выпадающий список)"),
-                                    142.0,
-                                    *hovered,
-                                    cx,
-                                );
+                                this.shapes_btn_hovered = *hovered;
+                                if *hovered {
+                                    this.shapes_hover_token = this.shapes_hover_token.wrapping_add(1);
+                                    this.show_shapes_menu = true;
+                                    this.show_beautify_menu = false;
+                                    this.show_color_palette = false;
+                                    this.hovered_tooltip = None;
+                                    cx.notify();
+                                } else {
+                                    this.schedule_check_close_shapes_menu(cx);
+                                }
                             }),
                         )
                     })
@@ -2403,12 +2466,17 @@ impl Render for ScreenOverlayView {
                                 cx.notify();
                             }),
                             cx.listener(move |this, hovered, _, cx| {
-                                this.set_tooltip(
-                                    t(lang, "Beautify & Background (Thumbnails)", "Красивый фон и подложка (с миниатюрами)"),
-                                    452.0,
-                                    *hovered,
-                                    cx,
-                                );
+                                this.beautify_btn_hovered = *hovered;
+                                if *hovered {
+                                    this.beautify_hover_token = this.beautify_hover_token.wrapping_add(1);
+                                    this.show_beautify_menu = true;
+                                    this.show_shapes_menu = false;
+                                    this.show_color_palette = false;
+                                    this.hovered_tooltip = None;
+                                    cx.notify();
+                                } else {
+                                    this.schedule_check_close_beautify_menu(cx);
+                                }
                             }),
                         )
                     })
@@ -3730,6 +3798,14 @@ impl Render for ScreenOverlayView {
                     .on_mouse_move(|_, _, cx| {
                         cx.stop_propagation();
                     })
+                    .on_hover(cx.listener(|this, hovered, _, cx| {
+                        this.shapes_menu_hovered = *hovered;
+                        if *hovered {
+                            this.shapes_hover_token = this.shapes_hover_token.wrapping_add(1);
+                        } else {
+                            this.schedule_check_close_shapes_menu(cx);
+                        }
+                    }))
                     // Header
                     .child(
                         div()
@@ -3757,6 +3833,9 @@ impl Render for ScreenOverlayView {
                                     .hover(|s| s.bg(theme.bg_hover))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.show_shapes_menu = false;
+                                        this.shapes_btn_hovered = false;
+                                        this.shapes_menu_hovered = false;
+                                        this.shapes_hover_token = this.shapes_hover_token.wrapping_add(1);
                                         cx.notify();
                                     }))
                                     .child(
@@ -3797,6 +3876,9 @@ impl Render for ScreenOverlayView {
                                 this.active_tool = kind;
                                 this.last_used_shape = kind;
                                 this.show_shapes_menu = false;
+                                this.shapes_btn_hovered = false;
+                                this.shapes_menu_hovered = false;
+                                this.shapes_hover_token = this.shapes_hover_token.wrapping_add(1);
                                 cx.notify();
                             }))
                             .child(
@@ -3893,6 +3975,14 @@ impl Render for ScreenOverlayView {
                     .on_mouse_move(|_, _, cx| {
                         cx.stop_propagation();
                     })
+                    .on_hover(cx.listener(|this, hovered, _, cx| {
+                        this.beautify_menu_hovered = *hovered;
+                        if *hovered {
+                            this.beautify_hover_token = this.beautify_hover_token.wrapping_add(1);
+                        } else {
+                            this.schedule_check_close_beautify_menu(cx);
+                        }
+                    }))
                     // Header: Title + Toggle Switch + Close
                     .child(
                         div()
@@ -3973,6 +4063,9 @@ impl Render for ScreenOverlayView {
                                             .hover(|s| s.bg(theme.bg_hover))
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.show_beautify_menu = false;
+                                                this.beautify_btn_hovered = false;
+                                                this.beautify_menu_hovered = false;
+                                                this.beautify_hover_token = this.beautify_hover_token.wrapping_add(1);
                                                 cx.notify();
                                             }))
                                             .child(
