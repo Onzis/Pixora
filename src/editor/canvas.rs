@@ -145,6 +145,42 @@ pub fn render_annotations_to_image(
                 let rh = f32::from(bounds.size.height);
                 draw_ellipse(image, rx, ry, rw, rh, *width, *color, *filled);
             }
+            Annotation::Triangle {
+                bounds,
+                color,
+                width,
+                filled,
+            } => {
+                let rx = f32::from(bounds.origin.x) - offset_x;
+                let ry = f32::from(bounds.origin.y) - offset_y;
+                let rw = f32::from(bounds.size.width);
+                let rh = f32::from(bounds.size.height);
+                draw_triangle(image, rx, ry, rw, rh, *width, *color, *filled);
+            }
+            Annotation::Star {
+                bounds,
+                color,
+                width,
+                filled,
+            } => {
+                let rx = f32::from(bounds.origin.x) - offset_x;
+                let ry = f32::from(bounds.origin.y) - offset_y;
+                let rw = f32::from(bounds.size.width);
+                let rh = f32::from(bounds.size.height);
+                draw_star(image, rx, ry, rw, rh, *width, *color, *filled);
+            }
+            Annotation::Diamond {
+                bounds,
+                color,
+                width,
+                filled,
+            } => {
+                let rx = f32::from(bounds.origin.x) - offset_x;
+                let ry = f32::from(bounds.origin.y) - offset_y;
+                let rw = f32::from(bounds.size.width);
+                let rh = f32::from(bounds.size.height);
+                draw_diamond(image, rx, ry, rw, rh, *width, *color, *filled);
+            }
             Annotation::NumberBadge {
                 center,
                 number,
@@ -441,6 +477,92 @@ fn draw_ellipse(
                 }
             }
         }
+    }
+}
+
+pub fn draw_triangle(
+    image: &mut RgbaImage,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    width: f32,
+    color: Rgba,
+    filled: bool,
+) {
+    let p_top = (x + w / 2.0, y);
+    let p_br = (x + w, y + h);
+    let p_bl = (x, y + h);
+
+    if filled {
+        draw_filled_triangle(image, p_top, p_br, p_bl, color);
+    }
+    draw_line(image, p_top.0, p_top.1, p_br.0, p_br.1, width, color, false);
+    draw_line(image, p_br.0, p_br.1, p_bl.0, p_bl.1, width, color, false);
+    draw_line(image, p_bl.0, p_bl.1, p_top.0, p_top.1, width, color, false);
+}
+
+pub fn draw_diamond(
+    image: &mut RgbaImage,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    width: f32,
+    color: Rgba,
+    filled: bool,
+) {
+    let top = (x + w / 2.0, y);
+    let right = (x + w, y + h / 2.0);
+    let bottom = (x + w / 2.0, y + h);
+    let left = (x, y + h / 2.0);
+
+    if filled {
+        draw_filled_triangle(image, top, right, left, color);
+        draw_filled_triangle(image, bottom, right, left, color);
+    }
+    draw_line(image, top.0, top.1, right.0, right.1, width, color, false);
+    draw_line(image, right.0, right.1, bottom.0, bottom.1, width, color, false);
+    draw_line(image, bottom.0, bottom.1, left.0, left.1, width, color, false);
+    draw_line(image, left.0, left.1, top.0, top.1, width, color, false);
+}
+
+pub fn draw_star(
+    image: &mut RgbaImage,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    width: f32,
+    color: Rgba,
+    filled: bool,
+) {
+    let cx = x + w / 2.0;
+    let cy = y + h / 2.0;
+    let r_out = (w.abs().min(h.abs())) / 2.0;
+    let r_in = r_out * 0.42;
+
+    if r_out <= 1.0 {
+        return;
+    }
+
+    let mut pts = Vec::with_capacity(10);
+    for i in 0..10 {
+        let angle = -std::f32::consts::FRAC_PI_2 + (i as f32) * std::f32::consts::PI / 5.0;
+        let r = if i % 2 == 0 { r_out } else { r_in };
+        pts.push((cx + r * angle.cos(), cy + r * angle.sin()));
+    }
+
+    if filled {
+        for i in 0..10 {
+            let next = (i + 1) % 10;
+            draw_filled_triangle(image, (cx, cy), pts[i], pts[next], color);
+        }
+    }
+
+    for i in 0..10 {
+        let next = (i + 1) % 10;
+        draw_line(image, pts[i].0, pts[i].1, pts[next].0, pts[next].1, width, color, false);
     }
 }
 

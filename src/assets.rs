@@ -104,6 +104,18 @@ impl AssetSource for PixoraAssets {
             "icons/sparkles.svg" => Some(
                 r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4M3 5h4M19 17v4M17 19h4"/></svg>"#,
             ),
+            "icons/triangle.svg" => Some(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L2 20h20L12 3z"/></svg>"#,
+            ),
+            "icons/star.svg" => Some(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>"#,
+            ),
+            "icons/diamond.svg" => Some(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 12l10 10 10-10L12 2z"/></svg>"#,
+            ),
+            "icons/chevron-down.svg" => Some(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>"#,
+            ),
             _ => None,
         };
 
@@ -143,6 +155,10 @@ impl AssetSource for PixoraAssets {
             "icons/window.svg".into(),
             "icons/pin.svg".into(),
             "icons/sparkles.svg".into(),
+            "icons/triangle.svg".into(),
+            "icons/star.svg".into(),
+            "icons/diamond.svg".into(),
+            "icons/chevron-down.svg".into(),
         ])
     }
 }

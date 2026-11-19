@@ -36,6 +36,24 @@ pub enum Annotation {
         width: f32,
         filled: bool,
     },
+    Triangle {
+        bounds: Bounds<Pixels>,
+        color: Rgba,
+        width: f32,
+        filled: bool,
+    },
+    Star {
+        bounds: Bounds<Pixels>,
+        color: Rgba,
+        width: f32,
+        filled: bool,
+    },
+    Diamond {
+        bounds: Bounds<Pixels>,
+        color: Rgba,
+        width: f32,
+        filled: bool,
+    },
     Text {
         origin: Point<Pixels>,
         text: String,

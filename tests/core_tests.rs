@@ -242,6 +242,33 @@ fn test_render_all_annotations_to_image() {
             },
             block_size: 6,
         },
+        Annotation::Triangle {
+            bounds: Bounds {
+                origin: point(px(10.0), px(100.0)),
+                size: size(px(30.0), px(30.0)),
+            },
+            color: rgb(0xFF9F0A),
+            width: 2.0,
+            filled: true,
+        },
+        Annotation::Star {
+            bounds: Bounds {
+                origin: point(px(50.0), px(120.0)),
+                size: size(px(30.0), px(30.0)),
+            },
+            color: rgb(0xFFD60A),
+            width: 2.0,
+            filled: false,
+        },
+        Annotation::Diamond {
+            bounds: Bounds {
+                origin: point(px(90.0), px(100.0)),
+                size: size(px(30.0), px(30.0)),
+            },
+            color: rgb(0xBF5AF2),
+            width: 2.0,
+            filled: true,
+        },
     ];
 
     render_annotations_to_image(&mut img, &annotations, 0.0, 0.0);
@@ -274,7 +301,7 @@ fn test_svg_asset_source_loads_all_icons() {
 
     let assets = PixoraAssets;
     let list = assets.list("").expect("List icons");
-    assert_eq!(list.len(), 31);
+    assert_eq!(list.len(), 35);
 
     for path in list {
         let content = assets.load(&path).expect("Load svg").expect("Found icon");

@@ -110,6 +110,10 @@ pub struct ScreenOverlayView {
     // Beautify & Pin
     pub is_beautify_active: bool,
     pub beautify_preset_idx: usize,
+    pub show_shapes_menu: bool,
+    pub show_beautify_menu: bool,
+    pub last_used_shape: ToolKind,
+    pub preset_thumbnails: Vec<(crate::image::beautify::BeautifyPreset, Arc<RenderImage>)>,
 }
 
 impl ScreenOverlayView {
@@ -244,6 +248,13 @@ impl ScreenOverlayView {
             hovered_tooltip: None,
             is_beautify_active: false,
             beautify_preset_idx: 0,
+            show_shapes_menu: false,
+            show_beautify_menu: false,
+            last_used_shape: ToolKind::Rectangle,
+            preset_thumbnails: crate::image::beautify::BeautifyPreset::all()
+                .iter()
+                .map(|&p| (p, crate::overlay::toolbar::generate_preset_thumbnail(p, 88, 54)))
+                .collect(),
         }
     }
 
@@ -367,6 +378,8 @@ impl ScreenOverlayView {
         self.text_input_buffer.clear();
         self.hex_input_mode = false;
         self.show_color_palette = false;
+        self.show_shapes_menu = false;
+        self.show_beautify_menu = false;
         self.sync_and_save_tool_props();
         self.numeric_input_mode = None;
         self.numeric_input_buffer.clear();
@@ -946,6 +959,39 @@ impl ScreenOverlayView {
                         filled: self.tool_props.is_filled,
                     });
                 }
+                ToolKind::Triangle => {
+                    self.current_drawing = Some(Annotation::Triangle {
+                        bounds: Bounds {
+                            origin: p,
+                            size: size(px(0.0), px(0.0)),
+                        },
+                        color: self.tool_props.stroke_color,
+                        width: self.tool_props.stroke_width,
+                        filled: self.tool_props.is_filled,
+                    });
+                }
+                ToolKind::Star => {
+                    self.current_drawing = Some(Annotation::Star {
+                        bounds: Bounds {
+                            origin: p,
+                            size: size(px(0.0), px(0.0)),
+                        },
+                        color: self.tool_props.stroke_color,
+                        width: self.tool_props.stroke_width,
+                        filled: self.tool_props.is_filled,
+                    });
+                }
+                ToolKind::Diamond => {
+                    self.current_drawing = Some(Annotation::Diamond {
+                        bounds: Bounds {
+                            origin: p,
+                            size: size(px(0.0), px(0.0)),
+                        },
+                        color: self.tool_props.stroke_color,
+                        width: self.tool_props.stroke_width,
+                        filled: self.tool_props.is_filled,
+                    });
+                }
                 ToolKind::Blur => {
                     self.current_drawing = Some(Annotation::Blur {
                         bounds: Bounds {
@@ -1058,6 +1104,9 @@ impl ScreenOverlayView {
                     }
                     Annotation::Rectangle { bounds, .. }
                     | Annotation::Ellipse { bounds, .. }
+                    | Annotation::Triangle { bounds, .. }
+                    | Annotation::Star { bounds, .. }
+                    | Annotation::Diamond { bounds, .. }
                     | Annotation::Blur { bounds, .. }
                     | Annotation::Pixelate { bounds, .. } => {
                         *bounds = rect_bounds;
@@ -1719,6 +1768,70 @@ impl Render for ScreenOverlayView {
                                     }
                                 }
                             }
+                            Annotation::Triangle { bounds, color, filled, width } => {
+                                let ox = bounds.origin.x;
+                                let oy = bounds.origin.y;
+                                let w = bounds.size.width;
+                                let h = bounds.size.height;
+                                let mut pb = if *filled {
+                                    PathBuilder::fill()
+                                } else {
+                                    PathBuilder::stroke(px(*width))
+                                };
+                                pb.move_to(point(ox + px(f32::from(w) / 2.0), oy));
+                                pb.line_to(point(ox + w, oy + h));
+                                pb.line_to(point(ox, oy + h));
+                                pb.close();
+                                if let Ok(path) = pb.build() {
+                                    window.paint_path(path, *color);
+                                }
+                            }
+                            Annotation::Diamond { bounds, color, filled, width } => {
+                                let ox = bounds.origin.x;
+                                let oy = bounds.origin.y;
+                                let w = bounds.size.width;
+                                let h = bounds.size.height;
+                                let mut pb = if *filled {
+                                    PathBuilder::fill()
+                                } else {
+                                    PathBuilder::stroke(px(*width))
+                                };
+                                pb.move_to(point(ox + px(f32::from(w) / 2.0), oy));
+                                pb.line_to(point(ox + w, oy + px(f32::from(h) / 2.0)));
+                                pb.line_to(point(ox + px(f32::from(w) / 2.0), oy + h));
+                                pb.line_to(point(ox, oy + px(f32::from(h) / 2.0)));
+                                pb.close();
+                                if let Ok(path) = pb.build() {
+                                    window.paint_path(path, *color);
+                                }
+                            }
+                            Annotation::Star { bounds, color, filled, width } => {
+                                let cx = f32::from(bounds.origin.x) + f32::from(bounds.size.width) / 2.0;
+                                let cy = f32::from(bounds.origin.y) + f32::from(bounds.size.height) / 2.0;
+                                let r_out = (f32::from(bounds.size.width).abs().min(f32::from(bounds.size.height).abs())) / 2.0;
+                                let r_in = r_out * 0.42;
+                                if r_out > 1.0 {
+                                    let mut pb = if *filled {
+                                        PathBuilder::fill()
+                                    } else {
+                                        PathBuilder::stroke(px(*width))
+                                    };
+                                    for i in 0..10 {
+                                        let angle = -std::f32::consts::FRAC_PI_2 + (i as f32) * std::f32::consts::PI / 5.0;
+                                        let r = if i % 2 == 0 { r_out } else { r_in };
+                                        let pt = point(px(cx + r * angle.cos()), px(cy + r * angle.sin()));
+                                        if i == 0 {
+                                            pb.move_to(pt);
+                                        } else {
+                                            pb.line_to(pt);
+                                        }
+                                    }
+                                    pb.close();
+                                    if let Ok(path) = pb.build() {
+                                        window.paint_path(path, *color);
+                                    }
+                                }
+                            }
                             Annotation::Blur { .. } | Annotation::Pixelate { .. } => {}
                             Annotation::NumberBadge { center, color, radius, .. } => {
                                 let badge_bounds = Bounds {
@@ -2129,32 +2242,72 @@ impl Render for ScreenOverlayView {
                             this.set_tooltip(t(lang, "Straight Line", "Прямая линия"), 173.0, *hovered, cx);
                         }),
                     ))
-                    .child(render_toolbar_button(
-                        "btn-rect".into(),
-                        "icons/rectangle.svg",
-                        active_tool == ToolKind::Rectangle,
-                        theme_ref,
-                        cx.listener(|this, _, _, cx| {
-                            this.active_tool = ToolKind::Rectangle;
-                            cx.notify();
-                        }),
-                        cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Rectangle", "Прямоугольник"), 209.0, *hovered, cx);
-                        }),
-                    ))
-                    .child(render_toolbar_button(
-                        "btn-circle".into(),
-                        "icons/circle.svg",
-                        active_tool == ToolKind::Ellipse,
-                        theme_ref,
-                        cx.listener(|this, _, _, cx| {
-                            this.active_tool = ToolKind::Ellipse;
-                            cx.notify();
-                        }),
-                        cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Ellipse / Circle", "Эллипс / Окружность"), 245.0, *hovered, cx);
-                        }),
-                    ))
+                    // Shapes dropdown button (Rectangle, Ellipse, Triangle, Star, Diamond, Arrow, Line)
+                    .child({
+                        let is_shape_active = active_tool.is_shape();
+                        let current_shape_icon = self.last_used_shape.icon_path();
+                        let is_menu_open = self.show_shapes_menu;
+                        div()
+                            .id("btn-shapes-dropdown")
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .px_2()
+                            .h(px(32.0))
+                            .rounded_lg()
+                            .cursor_pointer()
+                            .bg(if is_shape_active || is_menu_open {
+                                theme.bg_active
+                            } else {
+                                rgba(0x00000000)
+                            })
+                            .border_1()
+                            .border_color(if is_shape_active || is_menu_open {
+                                theme.accent
+                            } else {
+                                rgba(0x00000000)
+                            })
+                            .hover(|s| s.bg(theme.bg_hover))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_shapes_menu = !this.show_shapes_menu;
+                                if this.show_shapes_menu {
+                                    this.show_beautify_menu = false;
+                                    this.show_color_palette = false;
+                                }
+                                if !this.active_tool.is_shape() {
+                                    this.active_tool = this.last_used_shape;
+                                }
+                                cx.notify();
+                            }))
+                            .on_hover(cx.listener(move |this, hovered, _, cx| {
+                                this.set_tooltip(
+                                    t(lang, "Shapes (Dropdown Menu)", "Фигуры (выпадающий список)"),
+                                    220.0,
+                                    *hovered,
+                                    cx,
+                                );
+                            }))
+                            .child(
+                                svg()
+                                    .path(current_shape_icon)
+                                    .size(px(18.0))
+                                    .text_color(if is_shape_active || is_menu_open {
+                                        theme.accent
+                                    } else {
+                                        theme.text_secondary
+                                    }),
+                            )
+                            .child(
+                                svg()
+                                    .path("icons/chevron-down.svg")
+                                    .size(px(10.0))
+                                    .text_color(if is_shape_active || is_menu_open {
+                                        theme.accent
+                                    } else {
+                                        theme.text_muted
+                                    }),
+                            )
+                    })
                     .child(render_toolbar_button(
                         "btn-text".into(),
                         "icons/text.svg",
@@ -2248,18 +2401,67 @@ impl Render for ScreenOverlayView {
                             this.set_tooltip(t(lang, "QR Code Scanner", "Сканировать QR-код"), 509.0, *hovered, cx);
                         }),
                     ))
-                    .child(render_toolbar_button(
-                        "btn-beautify".into(),
-                        "icons/sparkles.svg",
-                        self.is_beautify_active,
-                        theme_ref,
-                        cx.listener(|this, _, _, cx| {
-                            this.toggle_beautify(cx);
-                        }),
-                        cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Beautify & Gradient Background", "Красивый фон и подложка"), 545.0, *hovered, cx);
-                        }),
-                    ))
+                    .child({
+                        let is_beautify = self.is_beautify_active;
+                        let is_menu_open = self.show_beautify_menu;
+                        div()
+                            .id("btn-beautify")
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .px_2()
+                            .h(px(32.0))
+                            .rounded_lg()
+                            .cursor_pointer()
+                            .bg(if is_beautify || is_menu_open {
+                                theme.bg_active
+                            } else {
+                                rgba(0x00000000)
+                            })
+                            .border_1()
+                            .border_color(if is_beautify || is_menu_open {
+                                theme.accent
+                            } else {
+                                rgba(0x00000000)
+                            })
+                            .hover(|s| s.bg(theme.bg_hover))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_beautify_menu = !this.show_beautify_menu;
+                                if this.show_beautify_menu {
+                                    this.show_shapes_menu = false;
+                                    this.show_color_palette = false;
+                                }
+                                cx.notify();
+                            }))
+                            .on_hover(cx.listener(move |this, hovered, _, cx| {
+                                this.set_tooltip(
+                                    t(lang, "Beautify & Background (Thumbnails)", "Красивый фон и подложка (с миниатюрами)"),
+                                    545.0,
+                                    *hovered,
+                                    cx,
+                                );
+                            }))
+                            .child(
+                                svg()
+                                    .path("icons/sparkles.svg")
+                                    .size(px(18.0))
+                                    .text_color(if is_beautify || is_menu_open {
+                                        theme.accent
+                                    } else {
+                                        theme.text_secondary
+                                    }),
+                            )
+                            .child(
+                                svg()
+                                    .path("icons/chevron-down.svg")
+                                    .size(px(10.0))
+                                    .text_color(if is_beautify || is_menu_open {
+                                        theme.accent
+                                    } else {
+                                        theme.text_muted
+                                    }),
+                            )
+                    })
                     .child(render_toolbar_button(
                         "btn-pin".into(),
                         "icons/pin.svg",
@@ -2878,8 +3080,14 @@ impl Render for ScreenOverlayView {
                                 ),
                             )
                         })
-                        // Fill toggle for Rect & Ellipse
-                        .when(active_tool == ToolKind::Rectangle || active_tool == ToolKind::Ellipse, |p| {
+                        // Fill toggle for closed shapes (Rect, Ellipse, Triangle, Star, Diamond)
+                        .when(
+                            active_tool == ToolKind::Rectangle
+                                || active_tool == ToolKind::Ellipse
+                                || active_tool == ToolKind::Triangle
+                                || active_tool == ToolKind::Star
+                                || active_tool == ToolKind::Diamond,
+                            |p| {
                             p.child(render_toolbar_divider(theme_ref)).child(
                                 div()
                                     .id("toggle-fill")
@@ -3518,6 +3726,388 @@ impl Render for ScreenOverlayView {
                                 )),
                         ),
                 );
+            }
+
+            // Shapes Dropdown Menu Popover
+            if self.show_shapes_menu {
+                let is_ru = lang.is_ru();
+                let scr_h = f32::from(screen_bounds.size.height);
+                let shapes_w = 230.0;
+                let shapes_h = 320.0;
+                let shapes_drop_up = f32::from(toolbar_pos.y) + bar_height + shapes_h + 16.0 > scr_h - 12.0;
+                let shapes_top = if shapes_drop_up {
+                    (f32::from(toolbar_pos.y) - shapes_h - 8.0).max(12.0)
+                } else {
+                    f32::from(toolbar_pos.y) + bar_height + 8.0
+                };
+                let shapes_left = (f32::from(toolbar_pos.x) + 160.0).clamp(12.0, f32::from(screen_bounds.size.width) - shapes_w - 12.0);
+
+                let shapes_list = [
+                    (ToolKind::Rectangle, "icons/rectangle.svg", "Прямоугольник", "Rectangle"),
+                    (ToolKind::Ellipse, "icons/circle.svg", "Эллипс", "Ellipse"),
+                    (ToolKind::Triangle, "icons/triangle.svg", "Треугольник", "Triangle"),
+                    (ToolKind::Star, "icons/star.svg", "Звезда", "Star"),
+                    (ToolKind::Diamond, "icons/diamond.svg", "Ромб", "Diamond"),
+                    (ToolKind::Arrow, "icons/arrow.svg", "Стрелка", "Arrow"),
+                    (ToolKind::Line, "icons/line.svg", "Линия", "Line"),
+                ];
+
+                let mut shapes_col = div()
+                    .absolute()
+                    .left(px(shapes_left))
+                    .top(px(shapes_top))
+                    .w(px(shapes_w))
+                    .p_3()
+                    .rounded_xl()
+                    .bg(theme.bg_surface)
+                    .border_1()
+                    .border_color(theme.border_subtle)
+                    .shadow_2xl()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    // Header
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .pb_2()
+                            .border_b_1()
+                            .border_color(theme.border_subtle)
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme.text_primary)
+                                    .child(if is_ru { "Фигуры" } else { "Shapes" }),
+                            )
+                            .child(
+                                div()
+                                    .id("btn-close-shapes")
+                                    .p_1()
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme.bg_hover))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.show_shapes_menu = false;
+                                        cx.notify();
+                                    }))
+                                    .child(
+                                        svg()
+                                            .path("icons/close.svg")
+                                            .size(px(14.0))
+                                            .text_color(theme.text_muted),
+                                    ),
+                            ),
+                    );
+
+                for (kind, icon, ru_name, en_name) in shapes_list {
+                    let is_selected = active_tool == kind;
+                    let display_text = if is_ru { ru_name } else { en_name };
+                    shapes_col = shapes_col.child(
+                        div()
+                            .id(ElementId::NamedInteger("shape-item".into(), kind as usize as u64))
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .px_2p5()
+                            .py_1p5()
+                            .rounded_lg()
+                            .cursor_pointer()
+                            .bg(if is_selected {
+                                rgba(0x8174FF22)
+                            } else {
+                                rgba(0x00000000)
+                            })
+                            .border_1()
+                            .border_color(if is_selected {
+                                theme.accent
+                            } else {
+                                rgba(0x00000000)
+                            })
+                            .hover(|s| s.bg(theme.bg_hover))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.active_tool = kind;
+                                this.last_used_shape = kind;
+                                this.show_shapes_menu = false;
+                                cx.notify();
+                            }))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        svg()
+                                            .path(icon)
+                                            .size(px(16.0))
+                                            .text_color(if is_selected {
+                                                theme.accent
+                                            } else {
+                                                theme.text_secondary
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_weight(if is_selected {
+                                                gpui::FontWeight::SEMIBOLD
+                                            } else {
+                                                gpui::FontWeight::NORMAL
+                                            })
+                                            .text_color(if is_selected {
+                                                theme.accent
+                                            } else {
+                                                theme.text_primary
+                                            })
+                                            .child(display_text),
+                                    ),
+                            )
+                            .child(
+                                if is_selected {
+                                    div().child(
+                                        svg()
+                                            .path("icons/check.svg")
+                                            .size(px(12.0))
+                                            .text_color(theme.accent),
+                                    )
+                                } else {
+                                    div()
+                                },
+                            ),
+                    );
+                }
+
+                root = root.child(shapes_col);
+            }
+
+            // Background & Substrate Dropdown Menu with Live Thumbnails
+            if self.show_beautify_menu {
+                let is_ru = lang.is_ru();
+                let scr_h = f32::from(screen_bounds.size.height);
+                let b_w = 460.0;
+                let b_h = 270.0;
+                let b_drop_up = f32::from(toolbar_pos.y) + bar_height + b_h + 16.0 > scr_h - 12.0;
+                let b_top = if b_drop_up {
+                    (f32::from(toolbar_pos.y) - b_h - 8.0).max(12.0)
+                } else {
+                    f32::from(toolbar_pos.y) + bar_height + 8.0
+                };
+                let b_left = (f32::from(toolbar_pos.x) + 380.0).clamp(12.0, f32::from(screen_bounds.size.width) - b_w - 12.0);
+
+                let is_active = self.is_beautify_active;
+                let current_idx = self.beautify_preset_idx;
+
+                let mut b_panel = div()
+                    .absolute()
+                    .left(px(b_left))
+                    .top(px(b_top))
+                    .w(px(b_w))
+                    .p_3()
+                    .rounded_xl()
+                    .bg(theme.bg_surface)
+                    .border_1()
+                    .border_color(theme.border_subtle)
+                    .shadow_2xl()
+                    .flex()
+                    .flex_col()
+                    .gap_2p5()
+                    // Header: Title + Toggle Switch + Close
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .pb_2()
+                            .border_b_1()
+                            .border_color(theme.border_subtle)
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        svg()
+                                            .path("icons/sparkles.svg")
+                                            .size(px(16.0))
+                                            .text_color(theme.accent),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(theme.text_primary)
+                                            .child(if is_ru { "Фон и подложка" } else { "Background & Substrate" }),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .id("toggle-beautify-switch")
+                                            .px_2p5()
+                                            .py_0p5()
+                                            .rounded_full()
+                                            .cursor_pointer()
+                                            .bg(if is_active {
+                                                theme.accent
+                                            } else {
+                                                theme.bg_secondary
+                                            })
+                                            .border_1()
+                                            .border_color(if is_active {
+                                                theme.accent
+                                            } else {
+                                                theme.border_subtle
+                                            })
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.is_beautify_active = !this.is_beautify_active;
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .text_color(if is_active {
+                                                        rgb(0xFFFFFF)
+                                                    } else {
+                                                        theme.text_secondary
+                                                    })
+                                                    .child(if is_active {
+                                                        if is_ru { "ВКЛ" } else { "ON" }
+                                                    } else {
+                                                        if is_ru { "ВЫКЛ" } else { "OFF" }
+                                                    }),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("btn-close-beautify")
+                                            .p_1()
+                                            .rounded_md()
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(theme.bg_hover))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.show_beautify_menu = false;
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                svg()
+                                                    .path("icons/close.svg")
+                                                    .size(px(14.0))
+                                                    .text_color(theme.text_muted),
+                                            ),
+                                    ),
+                            ),
+                    );
+
+                // Grid of Thumbnail Cards
+                let mut thumb_grid = div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .justify_start();
+
+                for (idx, (preset, render_img)) in self.preset_thumbnails.iter().enumerate() {
+                    let is_selected = is_active && (current_idx == idx);
+                    let display_name = preset.display_name(is_ru);
+                    let img_clone = render_img.clone();
+
+                    thumb_grid = thumb_grid.child(
+                        div()
+                            .id(ElementId::NamedInteger("preset-card".into(), idx as u64))
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap_1()
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.beautify_preset_idx = idx;
+                                this.is_beautify_active = true;
+                                cx.notify();
+                            }))
+                            .child(
+                                div()
+                                    .relative()
+                                    .w(px(98.0))
+                                    .h(px(58.0))
+                                    .rounded_lg()
+                                    .overflow_hidden()
+                                    .border_2()
+                                    .border_color(if is_selected {
+                                        theme.accent
+                                    } else {
+                                        rgba(0xFFFFFF18)
+                                    })
+                                    .hover(|s| s.border_color(theme.border_focus))
+                                    .child(
+                                        canvas(|_, _, _| (), move |bounds, _, window, _cx| {
+                                            let _ = window.paint_image(bounds, Corners::default(), img_clone.clone(), 0, false);
+                                            // Miniature preview frame representing the screenshot in the center
+                                            let pad_x = px(18.0);
+                                            let pad_y = px(12.0);
+                                            let inner = Bounds {
+                                                origin: point(bounds.origin.x + pad_x, bounds.origin.y + pad_y),
+                                                size: size(bounds.size.width - pad_x * 2.0, bounds.size.height - pad_y * 2.0),
+                                            };
+                                            // Subtle shadow
+                                            let shadow_b = Bounds {
+                                                origin: point(inner.origin.x + px(1.0), inner.origin.y + px(2.0)),
+                                                size: inner.size,
+                                            };
+                                            window.paint_quad(fill(shadow_b, rgba(0x00000044)));
+                                            window.paint_quad(fill(inner, rgba(0xFFFFFFEE)));
+                                            window.paint_quad(outline(inner, rgba(0x00000022), BorderStyle::Solid));
+                                        })
+                                        .size_full(),
+                                    )
+                                    .child(
+                                        if is_selected {
+                                            div()
+                                                .absolute()
+                                                .top(px(3.0))
+                                                .right(px(3.0))
+                                                .size(px(16.0))
+                                                .rounded_full()
+                                                .bg(theme.accent)
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .child(
+                                                    svg()
+                                                        .path("icons/check.svg")
+                                                        .size(px(10.0))
+                                                        .text_color(rgb(0xFFFFFF)),
+                                                )
+                                        } else {
+                                            div()
+                                        },
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(if is_selected {
+                                        gpui::FontWeight::BOLD
+                                    } else {
+                                        gpui::FontWeight::NORMAL
+                                    })
+                                    .text_color(if is_selected {
+                                        theme.accent
+                                    } else {
+                                        theme.text_secondary
+                                    })
+                                    .child(display_name),
+                            ),
+                    );
+                }
+
+                b_panel = b_panel.child(thumb_grid);
+                root = root.child(b_panel);
             }
         }
 

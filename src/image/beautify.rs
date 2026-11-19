@@ -6,6 +6,8 @@ pub enum BeautifyPreset {
     Ocean,       // Deep ocean teal to cyan
     Cosmic,      // Neon purple to violet
     StudioDark,  // Sleek graphite to deep slate
+    Emerald,     // Lush mint to deep emerald
+    Aurora,      // Northern lights cyan to lavender
     Transparent, // Pure shadow with alpha channel
 }
 
@@ -16,6 +18,8 @@ impl BeautifyPreset {
             BeautifyPreset::Ocean,
             BeautifyPreset::Cosmic,
             BeautifyPreset::StudioDark,
+            BeautifyPreset::Emerald,
+            BeautifyPreset::Aurora,
             BeautifyPreset::Transparent,
         ]
     }
@@ -26,6 +30,8 @@ impl BeautifyPreset {
             BeautifyPreset::Ocean => if is_ru { "Океан" } else { "Ocean" },
             BeautifyPreset::Cosmic => if is_ru { "Космос" } else { "Cosmic" },
             BeautifyPreset::StudioDark => if is_ru { "Студийный" } else { "Studio Dark" },
+            BeautifyPreset::Emerald => if is_ru { "Изумруд" } else { "Emerald" },
+            BeautifyPreset::Aurora => if is_ru { "Аврора" } else { "Aurora" },
             BeautifyPreset::Transparent => if is_ru { "Прозрачный" } else { "Transparent" },
         }
     }
@@ -47,6 +53,14 @@ impl BeautifyPreset {
             BeautifyPreset::StudioDark => (
                 Rgba([36, 40, 50, 255]),    // Graphite
                 Rgba([18, 20, 26, 255]),    // Charcoal black
+            ),
+            BeautifyPreset::Emerald => (
+                Rgba([16, 185, 129, 255]),  // Lush mint
+                Rgba([5, 150, 105, 255]),   // Deep emerald
+            ),
+            BeautifyPreset::Aurora => (
+                Rgba([0, 198, 255, 255]),   // Cyan
+                Rgba([155, 89, 182, 255]),  // Lavender
             ),
             BeautifyPreset::Transparent => (
                 Rgba([0, 0, 0, 0]),

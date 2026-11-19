@@ -435,3 +435,47 @@ pub fn generate_hue_strip_bitmap(width: u32, height: u32) -> Arc<RenderImage> {
     let frame = Frame::new(img);
     Arc::new(RenderImage::new(smallvec![frame]))
 }
+
+pub fn generate_preset_thumbnail(preset: crate::image::beautify::BeautifyPreset, width: u32, height: u32) -> Arc<RenderImage> {
+    let (c1, c2) = preset.gradient_colors();
+    let mut buf = vec![0u8; (width * height * 4) as usize];
+    let inv_w = 1.0 / (width - 1).max(1) as f32;
+    let inv_h = 1.0 / (height - 1).max(1) as f32;
+
+    let r1 = c1.0[0] as f32;
+    let g1 = c1.0[1] as f32;
+    let b1 = c1.0[2] as f32;
+    let r2 = c2.0[0] as f32;
+    let g2 = c2.0[1] as f32;
+    let b2 = c2.0[2] as f32;
+
+    for y in 0..height {
+        let ty = y as f32 * inv_h;
+        let row_offset = (y * width * 4) as usize;
+        for x in 0..width {
+            let tx = x as f32 * inv_w;
+            let t = (tx * 0.6 + ty * 0.6).clamp(0.0, 1.0);
+            let px_idx = row_offset + (x * 4) as usize;
+
+            if preset == crate::image::beautify::BeautifyPreset::Transparent {
+                let is_even = ((x / 6) + (y / 6)) % 2 == 0;
+                let v = if is_even { 52 } else { 38 };
+                buf[px_idx] = v;
+                buf[px_idx + 1] = v;
+                buf[px_idx + 2] = v;
+                buf[px_idx + 3] = 255;
+            } else {
+                let r = ((1.0 - t) * r1 + t * r2).round() as u8;
+                let g = ((1.0 - t) * g1 + t * g2).round() as u8;
+                let b = ((1.0 - t) * b1 + t * b2).round() as u8;
+                buf[px_idx] = b;
+                buf[px_idx + 1] = g;
+                buf[px_idx + 2] = r;
+                buf[px_idx + 3] = 255;
+            }
+        }
+    }
+    let img = RgbaImage::from_raw(width, height, buf).expect("valid buffer");
+    let frame = Frame::new(img);
+    Arc::new(RenderImage::new(smallvec![frame]))
+}
