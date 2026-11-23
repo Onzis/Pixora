@@ -13,6 +13,7 @@ pub enum ToolKind {
     Text,
     Blur,
     Pixelate,
+    Spotlight,
     NumberBadge,
     Eyedropper,
 }
@@ -33,6 +34,7 @@ impl ToolKind {
             ToolKind::Text => "Text",
             ToolKind::Blur => "Blur",
             ToolKind::Pixelate => "Pixelate",
+            ToolKind::Spotlight => "Spotlight",
             ToolKind::NumberBadge => "Step Badge",
             ToolKind::Eyedropper => "Color Picker",
         }
@@ -53,6 +55,7 @@ impl ToolKind {
             ToolKind::Text => if is_ru { "Текст" } else { "Text" },
             ToolKind::Blur => if is_ru { "Размытие" } else { "Blur" },
             ToolKind::Pixelate => if is_ru { "Пикселизация" } else { "Pixelate" },
+            ToolKind::Spotlight => if is_ru { "Фокус / Затемнение" } else { "Spotlight" },
             ToolKind::NumberBadge => if is_ru { "Шаги / Нумерация" } else { "Step Badge" },
             ToolKind::Eyedropper => if is_ru { "Пипетка" } else { "Color Picker" },
         }
@@ -73,6 +76,7 @@ impl ToolKind {
             ToolKind::Text => "icons/text.svg",
             ToolKind::Blur => "icons/blur.svg",
             ToolKind::Pixelate => "icons/pixelate.svg",
+            ToolKind::Spotlight => "icons/spotlight.svg",
             ToolKind::NumberBadge => "icons/step.svg",
             ToolKind::Eyedropper => "icons/eyedropper.svg",
         }

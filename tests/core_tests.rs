@@ -269,6 +269,16 @@ fn test_render_all_annotations_to_image() {
             width: 2.0,
             filled: true,
         },
+        Annotation::Spotlight {
+            bounds: Bounds {
+                origin: point(px(10.0), px(10.0)),
+                size: size(px(40.0), px(40.0)),
+            },
+            shape: pixora::editor::properties::SpotlightShape::Rectangle,
+            color: rgb(0xFF453A),
+            width: 2.0,
+            dim_opacity: 0.60,
+        },
     ];
 
     render_annotations_to_image(&mut img, &annotations, 0.0, 0.0);
@@ -301,7 +311,7 @@ fn test_svg_asset_source_loads_all_icons() {
 
     let assets = PixoraAssets;
     let list = assets.list("").expect("List icons");
-    assert_eq!(list.len(), 35);
+    assert_eq!(list.len(), 36);
 
     for path in list {
         let content = assets.load(&path).expect("Load svg").expect("Found icon");
@@ -309,6 +319,42 @@ fn test_svg_asset_source_loads_all_icons() {
         assert!(s.starts_with("<svg"), "Icon {} must start with <svg", path);
         assert!(s.ends_with("</svg>"), "Icon {} must end with </svg>", path);
     }
+}
+
+#[test]
+fn test_spotlight_dimming_and_cutout() {
+    use pixora::editor::properties::SpotlightShape;
+    use pixora::image::processing::{apply_spotlights, SpotlightRegion};
+
+    // Create a 100x100 image with constant value 200
+    let mut img = RgbaImage::from_pixel(100, 100, Rgba([200, 200, 200, 255]));
+
+    let spots = vec![
+        SpotlightRegion {
+            x: 20.0,
+            y: 20.0,
+            width: 30.0,
+            height: 30.0,
+            shape: SpotlightShape::Rectangle,
+            border_color: rgb(0xFF0000),
+            border_width: 0.0,
+            dim_opacity: 0.60,
+        },
+    ];
+
+    apply_spotlights(&mut img, 0, 0, 100, 100, &spots, 0.60, 0.0);
+
+    // Pixel inside spotlight (at 30, 30) should remain undimmed: 200
+    let inside_pixel = img.get_pixel(30, 30);
+    assert_eq!(inside_pixel[0], 200);
+    assert_eq!(inside_pixel[1], 200);
+    assert_eq!(inside_pixel[2], 200);
+
+    // Pixel outside spotlight (at 5, 5) should be dimmed by factor (1 - 0.60) = 0.40 -> 200 * 0.40 = 80
+    let outside_pixel = img.get_pixel(5, 5);
+    assert_eq!(outside_pixel[0], 80);
+    assert_eq!(outside_pixel[1], 80);
+    assert_eq!(outside_pixel[2], 80);
 }
 
 #[test]

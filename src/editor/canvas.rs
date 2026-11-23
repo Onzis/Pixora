@@ -10,8 +10,51 @@ pub fn render_annotations_to_image(
     offset_x: f32,
     offset_y: f32,
 ) {
+    // 1. Process Spotlight annotations first so dark mask covers the image and cutouts are created
+    let spotlights: Vec<crate::image::processing::SpotlightRegion> = annotations
+        .iter()
+        .filter_map(|ann| {
+            if let Annotation::Spotlight { bounds, shape, color, width, dim_opacity } = ann {
+                let sx = f32::from(bounds.origin.x) - offset_x;
+                let sy = f32::from(bounds.origin.y) - offset_y;
+                let sw = f32::from(bounds.size.width);
+                let sh = f32::from(bounds.size.height);
+                let (norm_x, norm_w) = if sw < 0.0 { (sx + sw, -sw) } else { (sx, sw) };
+                let (norm_y, norm_h) = if sh < 0.0 { (sy + sh, -sh) } else { (sy, sh) };
+                Some(crate::image::processing::SpotlightRegion {
+                    x: norm_x,
+                    y: norm_y,
+                    width: norm_w,
+                    height: norm_h,
+                    shape: *shape,
+                    border_color: *color,
+                    border_width: *width,
+                    dim_opacity: *dim_opacity,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if !spotlights.is_empty() {
+        let max_dim = spotlights.iter().map(|s| s.dim_opacity).fold(0.0f32, f32::max);
+        crate::image::processing::apply_spotlights(
+            image,
+            0,
+            0,
+            image.width(),
+            image.height(),
+            &spotlights,
+            max_dim,
+            6.0,
+        );
+    }
+
+    // 2. Process all other annotations (filters and vector shapes on top)
     for ann in annotations {
         match ann {
+            Annotation::Spotlight { .. } => {}
             Annotation::Blur { bounds, radius } => {
                 let bx = ((f32::from(bounds.origin.x) - offset_x).max(0.0) as u32).min(image.width());
                 let by = ((f32::from(bounds.origin.y) - offset_y).max(0.0) as u32).min(image.height());
@@ -435,7 +478,49 @@ fn draw_rectangle(
     }
 }
 
-fn draw_ellipse(
+pub(crate) fn draw_rounded_rectangle(
+    image: &mut RgbaImage,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    radius: f32,
+    width: f32,
+    color: Rgba,
+) {
+    let r = radius.min(w / 2.0).min(h / 2.0).max(0.0);
+    if r < 1.0 {
+        draw_rectangle(image, x, y, w, h, width, color, false);
+        return;
+    }
+    // Straight edges
+    draw_line(image, x + r, y, x + w - r, y, width, color, false);
+    draw_line(image, x + w, y + r, x + w, y + h - r, width, color, false);
+    draw_line(image, x + w - r, y + h, x + r, y + h, width, color, false);
+    draw_line(image, x, y + h - r, x, y + r, width, color, false);
+
+    // 4 Corner arcs
+    let segments = 8;
+    for (cx, cy, start_angle) in [
+        (x + w - r, y + r, -std::f32::consts::FRAC_PI_2),
+        (x + w - r, y + h - r, 0.0),
+        (x + r, y + h - r, std::f32::consts::FRAC_PI_2),
+        (x + r, y + r, std::f32::consts::PI),
+    ] {
+        let step = std::f32::consts::FRAC_PI_2 / segments as f32;
+        for i in 0..segments {
+            let a1 = start_angle + (i as f32) * step;
+            let a2 = start_angle + ((i + 1) as f32) * step;
+            let p1x = cx + r * a1.cos();
+            let p1y = cy + r * a1.sin();
+            let p2x = cx + r * a2.cos();
+            let p2y = cy + r * a2.sin();
+            draw_line(image, p1x, p1y, p2x, p2y, width, color, false);
+        }
+    }
+}
+
+pub(crate) fn draw_ellipse(
     image: &mut RgbaImage,
     x: f32,
     y: f32,

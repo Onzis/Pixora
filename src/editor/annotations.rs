@@ -1,4 +1,5 @@
 use gpui::{Bounds, Pixels, Point, Rgba};
+use crate::editor::properties::SpotlightShape;
 
 #[derive(Clone, Debug)]
 pub enum Annotation {
@@ -67,6 +68,13 @@ pub enum Annotation {
     Pixelate {
         bounds: Bounds<Pixels>,
         block_size: u32,
+    },
+    Spotlight {
+        bounds: Bounds<Pixels>,
+        shape: SpotlightShape,
+        color: Rgba,
+        width: f32,
+        dim_opacity: f32,
     },
     NumberBadge {
         center: Point<Pixels>,

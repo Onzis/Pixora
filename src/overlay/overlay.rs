@@ -16,7 +16,7 @@ use crate::config::AppConfig;
 use crate::editor::annotations::{Annotation, calculate_arrow_geometry};
 use crate::editor::canvas::render_annotations_to_image;
 use crate::editor::history::EditHistory;
-use crate::editor::properties::ToolProperties;
+use crate::editor::properties::{SpotlightShape, ToolProperties};
 use crate::editor::tools::ToolKind;
 use crate::i18n::t;
 use crate::image::clipboard::{copy_image_to_clipboard, copy_text_to_clipboard};
@@ -165,6 +165,8 @@ impl ScreenOverlayView {
             font_size: config.default_font_size.clamp(10.0, 96.0),
             blur_radius: config.blur_radius.clamp(2, 99),
             pixelate_block: config.pixelate_block.clamp(2, 99),
+            spotlight_shape: SpotlightShape::Rectangle,
+            spotlight_dim: 0.60,
             is_filled: false,
             current_badge_number: 1,
         };
@@ -394,6 +396,60 @@ impl ScreenOverlayView {
 
     pub fn rebuild_render_image(&mut self) {
         let mut img = self.capture.image.clone();
+
+        // 1. Process Spotlight annotations first so dark mask covers the selection area and cutouts are created
+        let (sel_x, sel_y, sel_w, sel_h) = if self.selection.is_active {
+            (
+                (self.selection.x().max(0.0) as u32).min(img.width()),
+                (self.selection.y().max(0.0) as u32).min(img.height()),
+                (self.selection.width() as u32).min(img.width().saturating_sub(self.selection.x().max(0.0) as u32)),
+                (self.selection.height() as u32).min(img.height().saturating_sub(self.selection.y().max(0.0) as u32)),
+            )
+        } else {
+            (0, 0, img.width(), img.height())
+        };
+
+        let spotlights: Vec<crate::image::processing::SpotlightRegion> = self.history.annotations
+            .iter()
+            .filter_map(|ann| {
+                if let Annotation::Spotlight { bounds, shape, color, width, dim_opacity } = ann {
+                    let sx = f32::from(bounds.origin.x);
+                    let sy = f32::from(bounds.origin.y);
+                    let sw = f32::from(bounds.size.width);
+                    let sh = f32::from(bounds.size.height);
+                    let (norm_x, norm_w) = if sw < 0.0 { (sx + sw, -sw) } else { (sx, sw) };
+                    let (norm_y, norm_h) = if sh < 0.0 { (sy + sh, -sh) } else { (sy, sh) };
+                    Some(crate::image::processing::SpotlightRegion {
+                        x: norm_x,
+                        y: norm_y,
+                        width: norm_w,
+                        height: norm_h,
+                        shape: *shape,
+                        border_color: *color,
+                        border_width: *width,
+                        dim_opacity: *dim_opacity,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if !spotlights.is_empty() && sel_w > 0 && sel_h > 0 {
+            let max_dim = spotlights.iter().map(|s| s.dim_opacity).fold(0.0f32, f32::max);
+            crate::image::processing::apply_spotlights(
+                &mut img,
+                sel_x,
+                sel_y,
+                sel_w,
+                sel_h,
+                &spotlights,
+                max_dim,
+                6.0,
+            );
+        }
+
+        // 2. Process Blur and Pixelate annotations
         for ann in &self.history.annotations {
             match ann {
                 Annotation::Blur { bounds, radius } => {
@@ -1090,6 +1146,18 @@ impl ScreenOverlayView {
                         block_size: self.tool_props.pixelate_block,
                     });
                 }
+                ToolKind::Spotlight => {
+                    self.current_drawing = Some(Annotation::Spotlight {
+                        bounds: Bounds {
+                            origin: p,
+                            size: size(px(0.0), px(0.0)),
+                        },
+                        shape: self.tool_props.spotlight_shape,
+                        color: self.tool_props.stroke_color,
+                        width: self.tool_props.stroke_width,
+                        dim_opacity: self.tool_props.spotlight_dim,
+                    });
+                }
                 _ => {}
             }
             cx.notify();
@@ -1188,7 +1256,8 @@ impl ScreenOverlayView {
                     | Annotation::Star { bounds, .. }
                     | Annotation::Diamond { bounds, .. }
                     | Annotation::Blur { bounds, .. }
-                    | Annotation::Pixelate { bounds, .. } => {
+                    | Annotation::Pixelate { bounds, .. }
+                    | Annotation::Spotlight { bounds, .. } => {
                         *bounds = rect_bounds;
                     }
                     _ => {}
@@ -1273,17 +1342,25 @@ impl ScreenOverlayView {
             return;
         }
 
+        let was_moving_or_resizing = matches!(self.drag_mode, SelectionDragMode::Moving { .. } | SelectionDragMode::Resizing { .. });
         self.drag_mode = SelectionDragMode::None;
         self.drawing_start = None;
 
         if let Some(drawing) = self.current_drawing.take() {
-            let is_blur_or_pixelate = matches!(drawing, Annotation::Blur { .. } | Annotation::Pixelate { .. });
+            let is_filter_or_spotlight = matches!(
+                drawing,
+                Annotation::Blur { .. } | Annotation::Pixelate { .. } | Annotation::Spotlight { .. }
+            );
             self.history.push_annotation(drawing);
-            if is_blur_or_pixelate {
+            if is_filter_or_spotlight {
                 self.rebuild_render_image();
             }
             cx.notify();
             return;
+        }
+
+        if was_moving_or_resizing && self.history.annotations.iter().any(|a| matches!(a, Annotation::Spotlight { .. })) {
+            self.rebuild_render_image();
         }
 
         // Check if an instant window snap was clicked
@@ -1928,7 +2005,7 @@ impl Render for ScreenOverlayView {
                                     }
                                 }
                             }
-                            Annotation::Blur { .. } | Annotation::Pixelate { .. } => {}
+                            Annotation::Blur { .. } | Annotation::Pixelate { .. } | Annotation::Spotlight { .. } => {}
                             Annotation::NumberBadge { center, color, radius, .. } => {
                                 let badge_bounds = Bounds {
                                     origin: point(center.x - px(*radius), center.y - px(*radius)),
@@ -1951,6 +2028,93 @@ impl Render for ScreenOverlayView {
                             Annotation::Pixelate { bounds, .. } => {
                                 window.paint_quad(fill(*bounds, rgba(0x30D15822)));
                                 window.paint_quad(outline(*bounds, rgba(0x30D15888), BorderStyle::Dashed));
+                            }
+                            Annotation::Spotlight { bounds, shape, color, width, dim_opacity } => {
+                                let sel = selection.bounds;
+                                let bx = bounds.origin.x;
+                                let by = bounds.origin.y;
+                                let bw = bounds.size.width;
+                                let bh = bounds.size.height;
+                                let min_x = bx.min(bx + bw).max(sel.origin.x);
+                                let min_y = by.min(by + bh).max(sel.origin.y);
+                                let max_x = (bx.max(bx + bw)).min(sel.origin.x + sel.size.width);
+                                let max_y = (by.max(by + bh)).min(sel.origin.y + sel.size.height);
+
+                                let dim_c = gpui::Rgba { r: 0.0, g: 0.0, b: 0.0, a: *dim_opacity };
+
+                                if *shape == SpotlightShape::Rectangle {
+                                    if min_y > sel.origin.y {
+                                        window.paint_quad(fill(
+                                            Bounds { origin: sel.origin, size: size(sel.size.width, min_y - sel.origin.y) },
+                                            dim_c,
+                                        ));
+                                    }
+                                    let sel_bottom = sel.origin.y + sel.size.height;
+                                    if max_y < sel_bottom {
+                                        window.paint_quad(fill(
+                                            Bounds { origin: point(sel.origin.x, max_y), size: size(sel.size.width, sel_bottom - max_y) },
+                                            dim_c,
+                                        ));
+                                    }
+                                    if min_x > sel.origin.x {
+                                        window.paint_quad(fill(
+                                            Bounds { origin: point(sel.origin.x, min_y), size: size(min_x - sel.origin.x, max_y - min_y) },
+                                            dim_c,
+                                        ));
+                                    }
+                                    let sel_right = sel.origin.x + sel.size.width;
+                                    if max_x < sel_right {
+                                        window.paint_quad(fill(
+                                            Bounds { origin: point(max_x, min_y), size: size(sel_right - max_x, max_y - min_y) },
+                                            dim_c,
+                                        ));
+                                    }
+
+                                    let norm_bounds = Bounds {
+                                        origin: point(min_x, min_y),
+                                        size: size(max_x - min_x, max_y - min_y),
+                                    };
+                                    window.paint_quad(outline(norm_bounds, *color, BorderStyle::Solid));
+                                } else {
+                                    let norm_bounds = Bounds {
+                                        origin: point(min_x, min_y),
+                                        size: size(max_x - min_x, max_y - min_y),
+                                    };
+                                    let cx = f32::from(norm_bounds.origin.x) + f32::from(norm_bounds.size.width) / 2.0;
+                                    let cy = f32::from(norm_bounds.origin.y) + f32::from(norm_bounds.size.height) / 2.0;
+                                    let rx = (f32::from(norm_bounds.size.width) / 2.0).abs();
+                                    let ry = (f32::from(norm_bounds.size.height) / 2.0).abs();
+                                    if rx > 1.0 && ry > 1.0 {
+                                        let kx = rx * 0.55228475;
+                                        let ky = ry * 0.55228475;
+                                        let mut pb = PathBuilder::stroke(px(*width));
+                                        pb.move_to(point(px(cx), px(cy - ry)));
+                                        pb.cubic_bezier_to(
+                                            point(px(cx + rx), px(cy)),
+                                            point(px(cx + kx), px(cy - ry)),
+                                            point(px(cx + rx), px(cy - ky)),
+                                        );
+                                        pb.cubic_bezier_to(
+                                            point(px(cx), px(cy + ry)),
+                                            point(px(cx + rx), px(cy + ky)),
+                                            point(px(cx + kx), px(cy + ry)),
+                                        );
+                                        pb.cubic_bezier_to(
+                                            point(px(cx - rx), px(cy)),
+                                            point(px(cx - kx), px(cy + ry)),
+                                            point(px(cx - rx), px(cy + ky)),
+                                        );
+                                        pb.cubic_bezier_to(
+                                            point(px(cx), px(cy - ry)),
+                                            point(px(cx - rx), px(cy - ky)),
+                                            point(px(cx - kx), px(cy - ry)),
+                                        );
+                                        if let Ok(path) = pb.build() {
+                                            window.paint_path(path, *color);
+                                        }
+                                    }
+                                    window.paint_quad(outline(norm_bounds, rgba(0xFFFFFF44), BorderStyle::Dashed));
+                                }
                             }
                             _ => {}
                         }
@@ -2411,6 +2575,19 @@ impl Render for ScreenOverlayView {
                         }),
                     ))
                     .child(render_toolbar_button(
+                        "btn-spotlight".into(),
+                        "icons/spotlight.svg",
+                        active_tool == ToolKind::Spotlight,
+                        theme_ref,
+                        cx.listener(|this, _, _, cx| {
+                            this.active_tool = ToolKind::Spotlight;
+                            cx.notify();
+                        }),
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Spotlight Focus / Dim", "Фокус / Затемнение"), 332.0, *hovered, cx);
+                        }),
+                    ))
+                    .child(render_toolbar_button(
                         "btn-dropper".into(),
                         "icons/eyedropper.svg",
                         active_tool == ToolKind::Eyedropper,
@@ -2420,7 +2597,7 @@ impl Render for ScreenOverlayView {
                             cx.notify();
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Eyedropper Color Picker", "Пипетка цвета"), 332.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Eyedropper Color Picker", "Пипетка цвета"), 368.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_divider(theme_ref))
@@ -2434,7 +2611,7 @@ impl Render for ScreenOverlayView {
                             this.do_ocr(cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Windows WinRT Text Recognition", "Распознавание текста (OCR)"), 375.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Windows WinRT Text Recognition", "Распознавание текста (OCR)"), 411.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_text_button(
@@ -2446,7 +2623,7 @@ impl Render for ScreenOverlayView {
                             this.do_qr_scan(cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "QR Code Scanner", "Сканировать QR-код"), 411.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "QR Code Scanner", "Сканировать QR-код"), 447.0, *hovered, cx);
                         }),
                     ))
                     .child({
@@ -2489,7 +2666,7 @@ impl Render for ScreenOverlayView {
                             this.do_pin(window, cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Pin to Screen (Always on Top)", "Закрепить поверх окон"), 493.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Pin to Screen (Always on Top)", "Закрепить поверх окон"), 529.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -2501,7 +2678,7 @@ impl Render for ScreenOverlayView {
                             this.do_undo(cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Undo (Ctrl+Z)", "Отменить (Ctrl+Z)"), 529.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Undo (Ctrl+Z)", "Отменить (Ctrl+Z)"), 565.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -2513,7 +2690,7 @@ impl Render for ScreenOverlayView {
                             this.do_redo(cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Redo (Ctrl+Y)", "Повторить (Ctrl+Y)"), 565.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Redo (Ctrl+Y)", "Повторить (Ctrl+Y)"), 601.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_button(
@@ -2525,7 +2702,7 @@ impl Render for ScreenOverlayView {
                             this.do_save(window, cx);
                         }),
                         cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Save to PNG (Ctrl+S)", "Сохранить в PNG (Ctrl+S)"), 601.0, *hovered, cx);
+                            this.set_tooltip(t(lang, "Save to PNG (Ctrl+S)", "Сохранить в PNG (Ctrl+S)"), 637.0, *hovered, cx);
                         }),
                     ))
                     .child(
@@ -2542,7 +2719,7 @@ impl Render for ScreenOverlayView {
                             .cursor_pointer()
                             .shadow_md()
                             .on_hover(cx.listener(move |this, hovered, _, cx| {
-                                this.set_tooltip(t(lang, "Copy to Clipboard (Ctrl+C)", "Копировать в буфер (Ctrl+C)"), 660.0, *hovered, cx);
+                                this.set_tooltip(t(lang, "Copy to Clipboard (Ctrl+C)", "Копировать в буфер (Ctrl+C)"), 696.0, *hovered, cx);
                             }))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.do_copy(window, cx);
@@ -2575,7 +2752,7 @@ impl Render for ScreenOverlayView {
                             .hover(|s| s.bg(rgba(0xFF453A22)).border_color(rgb(0xFF453A)))
                             .cursor_pointer()
                             .on_hover(cx.listener(move |this, hovered, _, cx| {
-                                this.set_tooltip(t(lang, "Close Overlay (Esc)", "Закрыть (Esc)"), 725.0, *hovered, cx);
+                                this.set_tooltip(t(lang, "Close Overlay (Esc)", "Закрыть (Esc)"), 761.0, *hovered, cx);
                             }))
                             .on_click(cx.listener(|_, _, window, _| {
                                 window.remove_window();
@@ -2861,6 +3038,170 @@ impl Render for ScreenOverlayView {
                             this.sync_and_save_tool_props();
                             cx.notify();
                         }))),
+                );
+            } else if active_tool == ToolKind::Spotlight {
+                let current_dim = self.tool_props.spotlight_dim;
+                let current_shape = self.tool_props.spotlight_shape;
+                toolbar_col = toolbar_col.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .px_3()
+                        .py_1p5()
+                        .rounded_xl()
+                        .bg(theme.bg_surface)
+                        .border_1()
+                        .border_color(theme.border_subtle)
+                        .shadow_xl()
+                        .child(
+                            svg()
+                                .path("icons/spotlight.svg")
+                                .size(px(16.0))
+                                .text_color(theme.accent),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(theme.text_secondary)
+                                .child(t(lang, "Spotlight:", "Фокус:")),
+                        )
+                        // Shape selector
+                        .child(render_blur_preset(
+                            "spotlight-shape-rect".into(),
+                            t(lang, "Rectangle", "Прямоугольник"),
+                            current_shape == SpotlightShape::Rectangle,
+                            cx.listener(|this, _, _, cx| {
+                                this.tool_props.spotlight_shape = SpotlightShape::Rectangle;
+                                this.sync_and_save_tool_props();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(render_blur_preset(
+                            "spotlight-shape-ellipse".into(),
+                            t(lang, "Ellipse", "Эллипс"),
+                            current_shape == SpotlightShape::Ellipse,
+                            cx.listener(|this, _, _, cx| {
+                                this.tool_props.spotlight_shape = SpotlightShape::Ellipse;
+                                this.sync_and_save_tool_props();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(render_toolbar_divider(theme_ref))
+                        // Dimming Presets
+                        .child(render_blur_preset(
+                            "spotlight-dim-40".into(),
+                            t(lang, "40% Soft", "40% Мягкое"),
+                            (current_dim - 0.40).abs() < 0.05,
+                            cx.listener(|this, _, _, cx| {
+                                this.tool_props.spotlight_dim = 0.40;
+                                this.sync_and_save_tool_props();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(render_blur_preset(
+                            "spotlight-dim-60".into(),
+                            t(lang, "60% Medium", "60% Среднее"),
+                            (current_dim - 0.60).abs() < 0.05,
+                            cx.listener(|this, _, _, cx| {
+                                this.tool_props.spotlight_dim = 0.60;
+                                this.sync_and_save_tool_props();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(render_blur_preset(
+                            "spotlight-dim-80".into(),
+                            t(lang, "80% Dark", "80% Тёмное"),
+                            (current_dim - 0.80).abs() < 0.05,
+                            cx.listener(|this, _, _, cx| {
+                                this.tool_props.spotlight_dim = 0.80;
+                                this.sync_and_save_tool_props();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(render_toolbar_divider(theme_ref))
+                        // Quick Border Color Swatches
+                        .child(render_color_swatch(
+                            "swatch-spot-red".into(),
+                            theme.palette_red,
+                            current_color == theme.palette_red,
+                            cx.listener(|this, _, _, cx| {
+                                this.tool_props.stroke_color = this.theme.palette_red;
+                                this.sync_and_save_tool_props();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(render_color_swatch(
+                            "swatch-spot-yellow".into(),
+                            theme.palette_yellow,
+                            current_color == theme.palette_yellow,
+                            cx.listener(|this, _, _, cx| {
+                                this.tool_props.stroke_color = this.theme.palette_yellow;
+                                this.sync_and_save_tool_props();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(render_color_swatch(
+                            "swatch-spot-blue".into(),
+                            theme.palette_blue,
+                            current_color == theme.palette_blue,
+                            cx.listener(|this, _, _, cx| {
+                                this.tool_props.stroke_color = this.theme.palette_blue;
+                                this.sync_and_save_tool_props();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(render_color_swatch(
+                            "swatch-spot-white".into(),
+                            theme.palette_white,
+                            current_color == theme.palette_white,
+                            cx.listener(|this, _, _, cx| {
+                                this.tool_props.stroke_color = this.theme.palette_white;
+                                this.sync_and_save_tool_props();
+                                cx.notify();
+                            }),
+                        ))
+                        // Full Palette Button
+                        .child(
+                            div()
+                                .id("btn-open-palette")
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .size(px(24.0))
+                                .rounded_full()
+                                .bg(if self.show_color_palette {
+                                    rgba(0x8174FF33)
+                                } else {
+                                    theme.bg_secondary
+                                })
+                                .border_1()
+                                .border_color(if self.show_color_palette {
+                                    theme.accent
+                                } else {
+                                    theme.border_subtle
+                                })
+                                .hover(|s| s.bg(theme.bg_hover))
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.show_color_palette = !this.show_color_palette;
+                                    if this.show_color_palette {
+                                        this.sync_picker_from_color();
+                                    }
+                                    cx.notify();
+                                }))
+                                .child(
+                                    svg()
+                                        .path("icons/palette.svg")
+                                        .size(px(14.0))
+                                        .text_color(if self.show_color_palette {
+                                            theme.accent
+                                        } else {
+                                            theme.text_secondary
+                                        }),
+                                ),
+                        ),
                 );
             } else if show_props {
                 toolbar_col = toolbar_col.child(

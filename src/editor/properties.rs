@@ -1,5 +1,11 @@
 use gpui::{Rgba, rgb};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpotlightShape {
+    Rectangle,
+    Ellipse,
+}
+
 #[derive(Clone, Debug)]
 pub struct ToolProperties {
     pub stroke_color: Rgba,
@@ -9,6 +15,8 @@ pub struct ToolProperties {
     pub pixelate_block: u32,
     pub is_filled: bool,
     pub current_badge_number: u32,
+    pub spotlight_shape: SpotlightShape,
+    pub spotlight_dim: f32,
 }
 
 impl Default for ToolProperties {
@@ -21,6 +29,8 @@ impl Default for ToolProperties {
             pixelate_block: 10,
             is_filled: false,
             current_badge_number: 1,
+            spotlight_shape: SpotlightShape::Rectangle,
+            spotlight_dim: 0.60,
         }
     }
 }
