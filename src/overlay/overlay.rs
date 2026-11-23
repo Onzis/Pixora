@@ -1450,7 +1450,7 @@ impl ScreenOverlayView {
                 if let Ok(val) = self.numeric_input_buffer.parse::<u32>() {
                     match target {
                         NumericInputTarget::StrokeWidth => {
-                            self.tool_props.stroke_width = (val as f32).clamp(1.0, 99.0);
+                            self.tool_props.stroke_width = (val as f32).clamp(0.0, 99.0);
                         }
                         NumericInputTarget::BlurRadius => {
                             self.tool_props.blur_radius = val.clamp(2, 99);
@@ -2996,7 +2996,6 @@ impl Render for ScreenOverlayView {
                         }))),
                 );
             } else if active_tool == ToolKind::Spotlight {
-                let current_dim = self.tool_props.spotlight_dim;
                 toolbar_col = toolbar_col.child(
                     div()
                         .flex()
@@ -3020,39 +3019,117 @@ impl Render for ScreenOverlayView {
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .text_color(theme.text_secondary)
-                                .child(t(lang, "Dimming:", "Затемнение:")),
+                                .child(t(lang, "Border:", "Рамка:")),
                         )
-                        // Dimming Presets
-                        .child(render_blur_preset(
-                            "spotlight-dim-40".into(),
-                            t(lang, "40% Soft", "40% Мягкое"),
-                            (current_dim - 0.40).abs() < 0.05,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.spotlight_dim = 0.40;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
-                        .child(render_blur_preset(
-                            "spotlight-dim-60".into(),
-                            t(lang, "60% Medium", "60% Среднее"),
-                            (current_dim - 0.60).abs() < 0.05,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.spotlight_dim = 0.60;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
-                        .child(render_blur_preset(
-                            "spotlight-dim-80".into(),
-                            t(lang, "80% Dark", "80% Тёмное"),
-                            (current_dim - 0.80).abs() < 0.05,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.spotlight_dim = 0.80;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
+                        // Stepper: [-] [ 2px ] [+]
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .id("btn-dec-spotlight-width")
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .size(px(22.0))
+                                        .rounded_md()
+                                        .bg(theme.bg_secondary)
+                                        .border_1()
+                                        .border_color(theme.border_subtle)
+                                        .hover(|s| s.bg(theme.bg_hover))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.tool_props.stroke_width = (this.tool_props.stroke_width - 1.0).max(0.0);
+                                            this.sync_and_save_tool_props();
+                                            cx.notify();
+                                        }))
+                                        .child(svg().path("icons/minus.svg").size(px(12.0)).text_color(theme.text_secondary)),
+                                )
+                                .child(
+                                    div()
+                                        .id("spotlight-width-display")
+                                        .px_2()
+                                        .py_0p5()
+                                        .min_w(px(40.0))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded_md()
+                                        .bg(if self.numeric_input_mode == Some(NumericInputTarget::StrokeWidth) {
+                                            rgba(0x8174FF33)
+                                        } else {
+                                            theme.bg_secondary
+                                        })
+                                        .border_1()
+                                        .border_color(if self.numeric_input_mode == Some(NumericInputTarget::StrokeWidth) {
+                                            theme.accent
+                                        } else {
+                                            theme.border_subtle
+                                        })
+                                        .hover(|s| s.border_color(theme.border_focus))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.numeric_input_mode = Some(NumericInputTarget::StrokeWidth);
+                                            this.numeric_input_buffer = (this.tool_props.stroke_width as u32).to_string();
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_color(theme.text_primary)
+                                                .child(if self.numeric_input_mode == Some(NumericInputTarget::StrokeWidth) {
+                                                    format!("{}▏", self.numeric_input_buffer)
+                                                } else {
+                                                    format!("{}px", stroke_width as u32)
+                                                }),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("btn-inc-spotlight-width")
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .size(px(22.0))
+                                        .rounded_md()
+                                        .bg(theme.bg_secondary)
+                                        .border_1()
+                                        .border_color(theme.border_subtle)
+                                        .hover(|s| s.bg(theme.bg_hover))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.tool_props.stroke_width = (this.tool_props.stroke_width + 1.0).min(99.0);
+                                            this.sync_and_save_tool_props();
+                                            cx.notify();
+                                        }))
+                                        .child(svg().path("icons/plus.svg").size(px(12.0)).text_color(theme.text_secondary)),
+                                ),
+                        )
+                        .child(render_toolbar_divider(theme_ref))
+                        // Presets: 0px None, 2px Thin, 4px Medium, 8px Thick
+                        .child(render_blur_preset("preset-spot-0".into(), t(lang, "0px None", "0px Без рамки"), (self.tool_props.stroke_width - 0.0).abs() < 0.5, cx.listener(|this, _, _, cx| {
+                            this.tool_props.stroke_width = 0.0;
+                            this.sync_and_save_tool_props();
+                            cx.notify();
+                        })))
+                        .child(render_blur_preset("preset-spot-2".into(), t(lang, "2px Thin", "2px Тонкая"), (self.tool_props.stroke_width - 2.0).abs() < 0.5, cx.listener(|this, _, _, cx| {
+                            this.tool_props.stroke_width = 2.0;
+                            this.sync_and_save_tool_props();
+                            cx.notify();
+                        })))
+                        .child(render_blur_preset("preset-spot-4".into(), t(lang, "4px Medium", "4px Средняя"), (self.tool_props.stroke_width - 4.0).abs() < 0.5, cx.listener(|this, _, _, cx| {
+                            this.tool_props.stroke_width = 4.0;
+                            this.sync_and_save_tool_props();
+                            cx.notify();
+                        })))
+                        .child(render_blur_preset("preset-spot-8".into(), t(lang, "8px Thick", "8px Толстая"), (self.tool_props.stroke_width - 8.0).abs() < 0.5, cx.listener(|this, _, _, cx| {
+                            this.tool_props.stroke_width = 8.0;
+                            this.sync_and_save_tool_props();
+                            cx.notify();
+                        })))
                         .child(render_toolbar_divider(theme_ref))
                         // Quick Border Color Swatches
                         .child(render_color_swatch(
