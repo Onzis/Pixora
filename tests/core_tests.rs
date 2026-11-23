@@ -1,7 +1,7 @@
 use gpui::{Bounds, point, px, rgb, size};
 use image::{Rgba, RgbaImage};
 use pixora::config::AppConfig;
-use pixora::editor::annotations::Annotation;
+use pixora::editor::annotations::{Annotation, AnnotationHandle, resize_bounds_with_handle};
 use pixora::editor::canvas::render_annotations_to_image;
 use pixora::editor::history::EditHistory;
 use pixora::image::crop::crop_rgba;
@@ -1042,6 +1042,122 @@ fn test_pinned_screenshot_channel_swap() {
     assert_eq!(p0[1], 100, "Green should remain at index 1");
     assert_eq!(p0[2], 200, "Red should be swapped to index 2");
     assert_eq!(p0[3], 255, "Alpha should remain intact");
+}
+
+#[test]
+fn test_annotation_selection_hit_testing() {
+    let arrow = Annotation::Arrow {
+        from: point(px(10.0), px(10.0)),
+        to: point(px(100.0), px(10.0)),
+        color: gpui::rgb(0xFF453A),
+        width: 4.0,
+    };
+    // Point on the line segment
+    assert!(arrow.hit_test(point(px(50.0), px(10.0)), 6.0));
+    assert!(arrow.hit_test(point(px(50.0), px(12.0)), 6.0));
+    // Point far away
+    assert!(!arrow.hit_test(point(px(50.0), px(50.0)), 6.0));
+
+    let rect = Annotation::Rectangle {
+        bounds: Bounds {
+            origin: point(px(20.0), px(20.0)),
+            size: size(px(60.0), px(40.0)),
+        },
+        color: gpui::rgb(0xFFFFFF),
+        width: 2.0,
+        filled: true,
+    };
+    // Inside filled rectangle
+    assert!(rect.hit_test(point(px(40.0), px(30.0)), 4.0));
+    // Outside rectangle
+    assert!(!rect.hit_test(point(px(100.0), px(100.0)), 4.0));
+
+    let text = Annotation::Text {
+        origin: point(px(50.0), px(50.0)),
+        text: "Hello Pixora".into(),
+        color: gpui::rgb(0xFFFFFF),
+        font_size: 16.0,
+    };
+    assert!(text.hit_test(point(px(60.0), px(55.0)), 4.0));
+    assert!(!text.hit_test(point(px(200.0), px(200.0)), 4.0));
+}
+
+#[test]
+fn test_annotation_transform_and_handles() {
+    let mut arrow = Annotation::Arrow {
+        from: point(px(10.0), px(20.0)),
+        to: point(px(80.0), px(20.0)),
+        color: gpui::rgb(0xFF453A),
+        width: 4.0,
+    };
+
+    // Test handle hit-testing
+    let h_start = arrow.hit_test_handle(point(px(11.0), px(21.0)), px(8.0));
+    assert_eq!(h_start, Some(AnnotationHandle::Endpoint(true)));
+
+    let h_end = arrow.hit_test_handle(point(px(80.0), px(20.0)), px(8.0));
+    assert_eq!(h_end, Some(AnnotationHandle::Endpoint(false)));
+
+    let h_none = arrow.hit_test_handle(point(px(40.0), px(20.0)), px(8.0));
+    assert_eq!(h_none, None);
+
+    // Test translation
+    arrow.translate(point(px(15.0), px(10.0)));
+    if let Annotation::Arrow { from, to, .. } = arrow {
+        assert_eq!(from, point(px(25.0), px(30.0)));
+        assert_eq!(to, point(px(95.0), px(30.0)));
+    } else {
+        panic!("Expected Arrow variant");
+    }
+
+    // Test resize bounds
+    let orig = Bounds {
+        origin: point(px(10.0), px(10.0)),
+        size: size(px(50.0), px(40.0)),
+    };
+    let resized = resize_bounds_with_handle(
+        orig,
+        AnnotationHandle::BottomRight,
+        point(px(60.0), px(50.0)),
+        point(px(80.0), px(70.0)),
+    );
+    assert_eq!(resized.size.width, px(70.0));
+    assert_eq!(resized.size.height, px(60.0));
+}
+
+#[test]
+fn test_annotation_property_updates() {
+    let mut rect = Annotation::Rectangle {
+        bounds: Bounds {
+            origin: point(px(10.0), px(10.0)),
+            size: size(px(100.0), px(50.0)),
+        },
+        color: gpui::rgb(0xFFFFFF),
+        width: 2.0,
+        filled: false,
+    };
+
+    assert_eq!(rect.color(), Some(gpui::rgb(0xFFFFFF)));
+    rect.set_color(gpui::rgb(0x000000));
+    assert_eq!(rect.color(), Some(gpui::rgb(0x000000)));
+
+    assert_eq!(rect.stroke_width(), Some(2.0));
+    rect.set_stroke_width(6.0);
+    assert_eq!(rect.stroke_width(), Some(6.0));
+
+    assert_eq!(rect.is_filled(), Some(false));
+    rect.set_filled(true);
+    assert_eq!(rect.is_filled(), Some(true));
+
+    let mut text = Annotation::Text {
+        origin: point(px(10.0), px(10.0)),
+        text: "Test".into(),
+        color: gpui::rgb(0xFFFFFF),
+        font_size: 16.0,
+    };
+    assert_eq!(text.font_size(), Some(16.0));
+    text.set_font_size(28.0);
+    assert_eq!(text.font_size(), Some(28.0));
 }
 
 

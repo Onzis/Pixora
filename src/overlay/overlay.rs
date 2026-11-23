@@ -13,7 +13,9 @@ use smallvec::smallvec;
 use crate::capture::region::crop_region;
 use crate::capture::screen::ScreenCapture;
 use crate::config::AppConfig;
-use crate::editor::annotations::{Annotation, calculate_arrow_geometry};
+use crate::editor::annotations::{
+    Annotation, AnnotationHandle, calculate_arrow_geometry, resize_bounds_with_handle,
+};
 use crate::editor::canvas::render_annotations_to_image;
 use crate::editor::history::EditHistory;
 use crate::editor::properties::ToolProperties;
@@ -55,6 +57,25 @@ pub struct WindowSnapCandidate {
     pub title: String,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum AnnotationDragMode {
+    None,
+    Moving {
+        start_mouse: Point<Pixels>,
+        orig_annotation: Annotation,
+    },
+    DraggingEndpoint {
+        is_start: bool,
+        orig_annotation: Annotation,
+    },
+    Resizing {
+        handle: AnnotationHandle,
+        start_mouse: Point<Pixels>,
+        orig_annotation: Annotation,
+        orig_bounds: Bounds<Pixels>,
+    },
+}
+
 pub struct ScreenOverlayView {
     pub capture: ScreenCapture,
     pub render_image: Arc<RenderImage>,
@@ -63,6 +84,9 @@ pub struct ScreenOverlayView {
 
     pub selection: SelectionState,
     pub drag_mode: SelectionDragMode,
+
+    pub selected_annotation: Option<usize>,
+    pub annotation_drag_mode: AnnotationDragMode,
 
     pub active_tool: ToolKind,
     pub tool_props: ToolProperties,
@@ -217,6 +241,9 @@ impl ScreenOverlayView {
             selection: SelectionState::default(),
             drag_mode: SelectionDragMode::None,
 
+            selected_annotation: None,
+            annotation_drag_mode: AnnotationDragMode::None,
+
             active_tool: ToolKind::Select,
             tool_props,
             history: EditHistory::new(),
@@ -342,8 +369,35 @@ impl ScreenOverlayView {
         self.config.default_color_hex = format!("#{:02X}{:02X}{:02X}", r, g, b);
     }
 
+    pub fn update_selected_annotation_from_props(&mut self) {
+        if let Some(idx) = self.selected_annotation {
+            if idx < self.history.annotations.len() {
+                self.history.snapshot();
+                let ann = &mut self.history.annotations[idx];
+                ann.set_color(self.tool_props.stroke_color);
+                ann.set_stroke_width(self.tool_props.stroke_width);
+                ann.set_font_size(self.tool_props.font_size);
+                ann.set_filled(self.tool_props.is_filled);
+                match ann {
+                    Annotation::Blur { radius, .. } => *radius = self.tool_props.blur_radius,
+                    Annotation::Pixelate { block_size, .. } => *block_size = self.tool_props.pixelate_block,
+                    Annotation::Spotlight { dim_opacity, .. } => *dim_opacity = self.tool_props.spotlight_dim,
+                    _ => {}
+                }
+                let is_filter_or_spotlight = matches!(
+                    ann,
+                    Annotation::Blur { .. } | Annotation::Pixelate { .. } | Annotation::Spotlight { .. }
+                );
+                if is_filter_or_spotlight {
+                    self.rebuild_render_image();
+                }
+            }
+        }
+    }
+
     pub fn sync_and_save_tool_props(&mut self) {
         self.sync_tool_props();
+        self.update_selected_annotation_from_props();
         let _ = self.config.save();
     }
 
@@ -484,6 +538,8 @@ impl ScreenOverlayView {
         self.selection.is_active = false;
         self.selection = SelectionState::new(0.0, 0.0, 0.0, 0.0);
         self.drag_mode = SelectionDragMode::None;
+        self.selected_annotation = None;
+        self.annotation_drag_mode = AnnotationDragMode::None;
         self.active_tool = ToolKind::Select;
         self.history = EditHistory::new();
         self.rebuild_render_image();
@@ -517,6 +573,7 @@ impl ScreenOverlayView {
                     font_size: self.tool_props.font_size,
                 };
                 self.history.push_annotation(ann);
+                self.selected_annotation = Some(self.history.annotations.len() - 1);
             }
             self.text_input_mode = false;
             self.text_input_buffer.clear();
@@ -524,6 +581,8 @@ impl ScreenOverlayView {
     }
 
     pub fn do_undo(&mut self, cx: &mut Context<Self>) {
+        self.selected_annotation = None;
+        self.annotation_drag_mode = AnnotationDragMode::None;
         if self.history.undo() {
             let max_badge = self
                 .history
@@ -545,6 +604,8 @@ impl ScreenOverlayView {
     }
 
     pub fn do_redo(&mut self, cx: &mut Context<Self>) {
+        self.selected_annotation = None;
+        self.annotation_drag_mode = AnnotationDragMode::None;
         if self.history.redo() {
             let max_badge = self
                 .history
@@ -938,7 +999,38 @@ impl ScreenOverlayView {
             }
         }
 
-        // 2. Selection resize handles take priority over canvas!
+        // 2. Annotation handle hit testing (takes priority if an annotation is already selected)
+        if self.selection.is_active {
+            if let Some(sel_idx) = self.selected_annotation {
+                if sel_idx < self.history.annotations.len() {
+                    if let Some(h) = self.history.annotations[sel_idx].hit_test_handle(p, px(10.0)) {
+                        self.commit_text_input();
+                        let ann = self.history.annotations[sel_idx].clone();
+                        match h {
+                            AnnotationHandle::Endpoint(is_start) => {
+                                self.annotation_drag_mode = AnnotationDragMode::DraggingEndpoint {
+                                    is_start,
+                                    orig_annotation: ann,
+                                };
+                            }
+                            _ => {
+                                let orig_bounds = self.history.annotations[sel_idx].bounds();
+                                self.annotation_drag_mode = AnnotationDragMode::Resizing {
+                                    handle: h,
+                                    start_mouse: p,
+                                    orig_annotation: ann,
+                                    orig_bounds,
+                                };
+                            }
+                        }
+                        cx.notify();
+                        return;
+                    }
+                }
+            }
+        }
+
+        // 3. Selection resize handles take priority over canvas!
         // When clicking on or near any of the 8 handles (radius 12px), enter Resizing mode immediately.
         if self.selection.is_active {
             if let Some(handle) = self.selection.hit_test_handle(p, px(12.0)) {
@@ -951,6 +1043,66 @@ impl ScreenOverlayView {
                 cx.notify();
                 return;
             }
+        }
+
+        // 4. In Select tool mode: clicking on any existing annotation selects it for transform/move/deletion
+        if self.selection.is_active && self.active_tool == ToolKind::Select {
+            let hit_idx = self.history.annotations.iter().enumerate().rev().find_map(|(i, ann)| {
+                if ann.hit_test(p, 8.0) {
+                    Some(i)
+                } else {
+                    None
+                }
+            });
+
+            if let Some(idx) = hit_idx {
+                self.commit_text_input();
+                self.selected_annotation = Some(idx);
+                let ann = self.history.annotations[idx].clone();
+                if let Some(c) = ann.color() {
+                    self.tool_props.stroke_color = c;
+                }
+                if let Some(w) = ann.stroke_width() {
+                    self.tool_props.stroke_width = w;
+                }
+                if let Some(fs) = ann.font_size() {
+                    self.tool_props.font_size = fs;
+                }
+                if let Some(f) = ann.is_filled() {
+                    self.tool_props.is_filled = f;
+                }
+                if let Some(h) = ann.hit_test_handle(p, px(10.0)) {
+                    match h {
+                        AnnotationHandle::Endpoint(is_start) => {
+                            self.annotation_drag_mode = AnnotationDragMode::DraggingEndpoint {
+                                is_start,
+                                orig_annotation: ann,
+                            };
+                        }
+                        _ => {
+                            let orig_bounds = ann.bounds();
+                            self.annotation_drag_mode = AnnotationDragMode::Resizing {
+                                handle: h,
+                                start_mouse: p,
+                                orig_annotation: ann,
+                                orig_bounds,
+                            };
+                        }
+                    }
+                } else {
+                    self.annotation_drag_mode = AnnotationDragMode::Moving {
+                        start_mouse: p,
+                        orig_annotation: ann,
+                    };
+                }
+                cx.notify();
+                return;
+            } else {
+                self.selected_annotation = None;
+            }
+        } else if self.selected_annotation.is_some() {
+            // Deselect previous annotation when starting to draw with another tool
+            self.selected_annotation = None;
         }
 
         // 3. Text input submission if clicking on empty space / outside
@@ -1228,6 +1380,55 @@ impl ScreenOverlayView {
             img_y,
         ));
 
+        // Annotation dragging / resizing / endpoint transform
+        if self.annotation_drag_mode != AnnotationDragMode::None {
+            if let Some(idx) = self.selected_annotation {
+                if idx < self.history.annotations.len() {
+                    match &self.annotation_drag_mode {
+                        AnnotationDragMode::Moving { start_mouse, orig_annotation } => {
+                            let delta = point(p.x - start_mouse.x, p.y - start_mouse.y);
+                            let mut moved = orig_annotation.clone();
+                            moved.translate(delta);
+                            self.history.annotations[idx] = moved.clone();
+                            if matches!(moved, Annotation::Blur { .. } | Annotation::Pixelate { .. } | Annotation::Spotlight { .. }) {
+                                self.rebuild_render_image();
+                            }
+                            cx.notify();
+                            return;
+                        }
+                        AnnotationDragMode::DraggingEndpoint { is_start, orig_annotation } => {
+                            let mut modified = orig_annotation.clone();
+                            match &mut modified {
+                                Annotation::Arrow { from, to, .. } | Annotation::Line { from, to, .. } => {
+                                    if *is_start {
+                                        *from = p;
+                                    } else {
+                                        *to = p;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            self.history.annotations[idx] = modified;
+                            cx.notify();
+                            return;
+                        }
+                        AnnotationDragMode::Resizing { handle, start_mouse, orig_annotation, orig_bounds } => {
+                            let new_bounds = resize_bounds_with_handle(*orig_bounds, *handle, *start_mouse, p);
+                            let mut modified = orig_annotation.clone();
+                            modified.set_bounds(new_bounds);
+                            self.history.annotations[idx] = modified.clone();
+                            if matches!(modified, Annotation::Blur { .. } | Annotation::Pixelate { .. } | Annotation::Spotlight { .. }) {
+                                self.rebuild_render_image();
+                            }
+                            cx.notify();
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         // Update active drawing
         if let Some(drawing) = &mut self.current_drawing {
             if let Some(start) = self.drawing_start {
@@ -1339,6 +1540,21 @@ impl ScreenOverlayView {
             return;
         }
 
+        if self.annotation_drag_mode != AnnotationDragMode::None {
+            self.history.snapshot();
+            self.annotation_drag_mode = AnnotationDragMode::None;
+            if let Some(idx) = self.selected_annotation {
+                if idx < self.history.annotations.len() {
+                    let ann = &self.history.annotations[idx];
+                    if matches!(ann, Annotation::Blur { .. } | Annotation::Pixelate { .. } | Annotation::Spotlight { .. }) {
+                        self.rebuild_render_image();
+                    }
+                }
+            }
+            cx.notify();
+            return;
+        }
+
         let was_moving_or_resizing = matches!(self.drag_mode, SelectionDragMode::Moving { .. } | SelectionDragMode::Resizing { .. });
         self.drag_mode = SelectionDragMode::None;
         self.drawing_start = None;
@@ -1349,6 +1565,7 @@ impl ScreenOverlayView {
                 Annotation::Blur { .. } | Annotation::Pixelate { .. } | Annotation::Spotlight { .. }
             );
             self.history.push_annotation(drawing);
+            self.selected_annotation = Some(self.history.annotations.len() - 1);
             if is_filter_or_spotlight {
                 self.rebuild_render_image();
             }
@@ -1548,6 +1765,28 @@ impl ScreenOverlayView {
             return;
         }
 
+        // Delete or Backspace removes currently selected vector/filter annotation
+        if (key == "delete" || key == "backspace")
+            && !self.text_input_mode
+            && !self.hex_input_mode
+            && self.numeric_input_mode.is_none()
+        {
+            if let Some(idx) = self.selected_annotation.take() {
+                if idx < self.history.annotations.len() {
+                    self.history.snapshot();
+                    let removed = self.history.annotations.remove(idx);
+                    if matches!(
+                        removed,
+                        Annotation::Blur { .. } | Annotation::Pixelate { .. } | Annotation::Spotlight { .. }
+                    ) {
+                        self.rebuild_render_image();
+                    }
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+
         if key == "escape" {
             if self.show_shapes_menu {
                 self.show_shapes_menu = false;
@@ -1563,6 +1802,11 @@ impl ScreenOverlayView {
                 self.show_color_palette = false;
                 self.hex_input_mode = false;
                 self.sync_and_save_tool_props();
+                cx.notify();
+                return;
+            }
+            if self.selected_annotation.is_some() {
+                self.selected_annotation = None;
                 cx.notify();
                 return;
             }
@@ -1658,6 +1902,7 @@ impl Render for ScreenOverlayView {
 
         let annotations = self.history.annotations.clone();
         let current_drawing = self.current_drawing.clone();
+        let selected_annotation = self.selected_annotation;
 
         // Determine cursor style
         let is_over_floating_panel = self.current_toolbar_bounds.map_or(false, |b| b.contains(&self.cursor_pos))
@@ -1667,10 +1912,38 @@ impl Render for ScreenOverlayView {
 
         let cursor_style = if is_over_floating_panel {
             CursorStyle::Arrow
-        } else if self.active_tool == ToolKind::Text {
+        } else if self.active_tool == ToolKind::Text && !selection.is_active {
             CursorStyle::IBeam
         } else if selection.is_active {
-            if let Some(handle) = selection.hit_test_handle(self.cursor_pos, px(12.0)) {
+            if let Some(sel_idx) = self.selected_annotation {
+                if sel_idx < self.history.annotations.len() {
+                    let ann = &self.history.annotations[sel_idx];
+                    if let Some(h) = ann.hit_test_handle(self.cursor_pos, px(10.0)) {
+                        match h {
+                            AnnotationHandle::Endpoint(_) => CursorStyle::Crosshair,
+                            AnnotationHandle::Top | AnnotationHandle::Bottom => CursorStyle::ResizeUpDown,
+                            AnnotationHandle::Left | AnnotationHandle::Right => CursorStyle::ResizeLeftRight,
+                            AnnotationHandle::TopLeft | AnnotationHandle::BottomRight => CursorStyle::ResizeUpLeftDownRight,
+                            AnnotationHandle::TopRight | AnnotationHandle::BottomLeft => CursorStyle::ResizeUpRightDownLeft,
+                        }
+                    } else if ann.hit_test(self.cursor_pos, 8.0) {
+                        CursorStyle::PointingHand
+                    } else if let Some(handle) = selection.hit_test_handle(self.cursor_pos, px(12.0)) {
+                        match handle {
+                            ResizeHandle::Top | ResizeHandle::Bottom => CursorStyle::ResizeUpDown,
+                            ResizeHandle::Left | ResizeHandle::Right => CursorStyle::ResizeLeftRight,
+                            ResizeHandle::TopLeft | ResizeHandle::BottomRight => CursorStyle::ResizeUpLeftDownRight,
+                            ResizeHandle::TopRight | ResizeHandle::BottomLeft => CursorStyle::ResizeUpRightDownLeft,
+                        }
+                    } else if self.active_tool == ToolKind::Select && selection.contains(self.cursor_pos) {
+                        CursorStyle::ClosedHand
+                    } else {
+                        CursorStyle::Crosshair
+                    }
+                } else {
+                    CursorStyle::Crosshair
+                }
+            } else if let Some(handle) = selection.hit_test_handle(self.cursor_pos, px(12.0)) {
                 match handle {
                     ResizeHandle::Top | ResizeHandle::Bottom => CursorStyle::ResizeUpDown,
                     ResizeHandle::Left | ResizeHandle::Right => CursorStyle::ResizeLeftRight,
@@ -1678,7 +1951,11 @@ impl Render for ScreenOverlayView {
                     ResizeHandle::TopRight | ResizeHandle::BottomLeft => CursorStyle::ResizeUpRightDownLeft,
                 }
             } else if self.active_tool == ToolKind::Select && selection.contains(self.cursor_pos) {
-                CursorStyle::ClosedHand
+                if self.history.annotations.iter().any(|a| a.hit_test(self.cursor_pos, 8.0)) {
+                    CursorStyle::PointingHand
+                } else {
+                    CursorStyle::ClosedHand
+                }
             } else {
                 CursorStyle::Crosshair
             }
@@ -2075,6 +2352,47 @@ impl Render for ScreenOverlayView {
                             _ => {}
                         }
                     }
+
+                    // Render selection box and control handles for currently selected annotation
+                    if let Some(idx) = selected_annotation {
+                        if let Some(ann) = annotations.get(idx) {
+                            match ann {
+                                Annotation::Arrow { from, to, .. } | Annotation::Line { from, to, .. } => {
+                                    for pt in [*from, *to] {
+                                        let h_bounds = Bounds {
+                                            origin: point(pt.x - px(5.0), pt.y - px(5.0)),
+                                            size: size(px(10.0), px(10.0)),
+                                        };
+                                        window.paint_quad(fill(h_bounds, rgb(0xFFFFFF)));
+                                        window.paint_quad(outline(h_bounds, rgb(0x8174FF), BorderStyle::Solid));
+                                    }
+                                }
+                                _ => {
+                                    let b = ann.bounds();
+                                    window.paint_quad(outline(b, rgba(0x8174FFAA), BorderStyle::Dashed));
+                                    let x = b.origin.x;
+                                    let y = b.origin.y;
+                                    let w = b.size.width;
+                                    let h = b.size.height;
+                                    let mid_x = x + w / 2.0;
+                                    let mid_y = y + h / 2.0;
+                                    let pts = [
+                                        point(x, y), point(mid_x, y), point(x + w, y),
+                                        point(x + w, mid_y), point(x + w, y + h), point(mid_x, y + h),
+                                        point(x, y + h), point(x, mid_y),
+                                    ];
+                                    for pt in pts {
+                                        let h_bounds = Bounds {
+                                            origin: point(pt.x - px(4.0), pt.y - px(4.0)),
+                                            size: size(px(8.0), px(8.0)),
+                                        };
+                                        window.paint_quad(fill(h_bounds, rgb(0xFFFFFF)));
+                                        window.paint_quad(outline(h_bounds, rgb(0x8174FF), BorderStyle::Solid));
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             })
             .size_full(),
@@ -2335,11 +2653,39 @@ impl Render for ScreenOverlayView {
         if selection.is_active && !is_creating {
             let lang = self.config.language.resolve();
             let active_tool = self.active_tool;
+            let effective_tool = if active_tool == ToolKind::Select {
+                if let Some(idx) = self.selected_annotation {
+                    if idx < self.history.annotations.len() {
+                        match &self.history.annotations[idx] {
+                            Annotation::Pencil { .. } => ToolKind::Pencil,
+                            Annotation::Marker { .. } => ToolKind::Marker,
+                            Annotation::Arrow { .. } => ToolKind::Arrow,
+                            Annotation::Line { .. } => ToolKind::Line,
+                            Annotation::Rectangle { .. } => ToolKind::Rectangle,
+                            Annotation::Ellipse { .. } => ToolKind::Ellipse,
+                            Annotation::Triangle { .. } => ToolKind::Triangle,
+                            Annotation::Star { .. } => ToolKind::Star,
+                            Annotation::Diamond { .. } => ToolKind::Diamond,
+                            Annotation::Text { .. } => ToolKind::Text,
+                            Annotation::Blur { .. } => ToolKind::Blur,
+                            Annotation::Pixelate { .. } => ToolKind::Pixelate,
+                            Annotation::Spotlight { .. } => ToolKind::Spotlight,
+                            Annotation::NumberBadge { .. } => ToolKind::NumberBadge,
+                        }
+                    } else {
+                        ToolKind::Select
+                    }
+                } else {
+                    ToolKind::Select
+                }
+            } else {
+                active_tool
+            };
+
+            let show_props = effective_tool != ToolKind::Select && effective_tool != ToolKind::Eyedropper;
             let current_color = self.tool_props.stroke_color;
             let stroke_width = self.tool_props.stroke_width;
             let theme_ref = &self.theme;
-
-            let show_props = active_tool != ToolKind::Select && active_tool != ToolKind::Eyedropper;
             let bar_height = if show_props {
                 TOOLBAR_TOTAL_HEIGHT
             } else {
@@ -2723,7 +3069,7 @@ impl Render for ScreenOverlayView {
             );
 
             // Property Sub-Bar (Blur Intensity, Pixelate Block Size, or Colors & Stroke Width)
-            if active_tool == ToolKind::Blur {
+            if effective_tool == ToolKind::Blur {
                 toolbar_col = toolbar_col.child(
                     div()
                         .flex()
@@ -2837,7 +3183,7 @@ impl Render for ScreenOverlayView {
                                 ),
                         ),
                 );
-            } else if active_tool == ToolKind::Pixelate {
+            } else if effective_tool == ToolKind::Pixelate {
                 toolbar_col = toolbar_col.child(
                     div()
                         .flex()
@@ -2951,7 +3297,7 @@ impl Render for ScreenOverlayView {
                                 ),
                         ),
                 );
-            } else if active_tool == ToolKind::Spotlight {
+            } else if effective_tool == ToolKind::Spotlight {
                 toolbar_col = toolbar_col.child(
                     div()
                         .flex()
@@ -3223,7 +3569,7 @@ impl Render for ScreenOverlayView {
                         )
                         .child(render_toolbar_divider(theme_ref))
                         // Dynamic Stroke Width Stepper: [-] [ 4px ] [+]
-                        .when(active_tool != ToolKind::Text, |p| {
+                        .when(effective_tool != ToolKind::Text, |p| {
                             p.child(
                                 div()
                                 .flex()
@@ -3325,11 +3671,11 @@ impl Render for ScreenOverlayView {
                         })
                         // Fill toggle for closed shapes (Rect, Ellipse, Triangle, Star, Diamond)
                         .when(
-                            active_tool == ToolKind::Rectangle
-                                || active_tool == ToolKind::Ellipse
-                                || active_tool == ToolKind::Triangle
-                                || active_tool == ToolKind::Star
-                                || active_tool == ToolKind::Diamond,
+                            effective_tool == ToolKind::Rectangle
+                                || effective_tool == ToolKind::Ellipse
+                                || effective_tool == ToolKind::Triangle
+                                || effective_tool == ToolKind::Star
+                                || effective_tool == ToolKind::Diamond,
                             |p| {
                             p.child(render_toolbar_divider(theme_ref)).child(
                                 div()
@@ -3351,6 +3697,7 @@ impl Render for ScreenOverlayView {
                                     .cursor_pointer()
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.tool_props.is_filled = !this.tool_props.is_filled;
+                                        this.sync_and_save_tool_props();
                                         cx.notify();
                                     }))
                                     .child(
@@ -3366,8 +3713,8 @@ impl Render for ScreenOverlayView {
                                     ),
                             )
                         })
-                        // Font size stepper and presets for Text tool
-                        .when(active_tool == ToolKind::Text, |p| {
+                        // Font size stepper for Text tool
+                        .when(effective_tool == ToolKind::Text, |p| {
                             p.child(render_toolbar_divider(theme_ref)).child(
                                 div()
                                     .flex()
