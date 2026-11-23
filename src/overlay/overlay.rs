@@ -3649,9 +3649,8 @@ impl Render for ScreenOverlayView {
                             .id("btn-copy")
                             .flex()
                             .items_center()
-                            .gap_1p5()
-                            .px_3()
-                            .h(px(32.0))
+                            .justify_center()
+                            .size(px(32.0))
                             .rounded_lg()
                             .bg(theme.accent)
                             .hover(|s| s.bg(theme.accent_hover))
@@ -3665,16 +3664,9 @@ impl Render for ScreenOverlayView {
                             }))
                             .child(
                                 svg()
-                                    .path("icons/check.svg")
-                                    .size(px(14.0))
+                                    .path("icons/copy.svg")
+                                    .size(px(16.0))
                                     .text_color(rgb(0xFFFFFF)),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(rgb(0xFFFFFF))
-                                    .child(t(lang, "Copy", "Копировать")),
                             ),
                     )
                     .child(
