@@ -2970,17 +2970,7 @@ impl Render for ScreenOverlayView {
                                 cx.notify();
                             }),
                             cx.listener(move |this, hovered, _, cx| {
-                                this.shapes_btn_hovered = *hovered;
-                                if *hovered {
-                                    this.shapes_hover_token = this.shapes_hover_token.wrapping_add(1);
-                                    this.show_shapes_menu = true;
-                                    this.show_beautify_menu = false;
-                                    this.show_color_palette = false;
-                                    this.hovered_tooltip = None;
-                                    cx.notify();
-                                } else {
-                                    this.schedule_check_close_shapes_menu(cx);
-                                }
+                                this.set_tooltip(t(lang, "Shapes", "Фигуры"), 147.0, *hovered, cx);
                             }),
                         )
                     })
@@ -3107,17 +3097,7 @@ impl Render for ScreenOverlayView {
                                 cx.notify();
                             }),
                             cx.listener(move |this, hovered, _, cx| {
-                                this.beautify_btn_hovered = *hovered;
-                                if *hovered {
-                                    this.beautify_hover_token = this.beautify_hover_token.wrapping_add(1);
-                                    this.show_beautify_menu = true;
-                                    this.show_shapes_menu = false;
-                                    this.show_color_palette = false;
-                                    this.hovered_tooltip = None;
-                                    cx.notify();
-                                } else {
-                                    this.schedule_check_close_beautify_menu(cx);
-                                }
+                                this.set_tooltip(t(lang, "Beautify & Presets", "Оформление и пресеты"), 481.0, *hovered, cx);
                             }),
                         )
                     })
@@ -4457,14 +4437,6 @@ impl Render for ScreenOverlayView {
                     .on_mouse_move(|_, _, cx| {
                         cx.stop_propagation();
                     })
-                    .on_hover(cx.listener(|this, hovered, _, cx| {
-                        this.shapes_menu_hovered = *hovered;
-                        if *hovered {
-                            this.shapes_hover_token = this.shapes_hover_token.wrapping_add(1);
-                        } else {
-                            this.schedule_check_close_shapes_menu(cx);
-                        }
-                    }))
                     // Header
                     .child(
                         div()
@@ -4634,14 +4606,6 @@ impl Render for ScreenOverlayView {
                     .on_mouse_move(|_, _, cx| {
                         cx.stop_propagation();
                     })
-                    .on_hover(cx.listener(|this, hovered, _, cx| {
-                        this.beautify_menu_hovered = *hovered;
-                        if *hovered {
-                            this.beautify_hover_token = this.beautify_hover_token.wrapping_add(1);
-                        } else {
-                            this.schedule_check_close_beautify_menu(cx);
-                        }
-                    }))
                     // Header: Title + Toggle Switch + Close
                     .child(
                         div()
