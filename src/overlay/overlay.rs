@@ -238,52 +238,44 @@ impl ScreenOverlayView {
                             origin: point(px(cl_x), px(cl_y)),
                             size: size(px(cl_w), px(cl_h)),
                         },
-                        title: win.title,
-                        is_child_element: false,
+                        title: win.title.clone(),
+                        is_child_element: win.is_child_element,
                     });
+
+                    // For top-level windows, detect visual panes along dividers/edges
+                    if !win.is_child_element && cl_w >= 100.0 && cl_h >= 100.0 {
+                        let panes = crate::system::windows::detect_visual_panes(
+                            &capture.image,
+                            cl_x as u32,
+                            cl_y as u32,
+                            cl_w as u32,
+                            cl_h as u32,
+                        );
+                        for pane in panes {
+                            let px0 = (pane.x as f32).max(0.0);
+                            let py0 = (pane.y as f32).max(0.0);
+                            let px1 = ((pane.x + pane.width as i32) as f32).min(max_w);
+                            let py1 = ((pane.y + pane.height as i32) as f32).min(max_h);
+                            let pw = px1 - px0;
+                            let ph = py1 - py0;
+                            if pw >= 40.0 && ph >= 24.0 {
+                                detected_windows.push(WindowSnapCandidate {
+                                    bounds: Bounds {
+                                        origin: point(px(px0), px(py0)),
+                                        size: size(px(pw), px(ph)),
+                                    },
+                                    title: win.title.clone(),
+                                    is_child_element: true,
+                                });
+                            }
+                        }
+                    }
                 }
             }
         }
 
         let hovered_window = if config.window_snapping {
-            let max_w = capture.bounds.width as f32;
-            let max_h = capture.bounds.height as f32;
-            let screen_x = capture.bounds.x + f32::from(initial_cursor.x) as i32;
-            let screen_y = capture.bounds.y + f32::from(initial_cursor.y) as i32;
-            let mut cand = None;
-            #[cfg(windows)]
-            if let Some(elem) = crate::system::windows::find_element_at_point(screen_x, screen_y, overlay_hwnd) {
-                let el_x = (elem.bounds.x - capture.bounds.x) as f32;
-                let el_y = (elem.bounds.y - capture.bounds.y) as f32;
-                let el_w = elem.bounds.width as f32;
-                let el_h = elem.bounds.height as f32;
-
-                let cl_x = el_x.max(0.0);
-                let cl_y = el_y.max(0.0);
-                let cl_r = (el_x + el_w).min(max_w);
-                let cl_b = (el_y + el_h).min(max_h);
-
-                let cl_w = cl_r - cl_x;
-                let cl_h = cl_b - cl_y;
-
-                if cl_w >= 16.0 && cl_h >= 12.0 && (cl_w < max_w * 0.98 || cl_h < max_h * 0.98) {
-                    let b = Bounds {
-                        origin: point(px(cl_x), px(cl_y)),
-                        size: size(px(cl_w), px(cl_h)),
-                    };
-                    if b.contains(&initial_cursor) {
-                        cand = Some(WindowSnapCandidate {
-                            bounds: b,
-                            title: elem.title,
-                            is_child_element: true,
-                        });
-                    }
-                }
-            }
-            if cand.is_none() {
-                cand = detected_windows.iter().find(|w| w.bounds.contains(&initial_cursor)).cloned();
-            }
-            cand
+            Self::find_best_snap_candidate(initial_cursor, &detected_windows)
         } else {
             None
         };
@@ -636,6 +628,63 @@ impl ScreenOverlayView {
         cx.notify();
     }
 
+    pub fn find_best_snap_candidate(
+        p: Point<Pixels>,
+        candidates: &[WindowSnapCandidate],
+    ) -> Option<WindowSnapCandidate> {
+        let matching: Vec<&WindowSnapCandidate> = candidates
+            .iter()
+            .filter(|w| w.bounds.contains(&p))
+            .collect();
+
+        if matching.is_empty() {
+            return None;
+        }
+
+        // Find enclosing top-level parent window
+        let top_level = matching
+            .iter()
+            .filter(|w| !w.is_child_element)
+            .max_by(|a, b| {
+                let area_a = f32::from(a.bounds.size.width) * f32::from(a.bounds.size.height);
+                let area_b = f32::from(b.bounds.size.width) * f32::from(b.bounds.size.height);
+                area_a.partial_cmp(&area_b).unwrap()
+            });
+
+        let px_f = f32::from(p.x);
+        let py_f = f32::from(p.y);
+
+        // Check if cursor is near the outer border of the top-level window (<= 8px)
+        let is_near_border = if let Some(tw) = top_level {
+            let bx = f32::from(tw.bounds.origin.x);
+            let by = f32::from(tw.bounds.origin.y);
+            let bw = f32::from(tw.bounds.size.width);
+            let bh = f32::from(tw.bounds.size.height);
+            let dist_left = px_f - bx;
+            let dist_right = (bx + bw) - px_f;
+            let dist_top = py_f - by;
+            let dist_bottom = (by + bh) - py_f;
+            dist_left <= 8.0 || dist_right <= 8.0 || dist_top <= 8.0 || dist_bottom <= 8.0
+        } else {
+            false
+        };
+
+        if is_near_border {
+            top_level.cloned().cloned()
+        } else {
+            // Select smallest enclosing candidate (child pane/control)
+            matching
+                .iter()
+                .min_by(|a, b| {
+                    let area_a = f32::from(a.bounds.size.width) * f32::from(a.bounds.size.height);
+                    let area_b = f32::from(b.bounds.size.width) * f32::from(b.bounds.size.height);
+                    area_a.partial_cmp(&area_b).unwrap()
+                })
+                .cloned()
+                .cloned()
+        }
+    }
+
     pub fn update_hovered_window(&mut self, p: Point<Pixels>) -> bool {
         if !self.config.window_snapping || self.selection.is_active {
             if self.hovered_window.is_some() {
@@ -645,45 +694,42 @@ impl ScreenOverlayView {
             return false;
         }
 
-        let screen_x = self.capture.bounds.x + f32::from(p.x) as i32;
-        let screen_y = self.capture.bounds.y + f32::from(p.y) as i32;
-        let max_w = self.capture.bounds.width as f32;
-        let max_h = self.capture.bounds.height as f32;
-
-        let mut candidate = None;
+        let mut candidate = Self::find_best_snap_candidate(p, &self.detected_windows);
 
         #[cfg(windows)]
-        if let Some(elem) = crate::system::windows::find_element_at_point(screen_x, screen_y, self.overlay_hwnd) {
-            let el_x = (elem.bounds.x - self.capture.bounds.x) as f32;
-            let el_y = (elem.bounds.y - self.capture.bounds.y) as f32;
-            let el_w = elem.bounds.width as f32;
-            let el_h = elem.bounds.height as f32;
+        if candidate.is_none() {
+            let screen_x = self.capture.bounds.x + f32::from(p.x) as i32;
+            let screen_y = self.capture.bounds.y + f32::from(p.y) as i32;
+            let max_w = self.capture.bounds.width as f32;
+            let max_h = self.capture.bounds.height as f32;
+            if let Some(elem) = crate::system::windows::find_element_at_point(screen_x, screen_y, self.overlay_hwnd) {
+                let el_x = (elem.bounds.x - self.capture.bounds.x) as f32;
+                let el_y = (elem.bounds.y - self.capture.bounds.y) as f32;
+                let el_w = elem.bounds.width as f32;
+                let el_h = elem.bounds.height as f32;
 
-            let cl_x = el_x.max(0.0);
-            let cl_y = el_y.max(0.0);
-            let cl_r = (el_x + el_w).min(max_w);
-            let cl_b = (el_y + el_h).min(max_h);
+                let cl_x = el_x.max(0.0);
+                let cl_y = el_y.max(0.0);
+                let cl_r = (el_x + el_w).min(max_w);
+                let cl_b = (el_y + el_h).min(max_h);
 
-            let cl_w = cl_r - cl_x;
-            let cl_h = cl_b - cl_y;
+                let cl_w = cl_r - cl_x;
+                let cl_h = cl_b - cl_y;
 
-            if cl_w >= 16.0 && cl_h >= 12.0 && (cl_w < max_w * 0.98 || cl_h < max_h * 0.98) {
-                let b = Bounds {
-                    origin: point(px(cl_x), px(cl_y)),
-                    size: size(px(cl_w), px(cl_h)),
-                };
-                if b.contains(&p) {
-                    candidate = Some(WindowSnapCandidate {
-                        bounds: b,
-                        title: elem.title,
-                        is_child_element: true,
-                    });
+                if cl_w >= 16.0 && cl_h >= 12.0 && (cl_w < max_w * 0.98 || cl_h < max_h * 0.98) {
+                    let b = Bounds {
+                        origin: point(px(cl_x), px(cl_y)),
+                        size: size(px(cl_w), px(cl_h)),
+                    };
+                    if b.contains(&p) {
+                        candidate = Some(WindowSnapCandidate {
+                            bounds: b,
+                            title: elem.title,
+                            is_child_element: true,
+                        });
+                    }
                 }
             }
-        }
-
-        if candidate.is_none() {
-            candidate = self.detected_windows.iter().find(|w| w.bounds.contains(&p)).cloned();
         }
 
         if self.hovered_window != candidate {

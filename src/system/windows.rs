@@ -18,12 +18,13 @@ pub struct DetectedWindow {
 #[cfg(windows)]
 pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
     use windows::core::BOOL;
-    use windows::Win32::Foundation::{HWND, LPARAM, RECT};
+    use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, GetWindowLongW, GetWindowRect, GetWindowTextW,
-        GetWindowThreadProcessId, IsIconic, IsWindowVisible, GWL_EXSTYLE,
-        WS_EX_TOOLWINDOW,
+        EnumChildWindows, EnumWindows, GetClassNameW, GetClientRect, GetWindowLongW,
+        GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+        GWL_EXSTYLE, WS_EX_TOOLWINDOW,
     };
 
     struct EnumContext {
@@ -102,6 +103,7 @@ pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
                 return BOOL(1);
             }
 
+            // 1. Full window bounds
             ctx.windows.push(DetectedWindow {
                 hwnd: hwnd.0 as isize,
                 bounds: PhysicalRect {
@@ -110,10 +112,99 @@ pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
                     width,
                     height,
                 },
-                title,
-                class_name,
+                title: title.clone(),
+                class_name: class_name.clone(),
                 is_child_element: false,
             });
+
+            // 2. Client area rectangle (inner area excluding title bar and borders)
+            let mut client_rect = RECT::default();
+            if GetClientRect(hwnd, &mut client_rect).is_ok() {
+                let mut pt = POINT { x: client_rect.left, y: client_rect.top };
+                let _ = ClientToScreen(hwnd, &mut pt);
+                let cl_w = (client_rect.right - client_rect.left).max(0) as u32;
+                let cl_h = (client_rect.bottom - client_rect.top).max(0) as u32;
+                if cl_w >= 30 && cl_h >= 30 && (cl_w != width || cl_h != height) {
+                    ctx.windows.push(DetectedWindow {
+                        hwnd: hwnd.0 as isize,
+                        bounds: PhysicalRect {
+                            x: pt.x,
+                            y: pt.y,
+                            width: cl_w,
+                            height: cl_h,
+                        },
+                        title: title.clone(),
+                        class_name: class_name.clone(),
+                        is_child_element: true,
+                    });
+                }
+            }
+
+            // 3. Child controls and child windows (ShareX method)
+            struct ChildContext {
+                parent_hwnd: HWND,
+                parent_rect: RECT,
+                parent_title: String,
+                children: Vec<DetectedWindow>,
+            }
+
+            unsafe extern "system" fn enum_child(child: HWND, lparam: LPARAM) -> BOOL {
+                unsafe {
+                    let ctx = &mut *(lparam.0 as *mut ChildContext);
+                    if !IsWindowVisible(child).as_bool() {
+                        return BOOL(1);
+                    }
+                    let mut cr = RECT::default();
+                    if GetWindowRect(child, &mut cr).is_ok() {
+                        let ix0 = cr.left.max(ctx.parent_rect.left);
+                        let iy0 = cr.top.max(ctx.parent_rect.top);
+                        let ix1 = cr.right.min(ctx.parent_rect.right);
+                        let iy1 = cr.bottom.min(ctx.parent_rect.bottom);
+                        let iw = (ix1 - ix0).max(0) as u32;
+                        let ih = (iy1 - iy0).max(0) as u32;
+                        let pw = (ctx.parent_rect.right - ctx.parent_rect.left) as u32;
+                        let ph = (ctx.parent_rect.bottom - ctx.parent_rect.top) as u32;
+                        if iw >= 24 && ih >= 16 && (iw < pw || ih < ph) {
+                            let mut text_buf = [0u16; 256];
+                            let len = GetWindowTextW(child, &mut text_buf);
+                            let title = if len > 0 {
+                                String::from_utf16_lossy(&text_buf[..len as usize])
+                            } else {
+                                ctx.parent_title.clone()
+                            };
+                            let mut class_buf = [0u16; 256];
+                            let c_len = GetClassNameW(child, &mut class_buf);
+                            let class_name = if c_len > 0 {
+                                String::from_utf16_lossy(&class_buf[..c_len as usize])
+                            } else {
+                                String::new()
+                            };
+                            ctx.children.push(DetectedWindow {
+                                hwnd: child.0 as isize,
+                                bounds: PhysicalRect {
+                                    x: ix0,
+                                    y: iy0,
+                                    width: iw,
+                                    height: ih,
+                                },
+                                title,
+                                class_name,
+                                is_child_element: true,
+                            });
+                        }
+                    }
+                    BOOL(1)
+                }
+            }
+
+            let mut child_ctx = ChildContext {
+                parent_hwnd: hwnd,
+                parent_rect: rect,
+                parent_title: title.clone(),
+                children: Vec::new(),
+            };
+            let _ = EnumChildWindows(Some(hwnd), Some(enum_child), LPARAM(&mut child_ctx as *mut _ as isize));
+            ctx.windows.extend(child_ctx.children);
 
             BOOL(1)
         }
@@ -338,6 +429,134 @@ pub fn get_window_under_cursor_rect() -> Option<PhysicalRect> {
             height,
         })
     }
+}
+
+pub fn detect_visual_panes(
+    img: &image::RgbaImage,
+    win_x: u32,
+    win_y: u32,
+    win_w: u32,
+    win_h: u32,
+) -> Vec<PhysicalRect> {
+    let mut panes = Vec::new();
+    if win_w < 60 || win_h < 40 {
+        return panes;
+    }
+
+    let max_x = (win_x + win_w).min(img.width());
+    let max_y = (win_y + win_h).min(img.height());
+    let h = max_y - win_y;
+    let w = max_x - win_x;
+
+    let step_y = (h / 150).max(1);
+    let step_x = (w / 150).max(1);
+
+    // 1. Detect major vertical divider columns across the window
+    let mut v_cuts = Vec::new();
+    let min_v_edge_count = (h as f32 * 0.35) as usize;
+
+    for x in (win_x + 24..max_x.saturating_sub(24)).step_by(2) {
+        let mut edge_count = 0;
+        for y in (win_y..max_y).step_by(step_y as usize) {
+            let p1 = img.get_pixel(x, y);
+            let p0 = img.get_pixel(x - 1, y);
+            let diff = (p1[0] as i32 - p0[0] as i32).abs()
+                + (p1[1] as i32 - p0[1] as i32).abs()
+                + (p1[2] as i32 - p0[2] as i32).abs();
+            if diff > 20 {
+                edge_count += step_y as usize;
+            }
+        }
+        if edge_count >= min_v_edge_count {
+            if v_cuts.last().map_or(true, |&last| x > last + 16) {
+                v_cuts.push(x);
+            }
+        }
+    }
+
+    // 2. Detect major horizontal divider rows across the window
+    let mut h_cuts = Vec::new();
+    let min_h_edge_count = (w as f32 * 0.65) as usize;
+
+    for y in (win_y + 20..max_y.saturating_sub(20)).step_by(2) {
+        let mut edge_count = 0;
+        for x in (win_x..max_x).step_by(step_x as usize) {
+            let p1 = img.get_pixel(x, y);
+            let p0 = img.get_pixel(x, y - 1);
+            let diff = (p1[0] as i32 - p0[0] as i32).abs()
+                + (p1[1] as i32 - p0[1] as i32).abs()
+                + (p1[2] as i32 - p0[2] as i32).abs();
+            if diff > 20 {
+                edge_count += step_x as usize;
+            }
+        }
+        if edge_count >= min_h_edge_count {
+            if h_cuts.last().map_or(true, |&last| y > last + 14) {
+                h_cuts.push(y);
+            }
+        }
+    }
+
+    // Column boundaries
+    let mut xs = vec![win_x];
+    xs.extend_from_slice(&v_cuts);
+    xs.push(max_x);
+
+    // Row boundaries across full window
+    let mut ys = vec![win_y];
+    ys.extend_from_slice(&h_cuts);
+    ys.push(max_y);
+
+    // Full vertical column panes (sidebars, major panels)
+    for i in 0..xs.len() - 1 {
+        let x0 = xs[i];
+        let x1 = xs[i + 1];
+        let pw = x1 - x0;
+        if pw >= 40 && pw < win_w {
+            panes.push(PhysicalRect {
+                x: x0 as i32,
+                y: win_y as i32,
+                width: pw,
+                height: h,
+            });
+        }
+    }
+
+    // Full horizontal row panes (toolbars, headers, status bars)
+    for j in 0..ys.len() - 1 {
+        let y0 = ys[j];
+        let y1 = ys[j + 1];
+        let ph = y1 - y0;
+        if ph >= 24 && ph < win_h {
+            panes.push(PhysicalRect {
+                x: win_x as i32,
+                y: y0 as i32,
+                width: w,
+                height: ph,
+            });
+        }
+    }
+
+    // Non-sidebar content pane(s) below header
+    if !v_cuts.is_empty() && !h_cuts.is_empty() {
+        for i in 1..xs.len() - 1 {
+            let x0 = xs[i];
+            let x1 = xs[i + 1];
+            let pw = x1 - x0;
+            let y0 = ys[1];
+            let ph = max_y.saturating_sub(y0);
+            if pw >= 40 && ph >= 30 {
+                panes.push(PhysicalRect {
+                    x: x0 as i32,
+                    y: y0 as i32,
+                    width: pw,
+                    height: ph,
+                });
+            }
+        }
+    }
+
+    panes
 }
 
 pub use crate::system::sound::play_capture_sound;

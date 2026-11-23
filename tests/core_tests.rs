@@ -1516,8 +1516,76 @@ fn test_heart_cross_checkmark_shape_annotations() {
 #[cfg(windows)]
 #[test]
 fn test_ui_automation_element_snapping() {
-    let elem = pixora::system::windows::find_element_at_point(100, 100, None);
-    println!("find_element_at_point returned: {:?}", elem);
+    use image::{Rgba, RgbaImage};
+    use pixora::overlay::overlay::{WindowSnapCandidate, ScreenOverlayView};
+    use pixora::system::windows::detect_visual_panes;
+
+    // Create a 1000x600 test image simulating a window with a sidebar at x = 200
+    let mut img = RgbaImage::new(1000, 600);
+    for y in 0..600 {
+        for x in 0..1000 {
+            if x < 200 {
+                img.put_pixel(x, y, Rgba([20, 20, 24, 255])); // dark sidebar
+            } else if x == 200 {
+                img.put_pixel(x, y, Rgba([60, 60, 70, 255])); // 1px divider
+            } else {
+                img.put_pixel(x, y, Rgba([30, 30, 35, 255])); // main area
+            }
+        }
+    }
+
+    let panes = detect_visual_panes(&img, 0, 0, 1000, 600);
+    assert!(!panes.is_empty(), "Visual pane segmentation must detect panes");
+    assert!(
+        panes.iter().any(|p| p.x == 0 && p.y == 0 && p.width == 200 && p.height == 600),
+        "Sidebar pane (0, 0, 200, 600) must be detected"
+    );
+    assert!(
+        panes.iter().any(|p| p.x == 200 && p.y == 0 && p.width == 800 && p.height == 600),
+        "Main pane (200, 0, 800, 600) must be detected"
+    );
+
+    // Test find_best_snap_candidate priority (ShareX model)
+    let candidates = vec![
+        // Top-level window
+        WindowSnapCandidate {
+            bounds: Bounds {
+                origin: point(px(0.0), px(0.0)),
+                size: size(px(1000.0), px(600.0)),
+            },
+            title: "Test App".to_string(),
+            is_child_element: false,
+        },
+        // Sidebar child pane
+        WindowSnapCandidate {
+            bounds: Bounds {
+                origin: point(px(0.0), px(0.0)),
+                size: size(px(200.0), px(600.0)),
+            },
+            title: "Sidebar".to_string(),
+            is_child_element: true,
+        },
+    ];
+
+    // Inside sidebar away from outer border -> snaps to sidebar
+    let inside_sidebar = ScreenOverlayView::find_best_snap_candidate(
+        point(px(50.0), px(300.0)),
+        &candidates,
+    );
+    assert!(inside_sidebar.is_some());
+    let picked = inside_sidebar.unwrap();
+    assert_eq!(picked.bounds.size.width, px(200.0));
+    assert!(picked.is_child_element);
+
+    // Near outer border (dist <= 8px from top-level window edge) -> snaps to entire window
+    let near_border = ScreenOverlayView::find_best_snap_candidate(
+        point(px(4.0), px(300.0)),
+        &candidates,
+    );
+    assert!(near_border.is_some());
+    let picked_window = near_border.unwrap();
+    assert_eq!(picked_window.bounds.size.width, px(1000.0));
+    assert!(!picked_window.is_child_element);
 }
 
 
