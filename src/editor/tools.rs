@@ -10,12 +10,14 @@ pub enum ToolKind {
     Triangle,
     Star,
     Diamond,
+    Heart,
+    Cross,
+    Checkmark,
     Text,
     Blur,
     Pixelate,
     Spotlight,
     NumberBadge,
-    Sticker,
     Eyedropper,
 }
 
@@ -32,12 +34,14 @@ impl ToolKind {
             ToolKind::Triangle => "Triangle",
             ToolKind::Star => "Star",
             ToolKind::Diamond => "Diamond",
+            ToolKind::Heart => "Heart",
+            ToolKind::Cross => "Cross",
+            ToolKind::Checkmark => "Checkmark",
             ToolKind::Text => "Text",
             ToolKind::Blur => "Blur",
             ToolKind::Pixelate => "Pixelate",
             ToolKind::Spotlight => "Spotlight",
             ToolKind::NumberBadge => "Step Badge",
-            ToolKind::Sticker => "Sticker",
             ToolKind::Eyedropper => "Color Picker",
         }
     }
@@ -54,12 +58,14 @@ impl ToolKind {
             ToolKind::Triangle => if is_ru { "Треугольник" } else { "Triangle" },
             ToolKind::Star => if is_ru { "Звезда" } else { "Star" },
             ToolKind::Diamond => if is_ru { "Ромб" } else { "Diamond" },
+            ToolKind::Heart => if is_ru { "Сердце" } else { "Heart" },
+            ToolKind::Cross => if is_ru { "Крест" } else { "Cross" },
+            ToolKind::Checkmark => if is_ru { "Галочка" } else { "Checkmark" },
             ToolKind::Text => if is_ru { "Текст" } else { "Text" },
             ToolKind::Blur => if is_ru { "Размытие" } else { "Blur" },
             ToolKind::Pixelate => if is_ru { "Пикселизация" } else { "Pixelate" },
             ToolKind::Spotlight => if is_ru { "Фокус / Затемнение" } else { "Spotlight" },
             ToolKind::NumberBadge => if is_ru { "Шаги / Нумерация" } else { "Step Badge" },
-            ToolKind::Sticker => if is_ru { "Стикеры и значки" } else { "Stickers" },
             ToolKind::Eyedropper => if is_ru { "Пипетка" } else { "Color Picker" },
         }
     }
@@ -76,12 +82,14 @@ impl ToolKind {
             ToolKind::Triangle => "icons/triangle.svg",
             ToolKind::Star => "icons/star.svg",
             ToolKind::Diamond => "icons/diamond.svg",
+            ToolKind::Heart => "icons/heart.svg",
+            ToolKind::Cross => "icons/cross.svg",
+            ToolKind::Checkmark => "icons/checkmark.svg",
             ToolKind::Text => "icons/text.svg",
             ToolKind::Blur => "icons/blur.svg",
             ToolKind::Pixelate => "icons/pixelate.svg",
             ToolKind::Spotlight => "icons/spotlight.svg",
             ToolKind::NumberBadge => "icons/step.svg",
-            ToolKind::Sticker => "icons/sticker.svg",
             ToolKind::Eyedropper => "icons/eyedropper.svg",
         }
     }
@@ -94,6 +102,9 @@ impl ToolKind {
                 | ToolKind::Triangle
                 | ToolKind::Star
                 | ToolKind::Diamond
+                | ToolKind::Heart
+                | ToolKind::Cross
+                | ToolKind::Checkmark
                 | ToolKind::Arrow
                 | ToolKind::Line
         )

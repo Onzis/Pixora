@@ -227,11 +227,32 @@ fn test_render_all_annotations_to_image() {
             mode: pixora::editor::annotations::BadgeMode::Numbers,
             filled: true,
         },
-        Annotation::Sticker {
-            center: point(px(180.0), px(80.0)),
-            kind: pixora::editor::annotations::StickerKind::Checkmark,
-            size: 32.0,
-            color: Some(rgb(0x30D158)),
+        Annotation::Heart {
+            bounds: Bounds {
+                origin: point(px(180.0), px(50.0)),
+                size: size(px(40.0), px(40.0)),
+            },
+            color: rgb(0xFF2D55),
+            width: 2.0,
+            filled: true,
+        },
+        Annotation::Cross {
+            bounds: Bounds {
+                origin: point(px(230.0), px(50.0)),
+                size: size(px(30.0), px(30.0)),
+            },
+            color: rgb(0xFF3B30),
+            width: 3.0,
+            filled: false,
+        },
+        Annotation::Checkmark {
+            bounds: Bounds {
+                origin: point(px(270.0), px(50.0)),
+                size: size(px(30.0), px(30.0)),
+            },
+            color: rgb(0x34C759),
+            width: 3.0,
+            filled: true,
         },
         Annotation::Text {
             origin: point(px(20.0), px(160.0)),
@@ -322,7 +343,7 @@ fn test_svg_asset_source_loads_all_icons() {
 
     let assets = PixoraAssets;
     let list = assets.list("").expect("List icons");
-    assert_eq!(list.len(), 47);
+    assert_eq!(list.len(), 41);
 
     for path in list {
         let content = assets.load(&path).expect("Load svg").expect("Found icon");
@@ -1401,41 +1422,52 @@ fn test_badge_alphabet_mode_and_reset() {
 }
 
 #[test]
-fn test_sticker_annotation_creation_and_hit_test() {
-    use pixora::editor::annotations::StickerKind;
-
-    let mut sticker = Annotation::Sticker {
-        center: point(px(100.0), px(100.0)),
-        kind: StickerKind::Checkmark,
-        size: 40.0,
-        color: Some(gpui::rgb(0x30D158)),
+fn test_heart_cross_checkmark_shape_annotations() {
+    let mut heart = Annotation::Heart {
+        bounds: Bounds {
+            origin: point(px(100.0), px(100.0)),
+            size: size(px(60.0), px(50.0)),
+        },
+        color: rgb(0xFF2D55),
+        width: 3.0,
+        filled: true,
     };
+    assert_eq!(heart.is_filled(), Some(true));
+    heart.set_filled(false);
+    assert_eq!(heart.is_filled(), Some(false));
+    assert!(heart.hit_test(point(px(110.0), px(110.0)), 0.0));
+    heart.translate(point(px(10.0), px(10.0)));
+    assert_eq!(heart.bounds().origin, point(px(110.0), px(110.0)));
 
-    let b = sticker.bounds();
-    assert_eq!(b.origin, point(px(80.0), px(80.0)));
-    assert_eq!(b.size, size(px(40.0), px(40.0)));
+    let mut cross = Annotation::Cross {
+        bounds: Bounds {
+            origin: point(px(200.0), px(200.0)),
+            size: size(px(40.0), px(40.0)),
+        },
+        color: rgb(0xFF3B30),
+        width: 2.0,
+        filled: false,
+    };
+    assert_eq!(cross.is_filled(), Some(false));
+    cross.set_filled(true);
+    assert_eq!(cross.is_filled(), Some(true));
+    assert!(cross.hit_test(point(px(210.0), px(210.0)), 0.0));
+    cross.translate(point(px(-20.0), px(-20.0)));
+    assert_eq!(cross.bounds().origin, point(px(180.0), px(180.0)));
 
-    // Hit test inside
-    assert!(sticker.hit_test(point(px(100.0), px(100.0)), 0.0));
-    assert!(sticker.hit_test(point(px(85.0), px(85.0)), 0.0));
-    // Hit test outside
-    assert!(!sticker.hit_test(point(px(50.0), px(50.0)), 0.0));
-
-    // Translate
-    sticker.translate(point(px(20.0), px(10.0)));
-    if let Annotation::Sticker { center, .. } = sticker {
-        assert_eq!(center, point(px(120.0), px(110.0)));
-    } else {
-        panic!("Expected Sticker variant");
-    }
-
-    // Properties
-    assert_eq!(sticker.sticker_kind(), Some(StickerKind::Checkmark));
-    sticker.set_sticker_kind(StickerKind::Warning);
-    assert_eq!(sticker.sticker_kind(), Some(StickerKind::Warning));
-    assert_eq!(sticker.sticker_size(), Some(40.0));
-    sticker.set_sticker_size(48.0);
-    assert_eq!(sticker.sticker_size(), Some(48.0));
+    let mut checkmark = Annotation::Checkmark {
+        bounds: Bounds {
+            origin: point(px(300.0), px(300.0)),
+            size: size(px(40.0), px(40.0)),
+        },
+        color: rgb(0x34C759),
+        width: 4.0,
+        filled: true,
+    };
+    assert_eq!(checkmark.is_filled(), Some(true));
+    assert!(checkmark.hit_test(point(px(310.0), px(310.0)), 0.0));
+    checkmark.translate(point(px(5.0), px(-5.0)));
+    assert_eq!(checkmark.bounds().origin, point(px(305.0), px(295.0)));
 }
 
 

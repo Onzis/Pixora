@@ -14,7 +14,7 @@ use crate::capture::region::crop_region;
 use crate::capture::screen::ScreenCapture;
 use crate::config::AppConfig;
 use crate::editor::annotations::{
-    Annotation, AnnotationHandle, BadgeMode, BadgeShape, StickerKind,
+    Annotation, AnnotationHandle, BadgeMode, BadgeShape,
     calculate_arrow_geometry, calculate_arrowhead, number_to_badge_label,
     sample_quadratic_bezier, text_bounds_dimensions, wrap_text_to_lines,
 };
@@ -396,10 +396,6 @@ impl ScreenOverlayView {
                     ann.set_badge_shape(self.tool_props.badge_shape);
                     ann.set_badge_mode(self.tool_props.badge_mode);
                     ann.set_filled(self.tool_props.badge_filled);
-                }
-                if let Annotation::Sticker { .. } = ann {
-                    ann.set_sticker_kind(self.tool_props.sticker_kind);
-                    ann.set_sticker_size(self.tool_props.sticker_size);
                 }
                 match ann {
                     Annotation::Blur { radius, .. } => *radius = self.tool_props.blur_radius,
@@ -1133,12 +1129,6 @@ impl ScreenOverlayView {
                 if let Some(mode) = ann.badge_mode() {
                     self.tool_props.badge_mode = mode;
                 }
-                if let Some(kind) = ann.sticker_kind() {
-                    self.tool_props.sticker_kind = kind;
-                }
-                if let Some(size) = ann.sticker_size() {
-                    self.tool_props.sticker_size = size;
-                }
                 self.history.snapshot();
                 if let Some(h) = ann.hit_test_handle(p, px(14.0)) {
                     match h {
@@ -1266,20 +1256,6 @@ impl ScreenOverlayView {
             return;
         }
 
-        // Sticker placement
-        if self.active_tool == ToolKind::Sticker {
-            let sticker = Annotation::Sticker {
-                center: p,
-                kind: self.tool_props.sticker_kind,
-                size: self.tool_props.sticker_size,
-                color: Some(self.tool_props.stroke_color),
-            };
-            self.history.push_annotation(sticker);
-            self.selected_annotation = Some(self.history.annotations.len() - 1);
-            cx.notify();
-            return;
-        }
-
         // Drawing tools (Pencil, Marker, Arrow, Line, Rect, Ellipse, Blur, Pixelate)
         if self.active_tool != ToolKind::Select {
             self.drawing_start = Some(p);
@@ -1367,6 +1343,39 @@ impl ScreenOverlayView {
                 }
                 ToolKind::Diamond => {
                     self.current_drawing = Some(Annotation::Diamond {
+                        bounds: Bounds {
+                            origin: p,
+                            size: size(px(0.0), px(0.0)),
+                        },
+                        color: self.tool_props.stroke_color,
+                        width: self.tool_props.stroke_width,
+                        filled: self.tool_props.is_filled,
+                    });
+                }
+                ToolKind::Heart => {
+                    self.current_drawing = Some(Annotation::Heart {
+                        bounds: Bounds {
+                            origin: p,
+                            size: size(px(0.0), px(0.0)),
+                        },
+                        color: self.tool_props.stroke_color,
+                        width: self.tool_props.stroke_width,
+                        filled: self.tool_props.is_filled,
+                    });
+                }
+                ToolKind::Cross => {
+                    self.current_drawing = Some(Annotation::Cross {
+                        bounds: Bounds {
+                            origin: p,
+                            size: size(px(0.0), px(0.0)),
+                        },
+                        color: self.tool_props.stroke_color,
+                        width: self.tool_props.stroke_width,
+                        filled: self.tool_props.is_filled,
+                    });
+                }
+                ToolKind::Checkmark => {
+                    self.current_drawing = Some(Annotation::Checkmark {
                         bounds: Bounds {
                             origin: p,
                             size: size(px(0.0), px(0.0)),
@@ -1583,6 +1592,9 @@ impl ScreenOverlayView {
                     | Annotation::Triangle { bounds, .. }
                     | Annotation::Star { bounds, .. }
                     | Annotation::Diamond { bounds, .. }
+                    | Annotation::Heart { bounds, .. }
+                    | Annotation::Cross { bounds, .. }
+                    | Annotation::Checkmark { bounds, .. }
                     | Annotation::Blur { bounds, .. }
                     | Annotation::Pixelate { bounds, .. }
                     | Annotation::Spotlight { bounds, .. } => {
@@ -2521,6 +2533,82 @@ impl Render for ScreenOverlayView {
                                     }
                                 }
                             }
+                            Annotation::Heart { bounds, color, filled, width } => {
+                                let ox = f32::from(bounds.origin.x);
+                                let oy = f32::from(bounds.origin.y);
+                                let w = f32::from(bounds.size.width);
+                                let h = f32::from(bounds.size.height);
+                                if w.abs() > 2.0 && h.abs() > 2.0 {
+                                    let mut pb = if *filled {
+                                        PathBuilder::fill()
+                                    } else {
+                                        PathBuilder::stroke(px(*width))
+                                    };
+                                    let tip = point(px(ox + w / 2.0), px(oy + h));
+                                    pb.move_to(tip);
+                                    pb.cubic_bezier_to(
+                                        point(px(ox + w * 0.25), px(oy + h * 0.05)),
+                                        point(px(ox), px(oy + h * 0.6)),
+                                        point(px(ox), px(oy + h * 0.15)),
+                                    );
+                                    pb.cubic_bezier_to(
+                                        point(px(ox + w * 0.5), px(oy + h * 0.3)),
+                                        point(px(ox + w * 0.4), px(oy)),
+                                        point(px(ox + w * 0.5), px(oy + h * 0.25)),
+                                    );
+                                    pb.cubic_bezier_to(
+                                        point(px(ox + w * 0.75), px(oy + h * 0.05)),
+                                        point(px(ox + w * 0.5), px(oy + h * 0.25)),
+                                        point(px(ox + w * 0.6), px(oy)),
+                                    );
+                                    pb.cubic_bezier_to(
+                                        tip,
+                                        point(px(ox + w), px(oy + h * 0.15)),
+                                        point(px(ox + w), px(oy + h * 0.6)),
+                                    );
+                                    pb.close();
+                                    if let Ok(path) = pb.build() {
+                                        window.paint_path(path, *color);
+                                    }
+                                }
+                            }
+                            Annotation::Cross { bounds, color, filled, width } => {
+                                let ox = bounds.origin.x;
+                                let oy = bounds.origin.y;
+                                let w = bounds.size.width;
+                                let h = bounds.size.height;
+                                let stroke_w = if *filled {
+                                    (f32::from(w).min(f32::from(h)) * 0.22).max(*width * 2.0)
+                                } else {
+                                    *width
+                                };
+                                let mut pb = PathBuilder::stroke(px(stroke_w));
+                                pb.move_to(point(ox, oy));
+                                pb.line_to(point(ox + w, oy + h));
+                                pb.move_to(point(ox + w, oy));
+                                pb.line_to(point(ox, oy + h));
+                                if let Ok(path) = pb.build() {
+                                    window.paint_path(path, *color);
+                                }
+                            }
+                            Annotation::Checkmark { bounds, color, filled, width } => {
+                                let ox = f32::from(bounds.origin.x);
+                                let oy = f32::from(bounds.origin.y);
+                                let w = f32::from(bounds.size.width);
+                                let h = f32::from(bounds.size.height);
+                                let stroke_w = if *filled {
+                                    (w.min(h) * 0.22).max(*width * 2.0)
+                                } else {
+                                    *width
+                                };
+                                let mut pb = PathBuilder::stroke(px(stroke_w));
+                                pb.move_to(point(px(ox), px(oy + h * 0.55)));
+                                pb.line_to(point(px(ox + w * 0.38), px(oy + h * 0.9)));
+                                pb.line_to(point(px(ox + w), px(oy + h * 0.15)));
+                                if let Ok(path) = pb.build() {
+                                    window.paint_path(path, *color);
+                                }
+                            }
                             Annotation::Blur { .. } | Annotation::Pixelate { .. } | Annotation::Spotlight { .. } => {}
                             Annotation::NumberBadge { center, color, radius, shape, mode: _, filled, .. } => {
                                 let badge_bounds = Bounds {
@@ -2789,26 +2877,6 @@ impl Render for ScreenOverlayView {
                             .child(label),
                     );
                 }
-                if let Annotation::Sticker { center, kind, size, color } = ann {
-                    let sticker_color = color.unwrap_or(rgb(0xFF453A));
-                    let half = *size / 2.0;
-                    root = root.child(
-                        div()
-                            .absolute()
-                            .left(center.x - px(half))
-                            .top(center.y - px(half))
-                            .size(px(*size))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                svg()
-                                    .path(kind.icon_path())
-                                    .size(px(*size))
-                                    .text_color(sticker_color),
-                            ),
-                    );
-                }
             }
         }
 
@@ -3063,12 +3131,14 @@ impl Render for ScreenOverlayView {
                             Annotation::Triangle { .. } => ToolKind::Triangle,
                             Annotation::Star { .. } => ToolKind::Star,
                             Annotation::Diamond { .. } => ToolKind::Diamond,
+                            Annotation::Heart { .. } => ToolKind::Heart,
+                            Annotation::Cross { .. } => ToolKind::Cross,
+                            Annotation::Checkmark { .. } => ToolKind::Checkmark,
                             Annotation::Text { .. } => ToolKind::Text,
                             Annotation::Blur { .. } => ToolKind::Blur,
                             Annotation::Pixelate { .. } => ToolKind::Pixelate,
                             Annotation::Spotlight { .. } => ToolKind::Spotlight,
                             Annotation::NumberBadge { .. } => ToolKind::NumberBadge,
-                            Annotation::Sticker { .. } => ToolKind::Sticker,
                         }
                     } else {
                         ToolKind::Select
@@ -3234,19 +3304,6 @@ impl Render for ScreenOverlayView {
                         }),
                         cx.listener(move |this, hovered, _, cx| {
                             this.set_tooltip(t(lang, "Step Badge Counter", "Шаги / Нумерация"), 219.0, *hovered, cx);
-                        }),
-                    ))
-                    .child(render_toolbar_button(
-                        "btn-sticker".into(),
-                        "icons/sticker.svg",
-                        active_tool == ToolKind::Sticker,
-                        theme_ref,
-                        cx.listener(|this, _, _, cx| {
-                            this.active_tool = ToolKind::Sticker;
-                            cx.notify();
-                        }),
-                        cx.listener(move |this, hovered, _, cx| {
-                            this.set_tooltip(t(lang, "Stickers and Icons", "Стикеры и значки"), 255.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_divider(theme_ref))
@@ -4066,7 +4123,10 @@ impl Render for ScreenOverlayView {
                                 || effective_tool == ToolKind::Ellipse
                                 || effective_tool == ToolKind::Triangle
                                 || effective_tool == ToolKind::Star
-                                || effective_tool == ToolKind::Diamond,
+                                || effective_tool == ToolKind::Diamond
+                                || effective_tool == ToolKind::Heart
+                                || effective_tool == ToolKind::Cross
+                                || effective_tool == ToolKind::Checkmark,
                             |p| {
                             p.child(render_toolbar_divider(theme_ref)).child(
                                 div()
@@ -4406,129 +4466,6 @@ impl Render for ScreenOverlayView {
                                         ),
                                 )
                         })
-                        // Sticker controls (Kind selector + Size stepper)
-                        .when(effective_tool == ToolKind::Sticker, |p| {
-                            let stickers = [
-                                (StickerKind::Checkmark, "icons/sticker-check.svg", "Checkmark"),
-                                (StickerKind::Cross, "icons/sticker-cross.svg", "Cross"),
-                                (StickerKind::Warning, "icons/sticker-warning.svg", "Warning"),
-                                (StickerKind::Cursor, "icons/sticker-cursor.svg", "Cursor"),
-                                (StickerKind::Star, "icons/sticker-star.svg", "Star"),
-                                (StickerKind::Heart, "icons/sticker-heart.svg", "Heart"),
-                                (StickerKind::Question, "icons/sticker-question.svg", "Question"),
-                                (StickerKind::Lightbulb, "icons/sticker-bulb.svg", "Bulb"),
-                            ];
-                            let cur_kind = self.tool_props.sticker_kind;
-                            let mut container = p.child(render_toolbar_divider(theme_ref));
-                            for (kind, icon, id) in stickers {
-                                let is_active = cur_kind == kind;
-                                container = container.child(
-                                    div()
-                                        .id(ElementId::Name(format!("sticker-btn-{}", id).into()))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .size(px(24.0))
-                                        .rounded_md()
-                                        .bg(if is_active {
-                                            rgba(0x8174FF33)
-                                        } else {
-                                            theme.bg_secondary
-                                        })
-                                        .border_1()
-                                        .border_color(if is_active {
-                                            theme.accent
-                                        } else {
-                                            theme.border_subtle
-                                        })
-                                        .hover(|s| s.bg(theme.bg_hover))
-                                        .cursor_pointer()
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.tool_props.sticker_kind = kind;
-                                            this.sync_and_save_tool_props();
-                                            cx.notify();
-                                        }))
-                                        .child(
-                                            svg()
-                                                .path(icon)
-                                                .size(px(14.0))
-                                                .text_color(if is_active {
-                                                    theme.accent
-                                                } else {
-                                                    theme.text_primary
-                                                }),
-                                        ),
-                                );
-                            }
-                            container
-                                .child(render_toolbar_divider(theme_ref))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap_1()
-                                        .child(
-                                            div()
-                                                .id("btn-dec-sticker-size")
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .size(px(22.0))
-                                                .rounded_md()
-                                                .bg(theme.bg_secondary)
-                                                .border_1()
-                                                .border_color(theme.border_subtle)
-                                                .hover(|s| s.bg(theme.bg_hover))
-                                                .cursor_pointer()
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.tool_props.sticker_size = (this.tool_props.sticker_size - 4.0).max(16.0);
-                                                    this.sync_and_save_tool_props();
-                                                    cx.notify();
-                                                }))
-                                                .child(svg().path("icons/minus.svg").size(px(12.0)).text_color(theme.text_secondary)),
-                                        )
-                                        .child(
-                                            div()
-                                                .px_2()
-                                                .py_0p5()
-                                                .min_w(px(40.0))
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .rounded_md()
-                                                .bg(theme.bg_secondary)
-                                                .border_1()
-                                                .border_color(theme.border_subtle)
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .font_weight(gpui::FontWeight::BOLD)
-                                                        .text_color(theme.text_primary)
-                                                        .child(format!("{}px", self.tool_props.sticker_size as u32)),
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .id("btn-inc-sticker-size")
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .size(px(22.0))
-                                                .rounded_md()
-                                                .bg(theme.bg_secondary)
-                                                .border_1()
-                                                .border_color(theme.border_subtle)
-                                                .hover(|s| s.bg(theme.bg_hover))
-                                                .cursor_pointer()
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.tool_props.sticker_size = (this.tool_props.sticker_size + 4.0).min(128.0);
-                                                    this.sync_and_save_tool_props();
-                                                    cx.notify();
-                                                }))
-                                                .child(svg().path("icons/plus.svg").size(px(12.0)).text_color(theme.text_secondary)),
-                                        ),
-                                )
-                        }),
                 );
             }
 
@@ -4975,7 +4912,7 @@ impl Render for ScreenOverlayView {
                 let is_ru = lang.is_ru();
                 let scr_h = f32::from(screen_bounds.size.height);
                 let shapes_w = 230.0;
-                let shapes_h = 320.0;
+                let shapes_h = 420.0;
                 let shapes_drop_up = f32::from(toolbar_pos.y) + bar_height + shapes_h + 16.0 > scr_h - 12.0;
                 let shapes_top = if shapes_drop_up {
                     (f32::from(toolbar_pos.y) - shapes_h - 8.0).max(12.0)
@@ -4989,6 +4926,9 @@ impl Render for ScreenOverlayView {
                     (ToolKind::Ellipse, "icons/circle.svg", "Эллипс", "Ellipse"),
                     (ToolKind::Triangle, "icons/triangle.svg", "Треугольник", "Triangle"),
                     (ToolKind::Star, "icons/star.svg", "Звезда", "Star"),
+                    (ToolKind::Heart, "icons/heart.svg", "Сердце", "Heart"),
+                    (ToolKind::Cross, "icons/cross.svg", "Крест", "Cross"),
+                    (ToolKind::Checkmark, "icons/checkmark.svg", "Галочка", "Checkmark"),
                     (ToolKind::Diamond, "icons/diamond.svg", "Ромб", "Diamond"),
                     (ToolKind::Arrow, "icons/arrow.svg", "Стрелка", "Arrow"),
                     (ToolKind::Line, "icons/line.svg", "Линия", "Line"),

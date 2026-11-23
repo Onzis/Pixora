@@ -1,5 +1,5 @@
 use crate::editor::annotations::{
-    Annotation, BadgeShape, StickerKind, calculate_arrow_geometry,
+    Annotation, BadgeShape, calculate_arrow_geometry,
     calculate_arrowhead, sample_quadratic_bezier,
 };
 use crate::image::processing::{apply_blur, apply_pixelate};
@@ -288,6 +288,42 @@ pub fn render_annotations_to_image(
                 let rh = f32::from(bounds.size.height);
                 draw_diamond(image, rx, ry, rw, rh, *width, *color, *filled);
             }
+            Annotation::Heart {
+                bounds,
+                color,
+                width,
+                filled,
+            } => {
+                let rx = f32::from(bounds.origin.x) - offset_x;
+                let ry = f32::from(bounds.origin.y) - offset_y;
+                let rw = f32::from(bounds.size.width);
+                let rh = f32::from(bounds.size.height);
+                draw_heart(image, rx, ry, rw, rh, *width, *color, *filled);
+            }
+            Annotation::Cross {
+                bounds,
+                color,
+                width,
+                filled,
+            } => {
+                let rx = f32::from(bounds.origin.x) - offset_x;
+                let ry = f32::from(bounds.origin.y) - offset_y;
+                let rw = f32::from(bounds.size.width);
+                let rh = f32::from(bounds.size.height);
+                draw_cross(image, rx, ry, rw, rh, *width, *color, *filled);
+            }
+            Annotation::Checkmark {
+                bounds,
+                color,
+                width,
+                filled,
+            } => {
+                let rx = f32::from(bounds.origin.x) - offset_x;
+                let ry = f32::from(bounds.origin.y) - offset_y;
+                let rw = f32::from(bounds.size.width);
+                let rh = f32::from(bounds.size.height);
+                draw_checkmark(image, rx, ry, rw, rh, *width, *color, *filled);
+            }
             Annotation::NumberBadge {
                 center,
                 number,
@@ -329,18 +365,6 @@ pub fn render_annotations_to_image(
                 let text_x = cx - (label.len() as f32 * 4.5);
                 let text_y = cy - 6.0;
                 draw_simple_text(image, text_x, text_y, &label, text_color, 2);
-            }
-            Annotation::Sticker {
-                center,
-                kind,
-                size,
-                color,
-            } => {
-                let cx = f32::from(center.x) - offset_x;
-                let cy = f32::from(center.y) - offset_y;
-                let s = *size;
-                let c = color.unwrap_or(gpui::rgb(0xFF453A));
-                draw_sticker_to_image(image, cx, cy, s, *kind, c);
             }
             Annotation::Text {
                 origin,
@@ -929,59 +953,94 @@ fn draw_simple_text(
     }
 }
 
-fn draw_sticker_to_image(
+pub fn draw_heart(
     image: &mut RgbaImage,
-    cx: f32,
-    cy: f32,
-    size: f32,
-    kind: StickerKind,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    width: f32,
     color: Rgba,
+    filled: bool,
 ) {
-    let scale = size / 24.0;
-    match kind {
-        StickerKind::Checkmark => {
-            draw_line(image, cx - 7.0 * scale, cy, cx - 2.0 * scale, cy + 6.0 * scale, 3.5 * scale, color, false);
-            draw_line(image, cx - 2.0 * scale, cy + 6.0 * scale, cx + 8.0 * scale, cy - 6.0 * scale, 3.5 * scale, color, false);
-        }
-        StickerKind::Cross => {
-            draw_line(image, cx - 6.0 * scale, cy - 6.0 * scale, cx + 6.0 * scale, cy + 6.0 * scale, 3.5 * scale, color, false);
-            draw_line(image, cx + 6.0 * scale, cy - 6.0 * scale, cx - 6.0 * scale, cy + 6.0 * scale, 3.5 * scale, color, false);
-        }
-        StickerKind::Warning => {
-            draw_triangle(image, cx - 10.0 * scale, cy - 9.0 * scale, 20.0 * scale, 18.0 * scale, 2.5 * scale, color, true);
-            let dark = gpui::rgb(0x1C1C1E);
-            draw_line(image, cx, cy - 3.0 * scale, cx, cy + 2.0 * scale, 2.2 * scale, dark, false);
-            draw_circle(image, cx, cy + 5.5 * scale, 1.3 * scale, dark, true, 1.0);
-        }
-        StickerKind::Cursor => {
-            let p_tip = (cx - 6.0 * scale, cy - 9.0 * scale);
-            let p_bot = (cx - 6.0 * scale, cy + 5.0 * scale);
-            let p_notch = (cx - 1.5 * scale, cy + 1.0 * scale);
-            let p_stem_l = (cx + 1.5 * scale, cy + 7.5 * scale);
-            let p_stem_r = (cx + 4.0 * scale, cy + 6.0 * scale);
-            let p_stem_t = (cx + 1.0 * scale, cy - 0.5 * scale);
-            let p_right = (cx + 6.0 * scale, cy - 0.5 * scale);
-            draw_filled_triangle(image, p_tip, p_bot, p_notch, color);
-            draw_filled_triangle(image, p_tip, p_notch, p_right, color);
-            draw_filled_triangle(image, p_notch, p_stem_l, p_stem_r, color);
-            draw_filled_triangle(image, p_notch, p_stem_r, p_stem_t, color);
-        }
-        StickerKind::Star => {
-            draw_star(image, cx - size / 2.0, cy - size / 2.0, size, size, 2.0, color, true);
-        }
-        StickerKind::Heart => {
-            draw_circle(image, cx - 3.5 * scale, cy - 2.0 * scale, 4.2 * scale, color, true, 1.0);
-            draw_circle(image, cx + 3.5 * scale, cy - 2.0 * scale, 4.2 * scale, color, true, 1.0);
-            draw_filled_triangle(image, (cx, cy + 8.5 * scale), (cx - 7.5 * scale, cy - 1.0 * scale), (cx + 7.5 * scale, cy - 1.0 * scale), color);
-        }
-        StickerKind::Question => {
-            draw_circle(image, cx, cy, size / 2.0 - 1.0, color, false, 2.5 * scale);
-            draw_simple_text(image, cx - 4.5, cy - 6.0, "?", color, 2);
-        }
-        StickerKind::Lightbulb => {
-            draw_circle(image, cx, cy - 2.0 * scale, 6.0 * scale, color, true, 1.0);
-            draw_rounded_rectangle(image, cx - 3.0 * scale, cy + 4.5 * scale, 6.0 * scale, 3.0 * scale, 1.0, 1.0, color, true);
-            draw_line(image, cx - 1.5 * scale, cy + 8.5 * scale, cx + 1.5 * scale, cy + 8.5 * scale, 2.0 * scale, color, false);
-        }
+    if w <= 2.0 || h <= 2.0 {
+        return;
     }
+    let cx = x + w / 2.0;
+    let r = (w / 4.0).min(h / 3.0);
+    let top_y = y + r;
+    let left_center = (x + r, top_y);
+    let right_center = (x + w - r, top_y);
+    let bottom_tip = (cx, y + h);
+
+    if filled {
+        draw_circle(image, left_center.0, left_center.1, r, color, true, 1.0);
+        draw_circle(image, right_center.0, right_center.1, r, color, true, 1.0);
+        draw_filled_triangle(
+            image,
+            bottom_tip,
+            (x + r * 0.1, top_y + r * 0.2),
+            (x + w - r * 0.1, top_y + r * 0.2),
+            color,
+        );
+        draw_filled_triangle(
+            image,
+            (cx, top_y + r * 0.5),
+            (left_center.0, top_y),
+            (right_center.0, top_y),
+            color,
+        );
+    } else {
+        draw_circle(image, left_center.0, left_center.1, r, color, false, width);
+        draw_circle(image, right_center.0, right_center.1, r, color, false, width);
+        draw_line(image, x + r * 0.1, top_y + r * 0.2, bottom_tip.0, bottom_tip.1, width, color, false);
+        draw_line(image, x + w - r * 0.1, top_y + r * 0.2, bottom_tip.0, bottom_tip.1, width, color, false);
+    }
+}
+
+pub fn draw_cross(
+    image: &mut RgbaImage,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    width: f32,
+    color: Rgba,
+    filled: bool,
+) {
+    if w <= 2.0 || h <= 2.0 {
+        return;
+    }
+    let stroke_w = if filled {
+        (w.min(h) * 0.22).max(width * 2.0)
+    } else {
+        width
+    };
+    draw_line(image, x, y, x + w, y + h, stroke_w, color, false);
+    draw_line(image, x + w, y, x, y + h, stroke_w, color, false);
+}
+
+pub fn draw_checkmark(
+    image: &mut RgbaImage,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    width: f32,
+    color: Rgba,
+    filled: bool,
+) {
+    if w <= 2.0 || h <= 2.0 {
+        return;
+    }
+    let stroke_w = if filled {
+        (w.min(h) * 0.22).max(width * 2.0)
+    } else {
+        width
+    };
+    let p1 = (x, y + h * 0.55);
+    let p2 = (x + w * 0.38, y + h * 0.9);
+    let p3 = (x + w, y + h * 0.15);
+    draw_line(image, p1.0, p1.1, p2.0, p2.1, stroke_w, color, false);
+    draw_line(image, p2.0, p2.1, p3.0, p3.1, stroke_w, color, false);
 }

@@ -46,33 +46,6 @@ pub fn number_to_badge_label(number: u32, mode: BadgeMode) -> String {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StickerKind {
-    Checkmark,
-    Cross,
-    Warning,
-    Cursor,
-    Star,
-    Heart,
-    Question,
-    Lightbulb,
-}
-
-impl StickerKind {
-    pub fn icon_path(&self) -> &'static str {
-        match self {
-            StickerKind::Checkmark => "icons/sticker-check.svg",
-            StickerKind::Cross => "icons/sticker-cross.svg",
-            StickerKind::Warning => "icons/sticker-warning.svg",
-            StickerKind::Cursor => "icons/sticker-cursor.svg",
-            StickerKind::Star => "icons/sticker-star.svg",
-            StickerKind::Heart => "icons/sticker-heart.svg",
-            StickerKind::Question => "icons/sticker-question.svg",
-            StickerKind::Lightbulb => "icons/sticker-bulb.svg",
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum Annotation {
     Pencil {
@@ -129,6 +102,24 @@ pub enum Annotation {
         width: f32,
         filled: bool,
     },
+    Heart {
+        bounds: Bounds<Pixels>,
+        color: Rgba,
+        width: f32,
+        filled: bool,
+    },
+    Cross {
+        bounds: Bounds<Pixels>,
+        color: Rgba,
+        width: f32,
+        filled: bool,
+    },
+    Checkmark {
+        bounds: Bounds<Pixels>,
+        color: Rgba,
+        width: f32,
+        filled: bool,
+    },
     Text {
         origin: Point<Pixels>,
         text: String,
@@ -158,12 +149,6 @@ pub enum Annotation {
         shape: BadgeShape,
         mode: BadgeMode,
         filled: bool,
-    },
-    Sticker {
-        center: Point<Pixels>,
-        kind: StickerKind,
-        size: f32,
-        color: Option<Rgba>,
     },
 }
 
@@ -563,6 +548,9 @@ impl Annotation {
             | Annotation::Triangle { bounds, .. }
             | Annotation::Star { bounds, .. }
             | Annotation::Diamond { bounds, .. }
+            | Annotation::Heart { bounds, .. }
+            | Annotation::Cross { bounds, .. }
+            | Annotation::Checkmark { bounds, .. }
             | Annotation::Blur { bounds, .. }
             | Annotation::Pixelate { bounds, .. }
             | Annotation::Spotlight { bounds, .. } => normalize_bounds(*bounds),
@@ -579,13 +567,6 @@ impl Annotation {
                     size: size(px(*radius * 2.0), px(*radius * 2.0)),
                 }
             }
-            Annotation::Sticker { center, size: sticker_size, .. } => {
-                let half = *sticker_size / 2.0;
-                Bounds {
-                    origin: point(center.x - px(half), center.y - px(half)),
-                    size: size(px(*sticker_size), px(*sticker_size)),
-                }
-            }
         }
     }
 
@@ -597,6 +578,9 @@ impl Annotation {
             | Annotation::Triangle { bounds, .. }
             | Annotation::Star { bounds, .. }
             | Annotation::Diamond { bounds, .. }
+            | Annotation::Heart { bounds, .. }
+            | Annotation::Cross { bounds, .. }
+            | Annotation::Checkmark { bounds, .. }
             | Annotation::Blur { bounds, .. }
             | Annotation::Pixelate { bounds, .. }
             | Annotation::Spotlight { bounds, .. } => {
@@ -613,14 +597,6 @@ impl Annotation {
                 *center = point(
                     norm.origin.x + px(*radius),
                     norm.origin.y + px(*radius),
-                );
-            }
-            Annotation::Sticker { center, size: sticker_size, .. } => {
-                let new_s = f32::from(norm.size.width).max(f32::from(norm.size.height)).clamp(16.0, 256.0);
-                *sticker_size = new_s;
-                *center = point(
-                    norm.origin.x + px(new_s / 2.0),
-                    norm.origin.y + px(new_s / 2.0),
                 );
             }
             _ => {}
@@ -700,13 +676,6 @@ impl Annotation {
                 let ratio_h = (oh + dy.abs()) / oh.max(1.0);
                 let ratio = ratio_w.max(ratio_h).clamp(0.2, 5.0);
                 *radius = (orig_r * ratio).clamp(8.0, 64.0);
-            }
-            Annotation::Sticker { size: sticker_size, .. } => {
-                let orig_s = *sticker_size;
-                let ratio_w = (ow + dx.abs()) / ow.max(1.0);
-                let ratio_h = (oh + dy.abs()) / oh.max(1.0);
-                let ratio = ratio_w.max(ratio_h).clamp(0.2, 5.0);
-                *sticker_size = (orig_s * ratio).clamp(16.0, 256.0);
             }
             _ => {
                 let new_bounds = resize_bounds_with_handle(orig_bounds, handle, start_mouse, cur_mouse);
@@ -879,7 +848,10 @@ impl Annotation {
                         || dist_to_segment_sq(p_f, p4, p1) <= tol_sq
                 }
             }
-            Annotation::Star { bounds, .. } => {
+            Annotation::Star { bounds, .. }
+            | Annotation::Heart { bounds, .. }
+            | Annotation::Cross { bounds, .. }
+            | Annotation::Checkmark { bounds, .. } => {
                 let norm = normalize_bounds(*bounds);
                 let left = f32::from(norm.origin.x);
                 let top = f32::from(norm.origin.y);
@@ -921,12 +893,6 @@ impl Annotation {
                 let bottom = top + f32::from(norm.size.height);
                 px_f >= left - tolerance && px_f <= right + tolerance && py_f >= top - tolerance && py_f <= bottom + tolerance
             }
-            Annotation::Sticker { center, size, .. } => {
-                let half = size / 2.0;
-                let cx = f32::from(center.x);
-                let cy = f32::from(center.y);
-                (px_f - cx).abs() <= half + tolerance && (py_f - cy).abs() <= half + tolerance
-            }
         }
     }
 
@@ -967,12 +933,14 @@ impl Annotation {
             | Annotation::Triangle { .. }
             | Annotation::Star { .. }
             | Annotation::Diamond { .. }
+            | Annotation::Heart { .. }
+            | Annotation::Cross { .. }
+            | Annotation::Checkmark { .. }
             | Annotation::Blur { .. }
             | Annotation::Pixelate { .. }
             | Annotation::Spotlight { .. }
             | Annotation::Text { .. }
-            | Annotation::NumberBadge { .. }
-            | Annotation::Sticker { .. } => {
+            | Annotation::NumberBadge { .. } => {
                 let b = self.bounds();
                 let x = b.origin.x;
                 let y = b.origin.y;
@@ -1032,6 +1000,9 @@ impl Annotation {
             | Annotation::Triangle { bounds, .. }
             | Annotation::Star { bounds, .. }
             | Annotation::Diamond { bounds, .. }
+            | Annotation::Heart { bounds, .. }
+            | Annotation::Cross { bounds, .. }
+            | Annotation::Checkmark { bounds, .. }
             | Annotation::Blur { bounds, .. }
             | Annotation::Pixelate { bounds, .. }
             | Annotation::Spotlight { bounds, .. } => {
@@ -1041,9 +1012,6 @@ impl Annotation {
                 *origin = point(origin.x + delta.x, origin.y + delta.y);
             }
             Annotation::NumberBadge { center, .. } => {
-                *center = point(center.x + delta.x, center.y + delta.y);
-            }
-            Annotation::Sticker { center, .. } => {
                 *center = point(center.x + delta.x, center.y + delta.y);
             }
         }
@@ -1060,10 +1028,12 @@ impl Annotation {
             | Annotation::Triangle { color, .. }
             | Annotation::Star { color, .. }
             | Annotation::Diamond { color, .. }
+            | Annotation::Heart { color, .. }
+            | Annotation::Cross { color, .. }
+            | Annotation::Checkmark { color, .. }
             | Annotation::Text { color, .. }
             | Annotation::Spotlight { color, .. }
             | Annotation::NumberBadge { color, .. } => Some(*color),
-            Annotation::Sticker { color, .. } => *color,
             _ => None,
         }
     }
@@ -1079,10 +1049,12 @@ impl Annotation {
             | Annotation::Triangle { color, .. }
             | Annotation::Star { color, .. }
             | Annotation::Diamond { color, .. }
+            | Annotation::Heart { color, .. }
+            | Annotation::Cross { color, .. }
+            | Annotation::Checkmark { color, .. }
             | Annotation::Text { color, .. }
             | Annotation::Spotlight { color, .. }
             | Annotation::NumberBadge { color, .. } => *color = new_color,
-            Annotation::Sticker { color, .. } => *color = Some(new_color),
             _ => {}
         }
     }
@@ -1098,6 +1070,9 @@ impl Annotation {
             | Annotation::Triangle { width, .. }
             | Annotation::Star { width, .. }
             | Annotation::Diamond { width, .. }
+            | Annotation::Heart { width, .. }
+            | Annotation::Cross { width, .. }
+            | Annotation::Checkmark { width, .. }
             | Annotation::Spotlight { width, .. } => Some(*width),
             _ => None,
         }
@@ -1114,6 +1089,9 @@ impl Annotation {
             | Annotation::Triangle { width, .. }
             | Annotation::Star { width, .. }
             | Annotation::Diamond { width, .. }
+            | Annotation::Heart { width, .. }
+            | Annotation::Cross { width, .. }
+            | Annotation::Checkmark { width, .. }
             | Annotation::Spotlight { width, .. } => *width = new_width,
             _ => {}
         }
@@ -1152,6 +1130,9 @@ impl Annotation {
             | Annotation::Triangle { filled, .. }
             | Annotation::Star { filled, .. }
             | Annotation::Diamond { filled, .. }
+            | Annotation::Heart { filled, .. }
+            | Annotation::Cross { filled, .. }
+            | Annotation::Checkmark { filled, .. }
             | Annotation::NumberBadge { filled, .. } => Some(*filled),
             _ => None,
         }
@@ -1164,6 +1145,9 @@ impl Annotation {
             | Annotation::Triangle { filled, .. }
             | Annotation::Star { filled, .. }
             | Annotation::Diamond { filled, .. }
+            | Annotation::Heart { filled, .. }
+            | Annotation::Cross { filled, .. }
+            | Annotation::Checkmark { filled, .. }
             | Annotation::NumberBadge { filled, .. } => *filled = new_filled,
             _ => {}
         }
@@ -1232,32 +1216,6 @@ impl Annotation {
             } else {
                 *control = None;
             }
-        }
-    }
-
-    pub fn sticker_kind(&self) -> Option<StickerKind> {
-        match self {
-            Annotation::Sticker { kind, .. } => Some(*kind),
-            _ => None,
-        }
-    }
-
-    pub fn set_sticker_kind(&mut self, new_kind: StickerKind) {
-        if let Annotation::Sticker { kind, .. } = self {
-            *kind = new_kind;
-        }
-    }
-
-    pub fn sticker_size(&self) -> Option<f32> {
-        match self {
-            Annotation::Sticker { size, .. } => Some(*size),
-            _ => None,
-        }
-    }
-
-    pub fn set_sticker_size(&mut self, new_size: f32) {
-        if let Annotation::Sticker { size, .. } = self {
-            *size = new_size;
         }
     }
 }
