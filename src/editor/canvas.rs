@@ -1,4 +1,4 @@
-use crate::editor::annotations::{Annotation, calculate_arrow_geometry};
+use crate::editor::annotations::{Annotation, calculate_arrow_geometry, wrap_text_to_lines};
 use crate::image::processing::{apply_blur, apply_pixelate};
 use gpui::Rgba;
 use image::{Rgba as ImageRgba, RgbaImage};
@@ -254,16 +254,22 @@ pub fn render_annotations_to_image(
                 text,
                 color,
                 font_size,
+                box_width,
             } => {
+                let lines = wrap_text_to_lines(text, *font_size, *box_width);
+                let line_h = *font_size * 1.25;
                 let scale = ((*font_size / 9.0).round() as usize).max(1);
-                draw_simple_text(
-                    image,
-                    f32::from(origin.x) - offset_x,
-                    f32::from(origin.y) - offset_y,
-                    text,
-                    *color,
-                    scale,
-                );
+                for (i, line) in lines.iter().enumerate() {
+                    let y_offset = i as f32 * line_h;
+                    draw_simple_text(
+                        image,
+                        f32::from(origin.x) - offset_x,
+                        f32::from(origin.y) - offset_y + y_offset,
+                        line,
+                        *color,
+                        scale,
+                    );
+                }
             }
         }
     }
