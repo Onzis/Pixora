@@ -14,7 +14,7 @@ use crate::capture::region::crop_region;
 use crate::capture::screen::ScreenCapture;
 use crate::config::AppConfig;
 use crate::editor::annotations::{
-    Annotation, AnnotationHandle, calculate_arrow_geometry, wrap_text_to_lines,
+    Annotation, AnnotationHandle, calculate_arrow_geometry,
 };
 use crate::editor::canvas::render_annotations_to_image;
 use crate::editor::history::EditHistory;
@@ -571,7 +571,6 @@ impl ScreenOverlayView {
                     text: self.text_input_buffer.clone(),
                     color: self.tool_props.stroke_color,
                     font_size: self.tool_props.font_size,
-                    box_width: None,
                 };
                 self.history.push_annotation(ann);
                 self.selected_annotation = Some(self.history.annotations.len() - 1);
@@ -2406,9 +2405,9 @@ impl Render for ScreenOverlayView {
         // Render text annotations as crisp UI elements only when selection is active
         if self.selection.is_active {
             for ann in &self.history.annotations {
-                if let Annotation::Text { origin, text, color, font_size, box_width } = ann {
-                    let wrapped_lines = wrap_text_to_lines(text, *font_size, *box_width);
-                    let mut text_container = div()
+                if let Annotation::Text { origin, text, color, font_size } = ann {
+                    let lines: Vec<&str> = text.lines().collect();
+                    let mut container = div()
                         .absolute()
                         .left(origin.x)
                         .top(origin.y)
@@ -2419,15 +2418,13 @@ impl Render for ScreenOverlayView {
                         .flex()
                         .flex_col();
 
-                    if let Some(bw) = box_width {
-                        text_container = text_container.w(px(*bw));
+                    for line in lines {
+                        container = container.child(
+                            div().whitespace_nowrap().child(line.to_string())
+                        );
                     }
 
-                    for line in wrapped_lines {
-                        text_container = text_container.child(div().child(line));
-                    }
-
-                    root = root.child(text_container);
+                    root = root.child(container);
                 }
                 if let Annotation::NumberBadge { center, number, radius, .. } = ann {
                     root = root.child(

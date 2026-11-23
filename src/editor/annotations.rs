@@ -72,7 +72,6 @@ pub enum Annotation {
         text: String,
         color: Rgba,
         font_size: f32,
-        box_width: Option<f32>,
     },
     Blur {
         bounds: Bounds<Pixels>,
@@ -207,56 +206,8 @@ pub fn string_width(s: &str, font_size: f32) -> f32 {
     total * font_size
 }
 
-pub fn wrap_text_to_lines(text: &str, font_size: f32, max_width: Option<f32>) -> Vec<String> {
-    let max_w = match max_width {
-        Some(w) if w > 10.0 => w,
-        _ => {
-            return text.lines().map(|s| s.to_string()).collect();
-        }
-    };
-
-    let space_w = char_width(' ') * font_size;
-    let mut result = Vec::new();
-
-    for raw_line in text.lines() {
-        let words: Vec<&str> = raw_line.split_whitespace().collect();
-        if words.is_empty() {
-            result.push(String::new());
-            continue;
-        }
-
-        let mut cur_line = String::new();
-        let mut cur_w = 0.0f32;
-
-        for word in words {
-            let w_width = string_width(word, font_size);
-            if cur_line.is_empty() {
-                cur_line.push_str(word);
-                cur_w = w_width;
-            } else if cur_w + space_w + w_width <= max_w {
-                cur_line.push(' ');
-                cur_line.push_str(word);
-                cur_w += space_w + w_width;
-            } else {
-                result.push(cur_line);
-                cur_line = word.to_string();
-                cur_w = w_width;
-            }
-        }
-        if !cur_line.is_empty() {
-            result.push(cur_line);
-        }
-    }
-
-    if result.is_empty() {
-        result.push(String::new());
-    }
-
-    result
-}
-
-pub fn text_bounds_dimensions(text: &str, font_size: f32, box_width: Option<f32>) -> (f32, f32) {
-    let lines = wrap_text_to_lines(text, font_size, box_width);
+pub fn text_bounds_dimensions(text: &str, font_size: f32) -> (f32, f32) {
+    let lines: Vec<&str> = text.lines().collect();
     let mut max_line_w = 0.0f32;
     for line in &lines {
         let lw = string_width(line, font_size);
@@ -264,11 +215,7 @@ pub fn text_bounds_dimensions(text: &str, font_size: f32, box_width: Option<f32>
             max_line_w = lw;
         }
     }
-    let w = if let Some(bw) = box_width {
-        bw.max(max_line_w).max(font_size * 0.5)
-    } else {
-        max_line_w.max(font_size * 0.5)
-    };
+    let w = max_line_w.max(font_size * 0.5);
     let line_count = lines.len().max(1) as f32;
     let h = line_count * font_size * 1.25;
     (w, h)
@@ -322,8 +269,8 @@ impl Annotation {
             | Annotation::Blur { bounds, .. }
             | Annotation::Pixelate { bounds, .. }
             | Annotation::Spotlight { bounds, .. } => normalize_bounds(*bounds),
-            Annotation::Text { origin, text, font_size, box_width, .. } => {
-                let (w, h) = text_bounds_dimensions(text, *font_size, *box_width);
+            Annotation::Text { origin, text, font_size, .. } => {
+                let (w, h) = text_bounds_dimensions(text, *font_size);
                 Bounds {
                     origin: *origin,
                     size: size(px(w), px(h)),
@@ -351,9 +298,16 @@ impl Annotation {
             | Annotation::Spotlight { bounds, .. } => {
                 *bounds = norm;
             }
-            Annotation::Text { origin, box_width, .. } => {
+            Annotation::Text { origin, font_size, text, .. } => {
+                let (orig_w, orig_h) = text_bounds_dimensions(text, *font_size);
                 let new_w = f32::from(norm.size.width);
-                *box_width = Some(new_w);
+                let new_h = f32::from(norm.size.height);
+                let rw = new_w / orig_w.max(1.0);
+                let rh = new_h / orig_h.max(1.0);
+                let ratio = if (rw - 1.0).abs() >= (rh - 1.0).abs() { rw } else { rh };
+                if ratio > 0.05 && ratio < 20.0 {
+                    *font_size = (*font_size * ratio).clamp(10.0, 96.0);
+                }
                 *origin = norm.origin;
             }
             Annotation::NumberBadge { center, radius, .. } => {
@@ -383,54 +337,40 @@ impl Annotation {
         let oh = f32::from(orig_bounds.size.height);
 
         match self {
-            Annotation::Text { origin, font_size, box_width, .. } => {
+            Annotation::Text { origin, font_size, .. } => {
                 let orig_fs = *font_size;
                 match handle {
                     AnnotationHandle::Right => {
-                        let new_w = (ow + dx).max(20.0);
-                        *box_width = Some(new_w);
+                        let ratio = ((ow + dx) / ow.max(1.0)).clamp(0.1, 8.0);
+                        *font_size = (orig_fs * ratio).clamp(10.0, 96.0);
                         *origin = point(px(ox), px(oy));
                     }
                     AnnotationHandle::Left => {
-                        let new_w = (ow - dx).max(20.0);
-                        let orig_right = ox + ow;
-                        let new_x = orig_right - new_w;
-                        *box_width = Some(new_w);
+                        let ratio = ((ow - dx) / ow.max(1.0)).clamp(0.1, 8.0);
+                        let target_fs = (orig_fs * ratio).clamp(10.0, 96.0);
+                        let actual_ratio = target_fs / orig_fs;
+                        let new_x = (ox + ow) - ow * actual_ratio;
+                        *font_size = target_fs;
                         *origin = point(px(new_x), px(oy));
                     }
                     AnnotationHandle::Bottom => {
-                        let new_h = (oh + dy).max(10.0);
-                        let ratio = (new_h / oh.max(1.0)).clamp(0.1, 8.0);
-                        let target_fs = (orig_fs * ratio).clamp(10.0, 96.0);
-                        let actual_ratio = target_fs / orig_fs;
-                        *font_size = target_fs;
-                        if let Some(bw) = box_width {
-                            *bw = (*bw * actual_ratio).max(20.0);
-                        }
+                        let ratio = ((oh + dy) / oh.max(1.0)).clamp(0.1, 8.0);
+                        *font_size = (orig_fs * ratio).clamp(10.0, 96.0);
                         *origin = point(px(ox), px(oy));
                     }
                     AnnotationHandle::Top => {
-                        let new_h = (oh - dy).max(10.0);
-                        let ratio = (new_h / oh.max(1.0)).clamp(0.1, 8.0);
+                        let ratio = ((oh - dy) / oh.max(1.0)).clamp(0.1, 8.0);
                         let target_fs = (orig_fs * ratio).clamp(10.0, 96.0);
                         let actual_ratio = target_fs / orig_fs;
                         let new_y = (oy + oh) - oh * actual_ratio;
                         *font_size = target_fs;
-                        if let Some(bw) = box_width {
-                            *bw = (*bw * actual_ratio).max(20.0);
-                        }
                         *origin = point(px(ox), px(new_y));
                     }
                     AnnotationHandle::BottomRight => {
                         let ratio_w = (ow + dx) / ow.max(1.0);
                         let ratio_h = (oh + dy) / oh.max(1.0);
                         let ratio = if dx.abs() >= dy.abs() { ratio_w } else { ratio_h }.clamp(0.1, 8.0);
-                        let target_fs = (orig_fs * ratio).clamp(10.0, 96.0);
-                        let actual_ratio = target_fs / orig_fs;
-                        *font_size = target_fs;
-                        if let Some(bw) = box_width {
-                            *bw = (*bw * actual_ratio).max(20.0);
-                        }
+                        *font_size = (orig_fs * ratio).clamp(10.0, 96.0);
                         *origin = point(px(ox), px(oy));
                     }
                     AnnotationHandle::BottomLeft => {
@@ -441,9 +381,6 @@ impl Annotation {
                         let actual_ratio = target_fs / orig_fs;
                         let new_x = (ox + ow) - ow * actual_ratio;
                         *font_size = target_fs;
-                        if let Some(bw) = box_width {
-                            *bw = (*bw * actual_ratio).max(20.0);
-                        }
                         *origin = point(px(new_x), px(oy));
                     }
                     AnnotationHandle::TopRight => {
@@ -454,9 +391,6 @@ impl Annotation {
                         let actual_ratio = target_fs / orig_fs;
                         let new_y = (oy + oh) - oh * actual_ratio;
                         *font_size = target_fs;
-                        if let Some(bw) = box_width {
-                            *bw = (*bw * actual_ratio).max(20.0);
-                        }
                         *origin = point(px(ox), px(new_y));
                     }
                     AnnotationHandle::TopLeft => {
@@ -468,9 +402,6 @@ impl Annotation {
                         let new_x = (ox + ow) - ow * actual_ratio;
                         let new_y = (oy + oh) - oh * actual_ratio;
                         *font_size = target_fs;
-                        if let Some(bw) = box_width {
-                            *bw = (*bw * actual_ratio).max(20.0);
-                        }
                         *origin = point(px(new_x), px(new_y));
                     }
                     _ => {}
@@ -616,8 +547,8 @@ impl Annotation {
                 let bottom = top + f32::from(norm.size.height);
                 px_f >= left - tolerance && px_f <= right + tolerance && py_f >= top - tolerance && py_f <= bottom + tolerance
             }
-            Annotation::Text { origin, text, font_size, box_width, .. } => {
-                let (w, h) = text_bounds_dimensions(text, *font_size, *box_width);
+            Annotation::Text { origin, text, font_size, .. } => {
+                let (w, h) = text_bounds_dimensions(text, *font_size);
                 let x = f32::from(origin.x);
                 let y = f32::from(origin.y);
                 px_f >= x - tolerance && px_f <= x + w + tolerance && py_f >= y - tolerance && py_f <= y + h + tolerance
@@ -822,19 +753,6 @@ impl Annotation {
     pub fn set_font_size(&mut self, new_size: f32) {
         if let Annotation::Text { font_size, .. } = self {
             *font_size = new_size;
-        }
-    }
-
-    pub fn box_width(&self) -> Option<f32> {
-        match self {
-            Annotation::Text { box_width, .. } => *box_width,
-            _ => None,
-        }
-    }
-
-    pub fn set_box_width(&mut self, w: Option<f32>) {
-        if let Annotation::Text { box_width, .. } = self {
-            *box_width = w;
         }
     }
 

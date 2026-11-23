@@ -227,7 +227,6 @@ fn test_render_all_annotations_to_image() {
             text: "PIXORA 2026".to_string(),
             color: rgb(0xFFFFFF),
             font_size: 16.0,
-            box_width: None,
         },
         Annotation::Blur {
             bounds: Bounds {
@@ -824,7 +823,6 @@ fn test_selection_cancellation_and_history_reset() {
         text: "Sample annotation".to_string(),
         color: rgb(0xFF9500),
         font_size: 16.0,
-        box_width: None,
     });
     assert_eq!(history.annotations.len(), 2);
 
@@ -879,7 +877,6 @@ fn test_text_annotation_commit_outside() {
                 text: text_input_buffer.clone(),
                 color: rgb(0xFFFFFF),
                 font_size: 24.0,
-                box_width: None,
             };
             history.push_annotation(ann);
         }
@@ -1080,7 +1077,6 @@ fn test_annotation_selection_hit_testing() {
         text: "Hello Pixora".into(),
         color: gpui::rgb(0xFFFFFF),
         font_size: 16.0,
-        box_width: None,
     };
     assert!(text.hit_test(point(px(60.0), px(55.0)), 4.0));
     assert!(!text.hit_test(point(px(200.0), px(200.0)), 4.0));
@@ -1158,7 +1154,6 @@ fn test_annotation_property_updates() {
         text: "Test".into(),
         color: gpui::rgb(0xFFFFFF),
         font_size: 16.0,
-        box_width: None,
     };
     assert_eq!(text.font_size(), Some(16.0));
     text.set_font_size(28.0);
@@ -1166,13 +1161,12 @@ fn test_annotation_property_updates() {
 }
 
 #[test]
-fn test_text_horizontal_resizing_and_word_wrap() {
+fn test_text_free_transform_resizing_and_handles() {
     let mut text = Annotation::Text {
         origin: point(px(50.0), px(50.0)),
         text: "траляля".into(),
         color: gpui::rgb(0xFF0000),
         font_size: 20.0,
-        box_width: None,
     };
 
     let orig_b = text.bounds();
@@ -1186,18 +1180,16 @@ fn test_text_horizontal_resizing_and_word_wrap() {
     let hit_r = text.hit_test_handle(right_handle_pos, px(14.0));
     assert_eq!(hit_r, Some(AnnotationHandle::Right));
 
-    // 2. Drag right handle to the right by +50px: box_width expands, font_size remains unchanged, origin.x stays fixed!
+    // 2. Drag right handle to the right by +orig_w (scale 2x): font size doubles, origin.x stays fixed!
     let start_m = right_handle_pos;
-    let cur_m = point(right_handle_pos.x + px(50.0), right_handle_pos.y);
+    let cur_m = point(right_handle_pos.x + px(orig_w), right_handle_pos.y);
     text.resize_with_handle(orig_b, AnnotationHandle::Right, start_m, cur_m);
-    assert_eq!(text.font_size(), Some(20.0), "Font size must remain unchanged when dragging side handle");
-    assert!((text.box_width().unwrap() - (orig_w + 50.0)).abs() < 0.01, "Box width must expand by 50px");
+    assert!((text.font_size().unwrap() - 40.0).abs() < 0.1, "Font size must scale up proportionally (Photoshop Free Transform)");
     if let Annotation::Text { origin, .. } = text {
-        assert_eq!(origin.x, px(50.0), "Left origin must remain anchored when dragging right handle");
+        assert_eq!(origin.x, px(50.0), "Left edge must remain anchored when dragging right handle");
     }
-    assert!((f32::from(text.bounds().size.width) - (orig_w + 50.0)).abs() < 0.01);
 
-    // 3. Drag left handle to the left by -30px (stretching left): box_width expands, font_size unchanged, right edge stays anchored!
+    // 3. Drag left handle to the left by -orig_w (scale 2x): right edge stays anchored!
     let left_handle_pos = point(orig_b.origin.x, orig_b.origin.y + orig_b.size.height / 2.0);
     let hit_l = text.hit_test_handle(left_handle_pos, px(14.0));
     assert_eq!(hit_l, Some(AnnotationHandle::Left));
@@ -1207,36 +1199,27 @@ fn test_text_horizontal_resizing_and_word_wrap() {
         text: "траляля".into(),
         color: gpui::rgb(0xFF0000),
         font_size: 20.0,
-        box_width: None,
     };
     let start_m_l = left_handle_pos;
-    let cur_m_l = point(left_handle_pos.x - px(30.0), left_handle_pos.y);
+    let cur_m_l = point(left_handle_pos.x - px(orig_w), left_handle_pos.y);
     text_left.resize_with_handle(orig_b, AnnotationHandle::Left, start_m_l, cur_m_l);
-    assert_eq!(text_left.font_size(), Some(20.0), "Font size must remain unchanged");
-    assert!((text_left.box_width().unwrap() - (orig_w + 30.0)).abs() < 0.01, "Box width must expand by 30px");
+    assert!((text_left.font_size().unwrap() - 40.0).abs() < 0.1, "Font size must scale up proportionally");
     if let Annotation::Text { origin, .. } = text_left {
-        let expected_x = 50.0 - 30.0;
-        assert_eq!(origin.x, px(expected_x), "Origin.x must shift leftwards by 30px");
-        let right_edge = f32::from(origin.x) + (orig_w + 30.0);
+        let new_w = f32::from(text_left.bounds().size.width);
+        let right_edge = f32::from(origin.x) + new_w;
         let expected_right = 50.0 + orig_w;
-        assert!((right_edge - expected_right).abs() < 0.01, "Right edge must stay anchored");
+        assert!((right_edge - expected_right).abs() < 1.0, "Right edge must stay anchored");
     }
 
-    // 4. Test word wrapping logic
-    let words = "Текст для проверки автоматического переноса слов в Pixora";
-    let wrapped = pixora::editor::annotations::wrap_text_to_lines(words, 16.0, Some(100.0));
-    assert!(wrapped.len() > 1, "Words must wrap into multiple lines when width is constrained");
-
-    // 5. Drag corner handle (BottomRight): scales font_size proportionally!
+    // 4. Drag corner handle (BottomRight): scales font_size proportionally!
     let mut text_corner = Annotation::Text {
         origin: point(px(50.0), px(50.0)),
         text: "траляля".into(),
         color: gpui::rgb(0xFF0000),
         font_size: 20.0,
-        box_width: None,
     };
     let br_pos = point(orig_b.origin.x + orig_b.size.width, orig_b.origin.y + orig_b.size.height);
-    text_corner.resize_with_handle(orig_b, AnnotationHandle::BottomRight, br_pos, point(br_pos.x + px(40.0), br_pos.y + px(30.0)));
+    text_corner.resize_with_handle(orig_b, AnnotationHandle::BottomRight, br_pos, point(br_pos.x + px(orig_w), br_pos.y + px(orig_h)));
     assert!(text_corner.font_size().unwrap() > 20.0, "Font size must scale up when dragging corner handle");
 }
 
@@ -1248,7 +1231,6 @@ fn test_history_pop_snapshot_if_unchanged() {
         text: "Initial".into(),
         color: gpui::rgb(0xFFFFFF),
         font_size: 16.0,
-        box_width: None,
     };
     history.push_annotation(text);
     assert_eq!(history.annotations.len(), 1);
