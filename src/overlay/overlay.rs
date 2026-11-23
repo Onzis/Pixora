@@ -3644,31 +3644,18 @@ impl Render for ScreenOverlayView {
                             this.set_tooltip(t(lang, "Save to PNG (Ctrl+S)", "Сохранить в PNG (Ctrl+S)"), 637.0, *hovered, cx);
                         }),
                     ))
-                    .child(
-                        div()
-                            .id("btn-copy")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(32.0))
-                            .rounded_lg()
-                            .bg(theme.accent)
-                            .hover(|s| s.bg(theme.accent_hover))
-                            .cursor_pointer()
-                            .shadow_md()
-                            .on_hover(cx.listener(move |this, hovered, _, cx| {
-                                this.set_tooltip(t(lang, "Copy to Clipboard (Ctrl+C)", "Копировать в буфер (Ctrl+C)"), 696.0, *hovered, cx);
-                            }))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.do_copy(window, cx);
-                            }))
-                            .child(
-                                svg()
-                                    .path("icons/copy.svg")
-                                    .size(px(16.0))
-                                    .text_color(rgb(0xFFFFFF)),
-                            ),
-                    )
+                    .child(render_toolbar_button(
+                        "btn-copy".into(),
+                        "icons/copy.svg",
+                        false,
+                        theme_ref,
+                        cx.listener(|this, _, window, cx| {
+                            this.do_copy(window, cx);
+                        }),
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Copy to Clipboard (Ctrl+C)", "Копировать в буфер (Ctrl+C)"), 673.0, *hovered, cx);
+                        }),
+                    ))
                     .child(
                         div()
                             .id("btn-close")
