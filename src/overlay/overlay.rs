@@ -3065,43 +3065,33 @@ impl Render for ScreenOverlayView {
                                 ),
                         )
                         .child(render_toolbar_divider(theme_ref))
-                        // Quick Border Color Swatches
-                        .child(render_color_swatch(
-                            "swatch-spot-red".into(),
-                            theme.palette_red,
-                            current_color == theme.palette_red,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.stroke_color = this.theme.palette_red;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
-                        .child(render_color_swatch(
-                            "swatch-spot-yellow".into(),
-                            theme.palette_yellow,
-                            current_color == theme.palette_yellow,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.stroke_color = this.theme.palette_yellow;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
-                        .child(render_color_swatch(
-                            "swatch-spot-blue".into(),
-                            theme.palette_blue,
-                            current_color == theme.palette_blue,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.stroke_color = this.theme.palette_blue;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
+                        // Quick Border Color Swatches: White, Black, Red
                         .child(render_color_swatch(
                             "swatch-spot-white".into(),
                             theme.palette_white,
                             current_color == theme.palette_white,
                             cx.listener(|this, _, _, cx| {
                                 this.tool_props.stroke_color = this.theme.palette_white;
+                                this.sync_and_save_tool_props();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(render_color_swatch(
+                            "swatch-spot-black".into(),
+                            theme.palette_black,
+                            current_color == theme.palette_black,
+                            cx.listener(|this, _, _, cx| {
+                                this.tool_props.stroke_color = this.theme.palette_black;
+                                this.sync_and_save_tool_props();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(render_color_swatch(
+                            "swatch-spot-red".into(),
+                            theme.palette_red,
+                            current_color == theme.palette_red,
+                            cx.listener(|this, _, _, cx| {
+                                this.tool_props.stroke_color = this.theme.palette_red;
                                 this.sync_and_save_tool_props();
                                 cx.notify();
                             }),
@@ -3160,83 +3150,33 @@ impl Render for ScreenOverlayView {
                         .border_1()
                         .border_color(theme.border_subtle)
                         .shadow_xl()
-                        // 8 Quick CleanShot Colors
-                        .child(render_color_swatch(
-                            "swatch-red".into(),
-                            theme.palette_red,
-                            current_color == theme.palette_red,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.stroke_color = this.theme.palette_red;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
-                        .child(render_color_swatch(
-                            "swatch-orange".into(),
-                            theme.palette_orange,
-                            current_color == theme.palette_orange,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.stroke_color = this.theme.palette_orange;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
-                        .child(render_color_swatch(
-                            "swatch-yellow".into(),
-                            theme.palette_yellow,
-                            current_color == theme.palette_yellow,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.stroke_color = this.theme.palette_yellow;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
-                        .child(render_color_swatch(
-                            "swatch-green".into(),
-                            theme.palette_green,
-                            current_color == theme.palette_green,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.stroke_color = this.theme.palette_green;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
-                        .child(render_color_swatch(
-                            "swatch-cyan".into(),
-                            theme.palette_cyan,
-                            current_color == theme.palette_cyan,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.stroke_color = this.theme.palette_cyan;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
-                        .child(render_color_swatch(
-                            "swatch-blue".into(),
-                            theme.palette_blue,
-                            current_color == theme.palette_blue,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.stroke_color = this.theme.palette_blue;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
-                        .child(render_color_swatch(
-                            "swatch-purple".into(),
-                            theme.palette_purple,
-                            current_color == theme.palette_purple,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.stroke_color = this.theme.palette_purple;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
+                        // Quick Color Swatches: White, Black, Red
                         .child(render_color_swatch(
                             "swatch-white".into(),
                             theme.palette_white,
                             current_color == theme.palette_white,
                             cx.listener(|this, _, _, cx| {
                                 this.tool_props.stroke_color = this.theme.palette_white;
+                                this.sync_and_save_tool_props();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(render_color_swatch(
+                            "swatch-black".into(),
+                            theme.palette_black,
+                            current_color == theme.palette_black,
+                            cx.listener(|this, _, _, cx| {
+                                this.tool_props.stroke_color = this.theme.palette_black;
+                                this.sync_and_save_tool_props();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(render_color_swatch(
+                            "swatch-red".into(),
+                            theme.palette_red,
+                            current_color == theme.palette_red,
+                            cx.listener(|this, _, _, cx| {
+                                this.tool_props.stroke_color = this.theme.palette_red;
                                 this.sync_and_save_tool_props();
                                 cx.notify();
                             }),
