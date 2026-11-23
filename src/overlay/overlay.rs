@@ -2407,14 +2407,15 @@ impl Render for ScreenOverlayView {
             for ann in &self.history.annotations {
                 if let Annotation::Text { origin, text, color, font_size } = ann {
                     let lines: Vec<&str> = text.lines().collect();
+                    let pad = (*font_size * 0.08).clamp(4.0, 10.0);
                     let mut container = div()
                         .absolute()
-                        .left(origin.x)
-                        .top(origin.y)
+                        .left(origin.x + px(pad))
+                        .top(origin.y + px(pad - 0.20 * font_size))
                         .text_size(px(*font_size))
                         .text_color(*color)
                         .font_weight(gpui::FontWeight::BOLD)
-                        .line_height(px(*font_size * 1.25))
+                        .line_height(px(*font_size * 1.20))
                         .flex()
                         .flex_col();
 

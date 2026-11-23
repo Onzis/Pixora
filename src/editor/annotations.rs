@@ -215,9 +215,12 @@ pub fn text_bounds_dimensions(text: &str, font_size: f32) -> (f32, f32) {
             max_line_w = lw;
         }
     }
-    let w = max_line_w.max(font_size * 0.5);
+    let pad = (font_size * 0.08).clamp(4.0, 10.0);
+    let w = max_line_w.max(font_size * 0.5) + 2.0 * pad;
     let line_count = lines.len().max(1) as f32;
-    let h = line_count * font_size * 1.25;
+    let line_step = font_size * 1.20;
+    let text_h = (line_count - 1.0) * line_step + font_size * 1.15;
+    let h = text_h + 2.0 * pad;
     (w, h)
 }
 
@@ -337,7 +340,7 @@ impl Annotation {
         let oh = f32::from(orig_bounds.size.height);
 
         match self {
-            Annotation::Text { origin, font_size, .. } => {
+            Annotation::Text { origin, font_size, text, .. } => {
                 let orig_fs = *font_size;
                 match handle {
                     AnnotationHandle::Right => {
@@ -348,8 +351,8 @@ impl Annotation {
                     AnnotationHandle::Left => {
                         let ratio = ((ow - dx) / ow.max(1.0)).clamp(0.1, 8.0);
                         let target_fs = (orig_fs * ratio).clamp(10.0, 96.0);
-                        let actual_ratio = target_fs / orig_fs;
-                        let new_x = (ox + ow) - ow * actual_ratio;
+                        let (new_w, _) = text_bounds_dimensions(text, target_fs);
+                        let new_x = (ox + ow) - new_w;
                         *font_size = target_fs;
                         *origin = point(px(new_x), px(oy));
                     }
@@ -361,8 +364,8 @@ impl Annotation {
                     AnnotationHandle::Top => {
                         let ratio = ((oh - dy) / oh.max(1.0)).clamp(0.1, 8.0);
                         let target_fs = (orig_fs * ratio).clamp(10.0, 96.0);
-                        let actual_ratio = target_fs / orig_fs;
-                        let new_y = (oy + oh) - oh * actual_ratio;
+                        let (_, new_h) = text_bounds_dimensions(text, target_fs);
+                        let new_y = (oy + oh) - new_h;
                         *font_size = target_fs;
                         *origin = point(px(ox), px(new_y));
                     }
@@ -378,8 +381,8 @@ impl Annotation {
                         let ratio_h = (oh + dy) / oh.max(1.0);
                         let ratio = if dx.abs() >= dy.abs() { ratio_w } else { ratio_h }.clamp(0.1, 8.0);
                         let target_fs = (orig_fs * ratio).clamp(10.0, 96.0);
-                        let actual_ratio = target_fs / orig_fs;
-                        let new_x = (ox + ow) - ow * actual_ratio;
+                        let (new_w, _) = text_bounds_dimensions(text, target_fs);
+                        let new_x = (ox + ow) - new_w;
                         *font_size = target_fs;
                         *origin = point(px(new_x), px(oy));
                     }
@@ -388,8 +391,8 @@ impl Annotation {
                         let ratio_h = (oh - dy) / oh.max(1.0);
                         let ratio = if dx.abs() >= dy.abs() { ratio_w } else { ratio_h }.clamp(0.1, 8.0);
                         let target_fs = (orig_fs * ratio).clamp(10.0, 96.0);
-                        let actual_ratio = target_fs / orig_fs;
-                        let new_y = (oy + oh) - oh * actual_ratio;
+                        let (_, new_h) = text_bounds_dimensions(text, target_fs);
+                        let new_y = (oy + oh) - new_h;
                         *font_size = target_fs;
                         *origin = point(px(ox), px(new_y));
                     }
@@ -398,9 +401,9 @@ impl Annotation {
                         let ratio_h = (oh - dy) / oh.max(1.0);
                         let ratio = if dx.abs() >= dy.abs() { ratio_w } else { ratio_h }.clamp(0.1, 8.0);
                         let target_fs = (orig_fs * ratio).clamp(10.0, 96.0);
-                        let actual_ratio = target_fs / orig_fs;
-                        let new_x = (ox + ow) - ow * actual_ratio;
-                        let new_y = (oy + oh) - oh * actual_ratio;
+                        let (new_w, new_h) = text_bounds_dimensions(text, target_fs);
+                        let new_x = (ox + ow) - new_w;
+                        let new_y = (oy + oh) - new_h;
                         *font_size = target_fs;
                         *origin = point(px(new_x), px(new_y));
                     }

@@ -256,14 +256,15 @@ pub fn render_annotations_to_image(
                 font_size,
             } => {
                 let lines: Vec<&str> = text.lines().collect();
-                let line_h = *font_size * 1.25;
+                let line_h = *font_size * 1.20;
                 let scale = ((*font_size / 9.0).round() as usize).max(1);
+                let pad = (*font_size * 0.08).clamp(4.0, 10.0);
                 for (i, line) in lines.iter().enumerate() {
                     let y_offset = i as f32 * line_h;
                     draw_simple_text(
                         image,
-                        f32::from(origin.x) - offset_x,
-                        f32::from(origin.y) - offset_y + y_offset,
+                        f32::from(origin.x) + pad - offset_x,
+                        f32::from(origin.y) + pad - offset_y + y_offset,
                         line,
                         *color,
                         scale,
