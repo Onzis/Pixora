@@ -28,7 +28,7 @@ use crate::overlay::selection::{ResizeHandle, SelectionDragMode, SelectionState}
 use crate::overlay::toolbar::{
     HoveredTooltip, TOOLBAR_MAIN_HEIGHT, TOOLBAR_TOTAL_HEIGHT, TOOLBAR_WIDTH,
     calculate_toolbar_position, generate_gradient_bitmap, generate_hue_strip_bitmap, hsv_to_rgb,
-    parse_hex_color, render_blur_preset, render_color_swatch, render_toolbar_button,
+    parse_hex_color, render_color_swatch, render_toolbar_button,
     render_toolbar_divider, render_toolbar_dropdown_button, render_toolbar_text_button, rgb_to_cmyk, rgb_to_hsl, rgb_to_hsv,
 };
 use crate::system::windows::{PhysicalRect, play_capture_sound};
@@ -2835,29 +2835,7 @@ impl Render for ScreenOverlayView {
                                         }))
                                         .child(svg().path("icons/plus.svg").size(px(12.0)).text_color(theme.text_secondary)),
                                 ),
-                        )
-                        .child(render_toolbar_divider(theme_ref))
-                        // Presets: 6px Soft, 12px Medium, 24px Strong, 36px Heavy
-                        .child(render_blur_preset("preset-b-6".into(), t(lang, "6px Soft", "6px Мягкое"), self.tool_props.blur_radius == 6, cx.listener(|this, _, _, cx| {
-                            this.tool_props.blur_radius = 6;
-                            this.sync_and_save_tool_props();
-                            cx.notify();
-                        })))
-                        .child(render_blur_preset("preset-b-12".into(), t(lang, "12px Medium", "12px Среднее"), self.tool_props.blur_radius == 12, cx.listener(|this, _, _, cx| {
-                            this.tool_props.blur_radius = 12;
-                            this.sync_and_save_tool_props();
-                            cx.notify();
-                        })))
-                        .child(render_blur_preset("preset-b-24".into(), t(lang, "24px Strong", "24px Сильное"), self.tool_props.blur_radius == 24, cx.listener(|this, _, _, cx| {
-                            this.tool_props.blur_radius = 24;
-                            this.sync_and_save_tool_props();
-                            cx.notify();
-                        })))
-                        .child(render_blur_preset("preset-b-36".into(), t(lang, "36px Heavy", "36px Максимальное"), self.tool_props.blur_radius == 36, cx.listener(|this, _, _, cx| {
-                            this.tool_props.blur_radius = 36;
-                            this.sync_and_save_tool_props();
-                            cx.notify();
-                        }))),
+                        ),
                 );
             } else if active_tool == ToolKind::Pixelate {
                 toolbar_col = toolbar_col.child(
@@ -2971,29 +2949,7 @@ impl Render for ScreenOverlayView {
                                         }))
                                         .child(svg().path("icons/plus.svg").size(px(12.0)).text_color(theme.text_secondary)),
                                 ),
-                        )
-                        .child(render_toolbar_divider(theme_ref))
-                        // Presets: 6px Fine, 10px Medium, 16px Coarse, 24px Heavy
-                        .child(render_blur_preset("preset-p-6".into(), t(lang, "6px Fine", "6px Мелкая"), self.tool_props.pixelate_block == 6, cx.listener(|this, _, _, cx| {
-                            this.tool_props.pixelate_block = 6;
-                            this.sync_and_save_tool_props();
-                            cx.notify();
-                        })))
-                        .child(render_blur_preset("preset-p-10".into(), t(lang, "10px Medium", "10px Средняя"), self.tool_props.pixelate_block == 10, cx.listener(|this, _, _, cx| {
-                            this.tool_props.pixelate_block = 10;
-                            this.sync_and_save_tool_props();
-                            cx.notify();
-                        })))
-                        .child(render_blur_preset("preset-p-16".into(), t(lang, "16px Coarse", "16px Крупная"), self.tool_props.pixelate_block == 16, cx.listener(|this, _, _, cx| {
-                            this.tool_props.pixelate_block = 16;
-                            this.sync_and_save_tool_props();
-                            cx.notify();
-                        })))
-                        .child(render_blur_preset("preset-p-24".into(), t(lang, "24px Heavy", "24px Максимальная"), self.tool_props.pixelate_block == 24, cx.listener(|this, _, _, cx| {
-                            this.tool_props.pixelate_block = 24;
-                            this.sync_and_save_tool_props();
-                            cx.notify();
-                        }))),
+                        ),
                 );
             } else if active_tool == ToolKind::Spotlight {
                 toolbar_col = toolbar_col.child(
@@ -3108,28 +3064,6 @@ impl Render for ScreenOverlayView {
                                         .child(svg().path("icons/plus.svg").size(px(12.0)).text_color(theme.text_secondary)),
                                 ),
                         )
-                        .child(render_toolbar_divider(theme_ref))
-                        // Presets: 0px None, 2px Thin, 4px Medium, 8px Thick
-                        .child(render_blur_preset("preset-spot-0".into(), t(lang, "0px None", "0px Без рамки"), (self.tool_props.stroke_width - 0.0).abs() < 0.5, cx.listener(|this, _, _, cx| {
-                            this.tool_props.stroke_width = 0.0;
-                            this.sync_and_save_tool_props();
-                            cx.notify();
-                        })))
-                        .child(render_blur_preset("preset-spot-2".into(), t(lang, "2px Thin", "2px Тонкая"), (self.tool_props.stroke_width - 2.0).abs() < 0.5, cx.listener(|this, _, _, cx| {
-                            this.tool_props.stroke_width = 2.0;
-                            this.sync_and_save_tool_props();
-                            cx.notify();
-                        })))
-                        .child(render_blur_preset("preset-spot-4".into(), t(lang, "4px Medium", "4px Средняя"), (self.tool_props.stroke_width - 4.0).abs() < 0.5, cx.listener(|this, _, _, cx| {
-                            this.tool_props.stroke_width = 4.0;
-                            this.sync_and_save_tool_props();
-                            cx.notify();
-                        })))
-                        .child(render_blur_preset("preset-spot-8".into(), t(lang, "8px Thick", "8px Толстая"), (self.tool_props.stroke_width - 8.0).abs() < 0.5, cx.listener(|this, _, _, cx| {
-                            this.tool_props.stroke_width = 8.0;
-                            this.sync_and_save_tool_props();
-                            cx.notify();
-                        })))
                         .child(render_toolbar_divider(theme_ref))
                         // Quick Border Color Swatches
                         .child(render_color_swatch(
