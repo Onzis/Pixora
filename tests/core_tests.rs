@@ -274,7 +274,6 @@ fn test_render_all_annotations_to_image() {
                 origin: point(px(10.0), px(10.0)),
                 size: size(px(40.0), px(40.0)),
             },
-            shape: pixora::editor::properties::SpotlightShape::Rectangle,
             color: rgb(0xFF453A),
             width: 2.0,
             dim_opacity: 0.60,
@@ -323,7 +322,6 @@ fn test_svg_asset_source_loads_all_icons() {
 
 #[test]
 fn test_spotlight_dimming_and_cutout() {
-    use pixora::editor::properties::SpotlightShape;
     use pixora::image::processing::{apply_spotlights, SpotlightRegion};
 
     // Create a 100x100 image with constant value 200
@@ -335,7 +333,6 @@ fn test_spotlight_dimming_and_cutout() {
             y: 20.0,
             width: 30.0,
             height: 30.0,
-            shape: SpotlightShape::Rectangle,
             border_color: rgb(0xFF0000),
             border_width: 0.0,
             dim_opacity: 0.60,

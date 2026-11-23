@@ -16,7 +16,7 @@ use crate::config::AppConfig;
 use crate::editor::annotations::{Annotation, calculate_arrow_geometry};
 use crate::editor::canvas::render_annotations_to_image;
 use crate::editor::history::EditHistory;
-use crate::editor::properties::{SpotlightShape, ToolProperties};
+use crate::editor::properties::ToolProperties;
 use crate::editor::tools::ToolKind;
 use crate::i18n::t;
 use crate::image::clipboard::{copy_image_to_clipboard, copy_text_to_clipboard};
@@ -165,7 +165,6 @@ impl ScreenOverlayView {
             font_size: config.default_font_size.clamp(10.0, 96.0),
             blur_radius: config.blur_radius.clamp(2, 99),
             pixelate_block: config.pixelate_block.clamp(2, 99),
-            spotlight_shape: SpotlightShape::Rectangle,
             spotlight_dim: 0.60,
             is_filled: false,
             current_badge_number: 1,
@@ -412,7 +411,7 @@ impl ScreenOverlayView {
         let spotlights: Vec<crate::image::processing::SpotlightRegion> = self.history.annotations
             .iter()
             .filter_map(|ann| {
-                if let Annotation::Spotlight { bounds, shape, color, width, dim_opacity } = ann {
+                if let Annotation::Spotlight { bounds, color, width, dim_opacity } = ann {
                     let sx = f32::from(bounds.origin.x);
                     let sy = f32::from(bounds.origin.y);
                     let sw = f32::from(bounds.size.width);
@@ -424,7 +423,6 @@ impl ScreenOverlayView {
                         y: norm_y,
                         width: norm_w,
                         height: norm_h,
-                        shape: *shape,
                         border_color: *color,
                         border_width: *width,
                         dim_opacity: *dim_opacity,
@@ -1152,7 +1150,6 @@ impl ScreenOverlayView {
                             origin: p,
                             size: size(px(0.0), px(0.0)),
                         },
-                        shape: self.tool_props.spotlight_shape,
                         color: self.tool_props.stroke_color,
                         width: self.tool_props.stroke_width,
                         dim_opacity: self.tool_props.spotlight_dim,
@@ -2029,7 +2026,7 @@ impl Render for ScreenOverlayView {
                                 window.paint_quad(fill(*bounds, rgba(0x30D15822)));
                                 window.paint_quad(outline(*bounds, rgba(0x30D15888), BorderStyle::Dashed));
                             }
-                            Annotation::Spotlight { bounds, shape, color, width, dim_opacity } => {
+                            Annotation::Spotlight { bounds, color, width: _, dim_opacity } => {
                                 let sel = selection.bounds;
                                 let bx = bounds.origin.x;
                                 let by = bounds.origin.y;
@@ -2042,79 +2039,38 @@ impl Render for ScreenOverlayView {
 
                                 let dim_c = gpui::Rgba { r: 0.0, g: 0.0, b: 0.0, a: *dim_opacity };
 
-                                if *shape == SpotlightShape::Rectangle {
-                                    if min_y > sel.origin.y {
-                                        window.paint_quad(fill(
-                                            Bounds { origin: sel.origin, size: size(sel.size.width, min_y - sel.origin.y) },
-                                            dim_c,
-                                        ));
-                                    }
-                                    let sel_bottom = sel.origin.y + sel.size.height;
-                                    if max_y < sel_bottom {
-                                        window.paint_quad(fill(
-                                            Bounds { origin: point(sel.origin.x, max_y), size: size(sel.size.width, sel_bottom - max_y) },
-                                            dim_c,
-                                        ));
-                                    }
-                                    if min_x > sel.origin.x {
-                                        window.paint_quad(fill(
-                                            Bounds { origin: point(sel.origin.x, min_y), size: size(min_x - sel.origin.x, max_y - min_y) },
-                                            dim_c,
-                                        ));
-                                    }
-                                    let sel_right = sel.origin.x + sel.size.width;
-                                    if max_x < sel_right {
-                                        window.paint_quad(fill(
-                                            Bounds { origin: point(max_x, min_y), size: size(sel_right - max_x, max_y - min_y) },
-                                            dim_c,
-                                        ));
-                                    }
-
-                                    let norm_bounds = Bounds {
-                                        origin: point(min_x, min_y),
-                                        size: size(max_x - min_x, max_y - min_y),
-                                    };
-                                    window.paint_quad(outline(norm_bounds, *color, BorderStyle::Solid));
-                                } else {
-                                    let norm_bounds = Bounds {
-                                        origin: point(min_x, min_y),
-                                        size: size(max_x - min_x, max_y - min_y),
-                                    };
-                                    let cx = f32::from(norm_bounds.origin.x) + f32::from(norm_bounds.size.width) / 2.0;
-                                    let cy = f32::from(norm_bounds.origin.y) + f32::from(norm_bounds.size.height) / 2.0;
-                                    let rx = (f32::from(norm_bounds.size.width) / 2.0).abs();
-                                    let ry = (f32::from(norm_bounds.size.height) / 2.0).abs();
-                                    if rx > 1.0 && ry > 1.0 {
-                                        let kx = rx * 0.55228475;
-                                        let ky = ry * 0.55228475;
-                                        let mut pb = PathBuilder::stroke(px(*width));
-                                        pb.move_to(point(px(cx), px(cy - ry)));
-                                        pb.cubic_bezier_to(
-                                            point(px(cx + rx), px(cy)),
-                                            point(px(cx + kx), px(cy - ry)),
-                                            point(px(cx + rx), px(cy - ky)),
-                                        );
-                                        pb.cubic_bezier_to(
-                                            point(px(cx), px(cy + ry)),
-                                            point(px(cx + rx), px(cy + ky)),
-                                            point(px(cx + kx), px(cy + ry)),
-                                        );
-                                        pb.cubic_bezier_to(
-                                            point(px(cx - rx), px(cy)),
-                                            point(px(cx - kx), px(cy + ry)),
-                                            point(px(cx - rx), px(cy + ky)),
-                                        );
-                                        pb.cubic_bezier_to(
-                                            point(px(cx), px(cy - ry)),
-                                            point(px(cx - rx), px(cy - ky)),
-                                            point(px(cx - kx), px(cy - ry)),
-                                        );
-                                        if let Ok(path) = pb.build() {
-                                            window.paint_path(path, *color);
-                                        }
-                                    }
-                                    window.paint_quad(outline(norm_bounds, rgba(0xFFFFFF44), BorderStyle::Dashed));
+                                if min_y > sel.origin.y {
+                                    window.paint_quad(fill(
+                                        Bounds { origin: sel.origin, size: size(sel.size.width, min_y - sel.origin.y) },
+                                        dim_c,
+                                    ));
                                 }
+                                let sel_bottom = sel.origin.y + sel.size.height;
+                                if max_y < sel_bottom {
+                                    window.paint_quad(fill(
+                                        Bounds { origin: point(sel.origin.x, max_y), size: size(sel.size.width, sel_bottom - max_y) },
+                                        dim_c,
+                                    ));
+                                }
+                                if min_x > sel.origin.x {
+                                    window.paint_quad(fill(
+                                        Bounds { origin: point(sel.origin.x, min_y), size: size(min_x - sel.origin.x, max_y - min_y) },
+                                        dim_c,
+                                    ));
+                                }
+                                let sel_right = sel.origin.x + sel.size.width;
+                                if max_x < sel_right {
+                                    window.paint_quad(fill(
+                                        Bounds { origin: point(max_x, min_y), size: size(sel_right - max_x, max_y - min_y) },
+                                        dim_c,
+                                    ));
+                                }
+
+                                let norm_bounds = Bounds {
+                                    origin: point(min_x, min_y),
+                                    size: size(max_x - min_x, max_y - min_y),
+                                };
+                                window.paint_quad(outline(norm_bounds, *color, BorderStyle::Solid));
                             }
                             _ => {}
                         }
@@ -3041,7 +2997,6 @@ impl Render for ScreenOverlayView {
                 );
             } else if active_tool == ToolKind::Spotlight {
                 let current_dim = self.tool_props.spotlight_dim;
-                let current_shape = self.tool_props.spotlight_shape;
                 toolbar_col = toolbar_col.child(
                     div()
                         .flex()
@@ -3065,30 +3020,8 @@ impl Render for ScreenOverlayView {
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .text_color(theme.text_secondary)
-                                .child(t(lang, "Spotlight:", "Фокус:")),
+                                .child(t(lang, "Dimming:", "Затемнение:")),
                         )
-                        // Shape selector
-                        .child(render_blur_preset(
-                            "spotlight-shape-rect".into(),
-                            t(lang, "Rectangle", "Прямоугольник"),
-                            current_shape == SpotlightShape::Rectangle,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.spotlight_shape = SpotlightShape::Rectangle;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
-                        .child(render_blur_preset(
-                            "spotlight-shape-ellipse".into(),
-                            t(lang, "Ellipse", "Эллипс"),
-                            current_shape == SpotlightShape::Ellipse,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.spotlight_shape = SpotlightShape::Ellipse;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
-                        .child(render_toolbar_divider(theme_ref))
                         // Dimming Presets
                         .child(render_blur_preset(
                             "spotlight-dim-40".into(),

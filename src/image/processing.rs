@@ -1,5 +1,4 @@
 use image::{Rgba, RgbaImage};
-use crate::editor::properties::SpotlightShape;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpotlightRegion {
@@ -7,7 +6,6 @@ pub struct SpotlightRegion {
     pub y: f32,
     pub width: f32,
     pub height: f32,
-    pub shape: SpotlightShape,
     pub border_color: gpui::Rgba,
     pub border_width: f32,
     pub dim_opacity: f32,
@@ -44,67 +42,49 @@ pub fn apply_spotlights(
                 let max_spot_x = spot.x + spot.width;
                 let max_spot_y = spot.y + spot.height;
 
-                match spot.shape {
-                    SpotlightShape::Rectangle => {
-                        if px >= min_x && px <= max_spot_x && py >= min_y && py <= max_spot_y {
-                            let cr = corner_radius.min(spot.width / 2.0).min(spot.height / 2.0).max(0.0);
-                            if cr > 0.0 {
-                                let in_top_left = px < min_x + cr && py < min_y + cr;
-                                let in_top_right = px > max_spot_x - cr && py < min_y + cr;
-                                let in_bottom_left = px < min_x + cr && py > max_spot_y - cr;
-                                let in_bottom_right = px > max_spot_x - cr && py > max_spot_y - cr;
+                if px >= min_x && px <= max_spot_x && py >= min_y && py <= max_spot_y {
+                    let cr = corner_radius.min(spot.width / 2.0).min(spot.height / 2.0).max(0.0);
+                    if cr > 0.0 {
+                        let in_top_left = px < min_x + cr && py < min_y + cr;
+                        let in_top_right = px > max_spot_x - cr && py < min_y + cr;
+                        let in_bottom_left = px < min_x + cr && py > max_spot_y - cr;
+                        let in_bottom_right = px > max_spot_x - cr && py > max_spot_y - cr;
 
-                                if in_top_left {
-                                    let dx = px - (min_x + cr);
-                                    let dy = py - (min_y + cr);
-                                    if dx * dx + dy * dy <= cr * cr {
-                                        inside_any = true;
-                                        break;
-                                    }
-                                } else if in_top_right {
-                                    let dx = px - (max_spot_x - cr);
-                                    let dy = py - (min_y + cr);
-                                    if dx * dx + dy * dy <= cr * cr {
-                                        inside_any = true;
-                                        break;
-                                    }
-                                } else if in_bottom_left {
-                                    let dx = px - (min_x + cr);
-                                    let dy = py - (max_spot_y - cr);
-                                    if dx * dx + dy * dy <= cr * cr {
-                                        inside_any = true;
-                                        break;
-                                    }
-                                } else if in_bottom_right {
-                                    let dx = px - (max_spot_x - cr);
-                                    let dy = py - (max_spot_y - cr);
-                                    if dx * dx + dy * dy <= cr * cr {
-                                        inside_any = true;
-                                        break;
-                                    }
-                                } else {
-                                    inside_any = true;
-                                    break;
-                                }
-                            } else {
+                        if in_top_left {
+                            let dx = px - (min_x + cr);
+                            let dy = py - (min_y + cr);
+                            if dx * dx + dy * dy <= cr * cr {
                                 inside_any = true;
                                 break;
                             }
-                        }
-                    }
-                    SpotlightShape::Ellipse => {
-                        let cx = (min_x + max_spot_x) / 2.0;
-                        let cy = (min_y + max_spot_y) / 2.0;
-                        let rx = (max_spot_x - min_x) / 2.0;
-                        let ry = (max_spot_y - min_y) / 2.0;
-                        if rx > 0.0 && ry > 0.0 {
-                            let norm_x = (px - cx) / rx;
-                            let norm_y = (py - cy) / ry;
-                            if norm_x * norm_x + norm_y * norm_y <= 1.0 {
+                        } else if in_top_right {
+                            let dx = px - (max_spot_x - cr);
+                            let dy = py - (min_y + cr);
+                            if dx * dx + dy * dy <= cr * cr {
                                 inside_any = true;
                                 break;
                             }
+                        } else if in_bottom_left {
+                            let dx = px - (min_x + cr);
+                            let dy = py - (max_spot_y - cr);
+                            if dx * dx + dy * dy <= cr * cr {
+                                inside_any = true;
+                                break;
+                            }
+                        } else if in_bottom_right {
+                            let dx = px - (max_spot_x - cr);
+                            let dy = py - (max_spot_y - cr);
+                            if dx * dx + dy * dy <= cr * cr {
+                                inside_any = true;
+                                break;
+                            }
+                        } else {
+                            inside_any = true;
+                            break;
                         }
+                    } else {
+                        inside_any = true;
+                        break;
                     }
                 }
             }
@@ -121,32 +101,16 @@ pub fn apply_spotlights(
     // 2. Draw crisp border around each spotlight region
     for spot in spotlights {
         if spot.border_width > 0.0 {
-            match spot.shape {
-                SpotlightShape::Rectangle => {
-                    crate::editor::canvas::draw_rounded_rectangle(
-                        image,
-                        spot.x,
-                        spot.y,
-                        spot.width,
-                        spot.height,
-                        corner_radius,
-                        spot.border_width,
-                        spot.border_color,
-                    );
-                }
-                SpotlightShape::Ellipse => {
-                    crate::editor::canvas::draw_ellipse(
-                        image,
-                        spot.x,
-                        spot.y,
-                        spot.width,
-                        spot.height,
-                        spot.border_width,
-                        spot.border_color,
-                        false,
-                    );
-                }
-            }
+            crate::editor::canvas::draw_rounded_rectangle(
+                image,
+                spot.x,
+                spot.y,
+                spot.width,
+                spot.height,
+                corner_radius,
+                spot.border_width,
+                spot.border_color,
+            );
         }
     }
 }

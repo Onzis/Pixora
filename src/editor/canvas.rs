@@ -14,7 +14,7 @@ pub fn render_annotations_to_image(
     let spotlights: Vec<crate::image::processing::SpotlightRegion> = annotations
         .iter()
         .filter_map(|ann| {
-            if let Annotation::Spotlight { bounds, shape, color, width, dim_opacity } = ann {
+            if let Annotation::Spotlight { bounds, color, width, dim_opacity } = ann {
                 let sx = f32::from(bounds.origin.x) - offset_x;
                 let sy = f32::from(bounds.origin.y) - offset_y;
                 let sw = f32::from(bounds.size.width);
@@ -26,7 +26,6 @@ pub fn render_annotations_to_image(
                     y: norm_y,
                     width: norm_w,
                     height: norm_h,
-                    shape: *shape,
                     border_color: *color,
                     border_width: *width,
                     dim_opacity: *dim_opacity,
