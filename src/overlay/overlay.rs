@@ -14,7 +14,7 @@ use crate::capture::region::crop_region;
 use crate::capture::screen::ScreenCapture;
 use crate::config::AppConfig;
 use crate::editor::annotations::{
-    Annotation, AnnotationHandle, calculate_arrow_geometry, resize_bounds_with_handle,
+    Annotation, AnnotationHandle, calculate_arrow_geometry,
 };
 use crate::editor::canvas::render_annotations_to_image;
 use crate::editor::history::EditHistory;
@@ -1003,8 +1003,9 @@ impl ScreenOverlayView {
         if self.selection.is_active {
             if let Some(sel_idx) = self.selected_annotation {
                 if sel_idx < self.history.annotations.len() {
-                    if let Some(h) = self.history.annotations[sel_idx].hit_test_handle(p, px(10.0)) {
+                    if let Some(h) = self.history.annotations[sel_idx].hit_test_handle(p, px(14.0)) {
                         self.commit_text_input();
+                        self.history.snapshot();
                         let ann = self.history.annotations[sel_idx].clone();
                         match h {
                             AnnotationHandle::Endpoint(is_start) => {
@@ -1071,7 +1072,8 @@ impl ScreenOverlayView {
                 if let Some(f) = ann.is_filled() {
                     self.tool_props.is_filled = f;
                 }
-                if let Some(h) = ann.hit_test_handle(p, px(10.0)) {
+                self.history.snapshot();
+                if let Some(h) = ann.hit_test_handle(p, px(14.0)) {
                     match h {
                         AnnotationHandle::Endpoint(is_start) => {
                             self.annotation_drag_mode = AnnotationDragMode::DraggingEndpoint {
@@ -1413,9 +1415,11 @@ impl ScreenOverlayView {
                             return;
                         }
                         AnnotationDragMode::Resizing { handle, start_mouse, orig_annotation, orig_bounds } => {
-                            let new_bounds = resize_bounds_with_handle(*orig_bounds, *handle, *start_mouse, p);
                             let mut modified = orig_annotation.clone();
-                            modified.set_bounds(new_bounds);
+                            modified.resize_with_handle(*orig_bounds, *handle, *start_mouse, p);
+                            if let Some(fs) = modified.font_size() {
+                                self.tool_props.font_size = fs;
+                            }
                             self.history.annotations[idx] = modified.clone();
                             if matches!(modified, Annotation::Blur { .. } | Annotation::Pixelate { .. } | Annotation::Spotlight { .. }) {
                                 self.rebuild_render_image();
@@ -1541,7 +1545,7 @@ impl ScreenOverlayView {
         }
 
         if self.annotation_drag_mode != AnnotationDragMode::None {
-            self.history.snapshot();
+            self.history.pop_last_snapshot_if_unchanged();
             self.annotation_drag_mode = AnnotationDragMode::None;
             if let Some(idx) = self.selected_annotation {
                 if idx < self.history.annotations.len() {
@@ -1918,7 +1922,7 @@ impl Render for ScreenOverlayView {
             if let Some(sel_idx) = self.selected_annotation {
                 if sel_idx < self.history.annotations.len() {
                     let ann = &self.history.annotations[sel_idx];
-                    if let Some(h) = ann.hit_test_handle(self.cursor_pos, px(10.0)) {
+                    if let Some(h) = ann.hit_test_handle(self.cursor_pos, px(14.0)) {
                         match h {
                             AnnotationHandle::Endpoint(_) => CursorStyle::Crosshair,
                             AnnotationHandle::Top | AnnotationHandle::Bottom => CursorStyle::ResizeUpDown,

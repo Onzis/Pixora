@@ -22,6 +22,14 @@ impl EditHistory {
         self.annotations.push(annotation);
     }
 
+    pub fn pop_last_snapshot_if_unchanged(&mut self) {
+        if let Some(last) = self.undo_stack.last() {
+            if last == &self.annotations {
+                self.undo_stack.pop();
+            }
+        }
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo_stack.is_empty()
     }

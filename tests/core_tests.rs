@@ -1160,6 +1160,95 @@ fn test_annotation_property_updates() {
     assert_eq!(text.font_size(), Some(28.0));
 }
 
+#[test]
+fn test_text_horizontal_resizing_and_handles() {
+    let mut text = Annotation::Text {
+        origin: point(px(50.0), px(50.0)),
+        text: "траляля".into(),
+        color: gpui::rgb(0xFF0000),
+        font_size: 20.0,
+    };
+
+    let orig_b = text.bounds();
+    let orig_w = f32::from(orig_b.size.width);
+    let orig_h = f32::from(orig_b.size.height);
+    assert!(orig_w > 0.0);
+    assert!(orig_h > 0.0);
+
+    // 1. Hit test right handle
+    let right_handle_pos = point(orig_b.origin.x + orig_b.size.width, orig_b.origin.y + orig_b.size.height / 2.0);
+    let hit_r = text.hit_test_handle(right_handle_pos, px(14.0));
+    assert_eq!(hit_r, Some(AnnotationHandle::Right));
+
+    // 2. Drag right handle to the right by +40px: width expands, font_size increases, origin.x stays fixed!
+    let start_m = right_handle_pos;
+    let cur_m = point(right_handle_pos.x + px(40.0), right_handle_pos.y);
+    text.resize_with_handle(orig_b, AnnotationHandle::Right, start_m, cur_m);
+    assert!(text.font_size().unwrap() > 20.0, "Font size must increase when dragging right handle outwards");
+    if let Annotation::Text { origin, .. } = text {
+        assert_eq!(origin.x, px(50.0), "Left origin must remain anchored when dragging right handle");
+    }
+
+    // 3. Drag left handle to the left by -30px (stretching left): font_size increases, right edge stays anchored!
+    let left_handle_pos = point(orig_b.origin.x, orig_b.origin.y + orig_b.size.height / 2.0);
+    let hit_l = text.hit_test_handle(left_handle_pos, px(14.0));
+    assert_eq!(hit_l, Some(AnnotationHandle::Left));
+
+    let mut text_left = Annotation::Text {
+        origin: point(px(50.0), px(50.0)),
+        text: "траляля".into(),
+        color: gpui::rgb(0xFF0000),
+        font_size: 20.0,
+    };
+    let start_m_l = left_handle_pos;
+    let cur_m_l = point(left_handle_pos.x - px(30.0), left_handle_pos.y);
+    text_left.resize_with_handle(orig_b, AnnotationHandle::Left, start_m_l, cur_m_l);
+    assert!(text_left.font_size().unwrap() > 20.0, "Font size must increase when stretching left");
+    if let Annotation::Text { origin, font_size, .. } = text_left {
+        assert!(f32::from(origin.x) < 50.0, "Origin.x must shift leftwards to follow the handle");
+        // Right edge must be anchored to orig_b.origin.x + orig_w
+        let (new_w, _) = pixora::editor::annotations::text_bounds_dimensions("траляля", font_size);
+        let right_edge = f32::from(origin.x) + new_w;
+        let expected_right = 50.0 + orig_w;
+        assert!((right_edge - expected_right).abs() < 1.0, "Right edge must stay anchored");
+    }
+
+    // 4. Drag bottom handle downwards by +30px: font_size increases, origin stays fixed
+    let mut text_bottom = Annotation::Text {
+        origin: point(px(50.0), px(50.0)),
+        text: "траляля".into(),
+        color: gpui::rgb(0xFF0000),
+        font_size: 20.0,
+    };
+    let b_pos = point(orig_b.origin.x + orig_b.size.width / 2.0, orig_b.origin.y + orig_b.size.height);
+    text_bottom.resize_with_handle(orig_b, AnnotationHandle::Bottom, b_pos, point(b_pos.x, b_pos.y + px(30.0)));
+    assert!(text_bottom.font_size().unwrap() > 20.0);
+    if let Annotation::Text { origin, .. } = text_bottom {
+        assert_eq!(origin, point(px(50.0), px(50.0)));
+    }
+}
+
+#[test]
+fn test_history_pop_snapshot_if_unchanged() {
+    let mut history = EditHistory::new();
+    let text = Annotation::Text {
+        origin: point(px(10.0), px(10.0)),
+        text: "Initial".into(),
+        color: gpui::rgb(0xFFFFFF),
+        font_size: 16.0,
+    };
+    history.push_annotation(text);
+    assert_eq!(history.annotations.len(), 1);
+
+    // Simulate clicking without moving: snapshot is taken
+    history.snapshot();
+    // Nothing modified: pop_last_snapshot_if_unchanged should remove it
+    history.pop_last_snapshot_if_unchanged();
+    // Only 1 snapshot should remain (from push_annotation)
+    assert!(history.undo());
+    assert!(!history.undo());
+}
+
 
 
 

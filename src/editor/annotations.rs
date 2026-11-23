@@ -187,6 +187,32 @@ pub fn resize_bounds_with_handle(
     }
 }
 
+pub fn text_bounds_dimensions(text: &str, font_size: f32) -> (f32, f32) {
+    let mut max_line_w = 0.0f32;
+    let lines: Vec<&str> = text.lines().collect();
+    for line in &lines {
+        let mut line_w = 0.0f32;
+        for ch in line.chars() {
+            let cw = match ch {
+                ' ' => 0.28,
+                'i' | 'j' | 'l' | '!' | '|' | ':' | ';' | '\'' | '.' | ',' => 0.26,
+                'f' | 'r' | 't' | '(' | ')' | '[' | ']' => 0.35,
+                'm' | 'w' | 'M' | 'W' | '—' | 'Ж' | 'Ш' | 'Щ' | 'Ю' => 0.85,
+                'A'..='Z' | 'А'..='Я' => 0.65,
+                _ => 0.52,
+            };
+            line_w += cw;
+        }
+        if line_w > max_line_w {
+            max_line_w = line_w;
+        }
+    }
+    let w = (max_line_w * font_size).max(font_size * 0.5);
+    let line_count = lines.len().max(1) as f32;
+    let h = line_count * font_size * 1.25;
+    (w, h)
+}
+
 impl Annotation {
     pub fn bounds(&self) -> Bounds<Pixels> {
         match self {
@@ -236,9 +262,7 @@ impl Annotation {
             | Annotation::Pixelate { bounds, .. }
             | Annotation::Spotlight { bounds, .. } => normalize_bounds(*bounds),
             Annotation::Text { origin, text, font_size, .. } => {
-                let char_count = text.chars().count().max(1) as f32;
-                let w = char_count * font_size * 0.65;
-                let h = font_size * 1.3;
+                let (w, h) = text_bounds_dimensions(text, *font_size);
                 Bounds {
                     origin: *origin,
                     size: size(px(w), px(h)),
@@ -266,16 +290,125 @@ impl Annotation {
             | Annotation::Spotlight { bounds, .. } => {
                 *bounds = norm;
             }
-            Annotation::Text { origin, font_size, .. } => {
-                let orig_h = *font_size * 1.3;
+            Annotation::Text { origin, font_size, text, .. } => {
+                let (orig_w, orig_h) = text_bounds_dimensions(text, *font_size);
+                let new_w = f32::from(norm.size.width);
                 let new_h = f32::from(norm.size.height);
-                if orig_h > 1.0 && new_h > 10.0 {
-                    let ratio = new_h / orig_h;
+                let rw = new_w / orig_w.max(1.0);
+                let rh = new_h / orig_h.max(1.0);
+                let ratio = if (rw - 1.0).abs() >= (rh - 1.0).abs() { rw } else { rh };
+                if ratio > 0.05 && ratio < 20.0 {
                     *font_size = (*font_size * ratio).clamp(10.0, 96.0);
                 }
                 *origin = norm.origin;
             }
+            Annotation::NumberBadge { center, radius, .. } => {
+                let new_r = (f32::from(norm.size.width) / 2.0).max(f32::from(norm.size.height) / 2.0);
+                *radius = new_r.clamp(8.0, 64.0);
+                *center = point(
+                    norm.origin.x + px(*radius),
+                    norm.origin.y + px(*radius),
+                );
+            }
             _ => {}
+        }
+    }
+
+    pub fn resize_with_handle(
+        &mut self,
+        orig_bounds: Bounds<Pixels>,
+        handle: AnnotationHandle,
+        start_mouse: Point<Pixels>,
+        cur_mouse: Point<Pixels>,
+    ) {
+        let dx = f32::from(cur_mouse.x - start_mouse.x);
+        let dy = f32::from(cur_mouse.y - start_mouse.y);
+        let ox = f32::from(orig_bounds.origin.x);
+        let oy = f32::from(orig_bounds.origin.y);
+        let ow = f32::from(orig_bounds.size.width);
+        let oh = f32::from(orig_bounds.size.height);
+
+        match self {
+            Annotation::Text { origin, font_size, .. } => {
+                let orig_fs = *font_size;
+                let (ratio, new_origin) = match handle {
+                    AnnotationHandle::Right => {
+                        let new_w = (ow + dx).max(10.0);
+                        let ratio = (new_w / ow.max(1.0)).clamp(0.1, 8.0);
+                        (ratio, point(px(ox), px(oy)))
+                    }
+                    AnnotationHandle::Left => {
+                        let new_w = (ow - dx).max(10.0);
+                        let ratio = (new_w / ow.max(1.0)).clamp(0.1, 8.0);
+                        let target_fs = (orig_fs * ratio).clamp(10.0, 96.0);
+                        let actual_ratio = target_fs / orig_fs;
+                        let new_x = (ox + ow) - ow * actual_ratio;
+                        (ratio, point(px(new_x), px(oy)))
+                    }
+                    AnnotationHandle::Bottom => {
+                        let new_h = (oh + dy).max(10.0);
+                        let ratio = (new_h / oh.max(1.0)).clamp(0.1, 8.0);
+                        (ratio, point(px(ox), px(oy)))
+                    }
+                    AnnotationHandle::Top => {
+                        let new_h = (oh - dy).max(10.0);
+                        let ratio = (new_h / oh.max(1.0)).clamp(0.1, 8.0);
+                        let target_fs = (orig_fs * ratio).clamp(10.0, 96.0);
+                        let actual_ratio = target_fs / orig_fs;
+                        let new_y = (oy + oh) - oh * actual_ratio;
+                        (ratio, point(px(ox), px(new_y)))
+                    }
+                    AnnotationHandle::BottomRight => {
+                        let ratio_w = (ow + dx) / ow.max(1.0);
+                        let ratio_h = (oh + dy) / oh.max(1.0);
+                        let ratio = if dx.abs() >= dy.abs() { ratio_w } else { ratio_h }.clamp(0.1, 8.0);
+                        (ratio, point(px(ox), px(oy)))
+                    }
+                    AnnotationHandle::BottomLeft => {
+                        let ratio_w = (ow - dx) / ow.max(1.0);
+                        let ratio_h = (oh + dy) / oh.max(1.0);
+                        let ratio = if dx.abs() >= dy.abs() { ratio_w } else { ratio_h }.clamp(0.1, 8.0);
+                        let target_fs = (orig_fs * ratio).clamp(10.0, 96.0);
+                        let actual_ratio = target_fs / orig_fs;
+                        let new_x = (ox + ow) - ow * actual_ratio;
+                        (ratio, point(px(new_x), px(oy)))
+                    }
+                    AnnotationHandle::TopRight => {
+                        let ratio_w = (ow + dx) / ow.max(1.0);
+                        let ratio_h = (oh - dy) / oh.max(1.0);
+                        let ratio = if dx.abs() >= dy.abs() { ratio_w } else { ratio_h }.clamp(0.1, 8.0);
+                        let target_fs = (orig_fs * ratio).clamp(10.0, 96.0);
+                        let actual_ratio = target_fs / orig_fs;
+                        let new_y = (oy + oh) - oh * actual_ratio;
+                        (ratio, point(px(ox), px(new_y)))
+                    }
+                    AnnotationHandle::TopLeft => {
+                        let ratio_w = (ow - dx) / ow.max(1.0);
+                        let ratio_h = (oh - dy) / oh.max(1.0);
+                        let ratio = if dx.abs() >= dy.abs() { ratio_w } else { ratio_h }.clamp(0.1, 8.0);
+                        let target_fs = (orig_fs * ratio).clamp(10.0, 96.0);
+                        let actual_ratio = target_fs / orig_fs;
+                        let new_x = (ox + ow) - ow * actual_ratio;
+                        let new_y = (oy + oh) - oh * actual_ratio;
+                        (ratio, point(px(new_x), px(new_y)))
+                    }
+                    _ => (1.0, *origin),
+                };
+
+                *font_size = (orig_fs * ratio).clamp(10.0, 96.0);
+                *origin = new_origin;
+            }
+            Annotation::NumberBadge { radius, .. } => {
+                let orig_r = *radius;
+                let ratio_w = (ow + dx.abs()) / ow.max(1.0);
+                let ratio_h = (oh + dy.abs()) / oh.max(1.0);
+                let ratio = ratio_w.max(ratio_h).clamp(0.2, 5.0);
+                *radius = (orig_r * ratio).clamp(8.0, 64.0);
+            }
+            _ => {
+                let new_bounds = resize_bounds_with_handle(orig_bounds, handle, start_mouse, cur_mouse);
+                self.set_bounds(new_bounds);
+            }
         }
     }
 
@@ -406,9 +539,7 @@ impl Annotation {
                 px_f >= left - tolerance && px_f <= right + tolerance && py_f >= top - tolerance && py_f <= bottom + tolerance
             }
             Annotation::Text { origin, text, font_size, .. } => {
-                let char_count = text.chars().count().max(1) as f32;
-                let w = char_count * font_size * 0.65;
-                let h = font_size * 1.3;
+                let (w, h) = text_bounds_dimensions(text, *font_size);
                 let x = f32::from(origin.x);
                 let y = f32::from(origin.y);
                 px_f >= x - tolerance && px_f <= x + w + tolerance && py_f >= y - tolerance && py_f <= y + h + tolerance
@@ -446,14 +577,15 @@ impl Annotation {
 
     pub fn hit_test_handle(&self, p: Point<Pixels>, radius: Pixels) -> Option<AnnotationHandle> {
         let r_f32 = f32::from(radius);
+        let r_sq = r_f32 * r_f32;
         match self {
             Annotation::Arrow { from, to, .. } | Annotation::Line { from, to, .. } => {
-                let d_from = (f32::from(p.x - from.x).powi(2) + f32::from(p.y - from.y).powi(2)).sqrt();
-                if d_from <= r_f32 {
+                let d_from_sq = f32::from(p.x - from.x).powi(2) + f32::from(p.y - from.y).powi(2);
+                let d_to_sq = f32::from(p.x - to.x).powi(2) + f32::from(p.y - to.y).powi(2);
+                if d_from_sq <= r_sq && d_from_sq <= d_to_sq {
                     return Some(AnnotationHandle::Endpoint(true));
                 }
-                let d_to = (f32::from(p.x - to.x).powi(2) + f32::from(p.y - to.y).powi(2)).sqrt();
-                if d_to <= r_f32 {
+                if d_to_sq <= r_sq {
                     return Some(AnnotationHandle::Endpoint(false));
                 }
                 None
@@ -466,7 +598,8 @@ impl Annotation {
             | Annotation::Blur { .. }
             | Annotation::Pixelate { .. }
             | Annotation::Spotlight { .. }
-            | Annotation::Text { .. } => {
+            | Annotation::Text { .. }
+            | Annotation::NumberBadge { .. } => {
                 let b = self.bounds();
                 let x = b.origin.x;
                 let y = b.origin.y;
@@ -486,14 +619,18 @@ impl Annotation {
                     (AnnotationHandle::Left, point(x, mid_y)),
                 ];
 
+                let mut best_handle = None;
+                let mut min_dist_sq = r_sq;
                 for (handle, pt) in handles {
-                    let dx = f32::from(p.x - pt.x).abs();
-                    let dy = f32::from(p.y - pt.y).abs();
-                    if dx <= r_f32 && dy <= r_f32 {
-                        return Some(handle);
+                    let dx = f32::from(p.x - pt.x);
+                    let dy = f32::from(p.y - pt.y);
+                    let d_sq = dx * dx + dy * dy;
+                    if d_sq <= min_dist_sq {
+                        min_dist_sq = d_sq;
+                        best_handle = Some(handle);
                     }
                 }
-                None
+                best_handle
             }
             _ => None,
         }
