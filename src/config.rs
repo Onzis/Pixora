@@ -34,6 +34,10 @@ fn default_pixelate_block() -> u32 {
     10
 }
 
+fn default_spotlight_dim() -> f32 {
+    0.60
+}
+
 fn default_color_hex() -> String {
     "#FF453A".to_string()
 }
@@ -86,6 +90,8 @@ pub struct AppConfig {
     pub blur_radius: u32,
     #[serde(default = "default_pixelate_block")]
     pub pixelate_block: u32,
+    #[serde(default = "default_spotlight_dim")]
+    pub spotlight_dim: f32,
     pub sound_effects: bool,
     #[serde(default = "default_hotkey_region")]
     pub hotkey_region: String,
@@ -125,6 +131,7 @@ impl Default for AppConfig {
             default_font_size: default_font_size(),
             blur_radius: default_blur_radius(),
             pixelate_block: default_pixelate_block(),
+            spotlight_dim: default_spotlight_dim(),
             sound_effects: true,
             hotkey_region: default_hotkey_region(),
             hotkey_fullscreen: default_hotkey_fullscreen(),

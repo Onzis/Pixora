@@ -16,6 +16,7 @@ fn test_config_defaults_and_serialization() {
     assert!(!config.show_magnifier);
     assert_eq!(config.blur_radius, 12);
     assert_eq!(config.pixelate_block, 10);
+    assert_eq!(config.spotlight_dim, 0.60);
     assert!(config.auto_check_updates);
     assert!(config.window_snapping);
 
@@ -25,6 +26,7 @@ fn test_config_defaults_and_serialization() {
     assert_eq!(config.default_stroke_width, deserialized.default_stroke_width);
     assert_eq!(config.blur_radius, deserialized.blur_radius);
     assert_eq!(config.pixelate_block, deserialized.pixelate_block);
+    assert_eq!(config.spotlight_dim, deserialized.spotlight_dim);
     assert_eq!(config.default_font_size, deserialized.default_font_size);
     assert_eq!(config.window_snapping, deserialized.window_snapping);
 
@@ -33,6 +35,7 @@ fn test_config_defaults_and_serialization() {
     assert_eq!(config.filename_prefix, deserialized_toml.filename_prefix);
     assert_eq!(config.filename_pattern, deserialized_toml.filename_pattern);
     assert_eq!(config.image_format, deserialized_toml.image_format);
+    assert_eq!(config.spotlight_dim, deserialized_toml.spotlight_dim);
 }
 
 #[test]
@@ -385,6 +388,22 @@ fn test_spotlight_dimming_and_cutout() {
     assert_eq!(outside_pixel[0], 80);
     assert_eq!(outside_pixel[1], 80);
     assert_eq!(outside_pixel[2], 80);
+}
+
+#[test]
+fn test_spotlight_dim_getter_setter() {
+    let mut spot = Annotation::Spotlight {
+        bounds: Bounds {
+            origin: point(px(10.0), px(10.0)),
+            size: size(px(50.0), px(50.0)),
+        },
+        color: rgb(0x000000),
+        width: 0.0,
+        dim_opacity: 0.60,
+    };
+    assert_eq!(spot.dim_opacity(), Some(0.60));
+    spot.set_dim_opacity(0.85);
+    assert_eq!(spot.dim_opacity(), Some(0.85));
 }
 
 #[test]

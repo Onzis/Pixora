@@ -1123,6 +1123,19 @@ impl Annotation {
         }
     }
 
+    pub fn dim_opacity(&self) -> Option<f32> {
+        match self {
+            Annotation::Spotlight { dim_opacity, .. } => Some(*dim_opacity),
+            _ => None,
+        }
+    }
+
+    pub fn set_dim_opacity(&mut self, new_opacity: f32) {
+        if let Annotation::Spotlight { dim_opacity, .. } = self {
+            *dim_opacity = new_opacity;
+        }
+    }
+
     pub fn is_filled(&self) -> Option<bool> {
         match self {
             Annotation::Rectangle { filled, .. }

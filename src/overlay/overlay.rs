@@ -51,6 +51,7 @@ pub enum NumericInputTarget {
     BlurRadius,
     PixelateBlock,
     FontSize,
+    SpotlightDim,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -196,7 +197,7 @@ impl ScreenOverlayView {
             font_size: config.default_font_size.clamp(10.0, 96.0),
             blur_radius: config.blur_radius.clamp(2, 99),
             pixelate_block: config.pixelate_block.clamp(2, 99),
-            spotlight_dim: 0.60,
+            spotlight_dim: config.spotlight_dim.clamp(0.10, 0.95),
             is_filled: false,
             current_badge_number: 1,
             ..ToolProperties::default()
@@ -371,6 +372,7 @@ impl ScreenOverlayView {
         self.config.default_stroke_width = self.tool_props.stroke_width;
         self.config.blur_radius = self.tool_props.blur_radius;
         self.config.pixelate_block = self.tool_props.pixelate_block;
+        self.config.spotlight_dim = self.tool_props.spotlight_dim;
         self.config.default_font_size = self.tool_props.font_size;
 
         let r = (self.tool_props.stroke_color.r * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -1129,6 +1131,12 @@ impl ScreenOverlayView {
                 if let Some(mode) = ann.badge_mode() {
                     self.tool_props.badge_mode = mode;
                 }
+                match ann {
+                    Annotation::Blur { radius, .. } => self.tool_props.blur_radius = radius,
+                    Annotation::Pixelate { block_size, .. } => self.tool_props.pixelate_block = block_size,
+                    Annotation::Spotlight { dim_opacity, .. } => self.tool_props.spotlight_dim = dim_opacity,
+                    _ => {}
+                }
                 self.history.snapshot();
                 if let Some(h) = ann.hit_test_handle(p, px(14.0)) {
                     match h {
@@ -1409,8 +1417,8 @@ impl ScreenOverlayView {
                             origin: p,
                             size: size(px(0.0), px(0.0)),
                         },
-                        color: self.tool_props.stroke_color,
-                        width: self.tool_props.stroke_width,
+                        color: gpui::rgba(0x00000000),
+                        width: 0.0,
                         dim_opacity: self.tool_props.spotlight_dim,
                     });
                 }
@@ -1805,6 +1813,14 @@ impl ScreenOverlayView {
                     self.tool_props.pixelate_block = self.tool_props.pixelate_block.saturating_sub(2).max(2);
                 }
             }
+            ToolKind::Spotlight => {
+                if is_up {
+                    self.tool_props.spotlight_dim = ((self.tool_props.spotlight_dim + 0.05) * 100.0).round() / 100.0;
+                } else {
+                    self.tool_props.spotlight_dim = ((self.tool_props.spotlight_dim - 0.05) * 100.0).round() / 100.0;
+                }
+                self.tool_props.spotlight_dim = self.tool_props.spotlight_dim.clamp(0.10, 0.95);
+            }
             ToolKind::Text => {
                 if is_up {
                     self.tool_props.font_size = (self.tool_props.font_size + 2.0).min(96.0);
@@ -1850,6 +1866,10 @@ impl ScreenOverlayView {
                         }
                         NumericInputTarget::FontSize => {
                             self.tool_props.font_size = (val as f32).clamp(10.0, 96.0);
+                        }
+                        NumericInputTarget::SpotlightDim => {
+                            let pct = val.clamp(10, 95);
+                            self.tool_props.spotlight_dim = pct as f32 / 100.0;
                         }
                     }
                     self.sync_and_save_tool_props();
@@ -2668,7 +2688,7 @@ impl Render for ScreenOverlayView {
                                 window.paint_quad(fill(*bounds, rgba(0x30D15822)));
                                 window.paint_quad(outline(*bounds, rgba(0x30D15888), BorderStyle::Dashed));
                             }
-                            Annotation::Spotlight { bounds, color, width: _, dim_opacity } => {
+                            Annotation::Spotlight { bounds, color, width, dim_opacity } => {
                                 let sel = selection.bounds;
                                 let bx = bounds.origin.x;
                                 let by = bounds.origin.y;
@@ -2712,7 +2732,11 @@ impl Render for ScreenOverlayView {
                                     origin: point(min_x, min_y),
                                     size: size(max_x - min_x, max_y - min_y),
                                 };
-                                window.paint_quad(outline(norm_bounds, *color, BorderStyle::Solid));
+                                if *width > 0.0 {
+                                    window.paint_quad(outline(norm_bounds, *color, BorderStyle::Solid));
+                                } else {
+                                    window.paint_quad(outline(norm_bounds, rgba(0x8174FFAA), BorderStyle::Dashed));
+                                }
                             }
                             _ => {}
                         }
@@ -3541,7 +3565,7 @@ impl Render for ScreenOverlayView {
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .text_color(theme.text_secondary)
-                                .child("Blur Hardness:"),
+                                .child(t(lang, "Blur Hardness:", "Интенсивность:")),
                         )
                         // Stepper: [-] [ 12px ] [+]
                         .child(
@@ -3655,7 +3679,7 @@ impl Render for ScreenOverlayView {
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .text_color(theme.text_secondary)
-                                .child("Pixel Size:"),
+                                .child(t(lang, "Pixel Size:", "Размер пикселей:")),
                         )
                         // Stepper: [-] [ 10px ] [+]
                         .child(
@@ -3746,6 +3770,7 @@ impl Render for ScreenOverlayView {
                         ),
                 );
             } else if effective_tool == ToolKind::Spotlight {
+                let dim_pct = (self.tool_props.spotlight_dim * 100.0).round() as u32;
                 toolbar_col = toolbar_col.child(
                     div()
                         .flex()
@@ -3769,9 +3794,9 @@ impl Render for ScreenOverlayView {
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .text_color(theme.text_secondary)
-                                .child(t(lang, "Border:", "Рамка:")),
+                                .child(t(lang, "Dimming:", "Затемнение:")),
                         )
-                        // Stepper: [-] [ 2px ] [+]
+                        // Stepper: [-] [ 60% ] [+]
                         .child(
                             div()
                                 .flex()
@@ -3779,7 +3804,7 @@ impl Render for ScreenOverlayView {
                                 .gap_1()
                                 .child(
                                     div()
-                                        .id("btn-dec-spotlight-width")
+                                        .id("btn-dec-spotlight-dim")
                                         .flex()
                                         .items_center()
                                         .justify_center()
@@ -3791,7 +3816,8 @@ impl Render for ScreenOverlayView {
                                         .hover(|s| s.bg(theme.bg_hover))
                                         .cursor_pointer()
                                         .on_click(cx.listener(|this, _, _, cx| {
-                                            this.tool_props.stroke_width = (this.tool_props.stroke_width - 1.0).max(0.0);
+                                            this.tool_props.spotlight_dim = ((this.tool_props.spotlight_dim - 0.05) * 100.0).round() / 100.0;
+                                            this.tool_props.spotlight_dim = this.tool_props.spotlight_dim.clamp(0.10, 0.95);
                                             this.sync_and_save_tool_props();
                                             cx.notify();
                                         }))
@@ -3799,21 +3825,21 @@ impl Render for ScreenOverlayView {
                                 )
                                 .child(
                                     div()
-                                        .id("spotlight-width-display")
+                                        .id("spotlight-dim-display")
                                         .px_2()
                                         .py_0p5()
-                                        .min_w(px(40.0))
+                                        .min_w(px(46.0))
                                         .flex()
                                         .items_center()
                                         .justify_center()
                                         .rounded_md()
-                                        .bg(if self.numeric_input_mode == Some(NumericInputTarget::StrokeWidth) {
+                                        .bg(if self.numeric_input_mode == Some(NumericInputTarget::SpotlightDim) {
                                             rgba(0x8174FF33)
                                         } else {
                                             theme.bg_secondary
                                         })
                                         .border_1()
-                                        .border_color(if self.numeric_input_mode == Some(NumericInputTarget::StrokeWidth) {
+                                        .border_color(if self.numeric_input_mode == Some(NumericInputTarget::SpotlightDim) {
                                             theme.accent
                                         } else {
                                             theme.border_subtle
@@ -3821,8 +3847,8 @@ impl Render for ScreenOverlayView {
                                         .hover(|s| s.border_color(theme.border_focus))
                                         .cursor_pointer()
                                         .on_click(cx.listener(|this, _, _, cx| {
-                                            this.numeric_input_mode = Some(NumericInputTarget::StrokeWidth);
-                                            this.numeric_input_buffer = (this.tool_props.stroke_width as u32).to_string();
+                                            this.numeric_input_mode = Some(NumericInputTarget::SpotlightDim);
+                                            this.numeric_input_buffer = ((this.tool_props.spotlight_dim * 100.0).round() as u32).to_string();
                                             cx.notify();
                                         }))
                                         .child(
@@ -3830,16 +3856,16 @@ impl Render for ScreenOverlayView {
                                                 .text_xs()
                                                 .font_weight(gpui::FontWeight::BOLD)
                                                 .text_color(theme.text_primary)
-                                                .child(if self.numeric_input_mode == Some(NumericInputTarget::StrokeWidth) {
-                                                    format!("{}▏", self.numeric_input_buffer)
+                                                .child(if self.numeric_input_mode == Some(NumericInputTarget::SpotlightDim) {
+                                                    format!("{}%▏", self.numeric_input_buffer)
                                                 } else {
-                                                    format!("{}px", stroke_width as u32)
+                                                    format!("{}%", dim_pct)
                                                 }),
                                         ),
                                 )
                                 .child(
                                     div()
-                                        .id("btn-inc-spotlight-width")
+                                        .id("btn-inc-spotlight-dim")
                                         .flex()
                                         .items_center()
                                         .justify_center()
@@ -3851,83 +3877,12 @@ impl Render for ScreenOverlayView {
                                         .hover(|s| s.bg(theme.bg_hover))
                                         .cursor_pointer()
                                         .on_click(cx.listener(|this, _, _, cx| {
-                                            this.tool_props.stroke_width = (this.tool_props.stroke_width + 1.0).min(99.0);
+                                            this.tool_props.spotlight_dim = ((this.tool_props.spotlight_dim + 0.05) * 100.0).round() / 100.0;
+                                            this.tool_props.spotlight_dim = this.tool_props.spotlight_dim.clamp(0.10, 0.95);
                                             this.sync_and_save_tool_props();
                                             cx.notify();
                                         }))
                                         .child(svg().path("icons/plus.svg").size(px(12.0)).text_color(theme.text_secondary)),
-                                ),
-                        )
-                        .child(render_toolbar_divider(theme_ref))
-                        // Quick Border Color Swatches: White, Black, Red
-                        .child(render_color_swatch(
-                            "swatch-spot-white".into(),
-                            theme.palette_white,
-                            current_color == theme.palette_white,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.stroke_color = this.theme.palette_white;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
-                        .child(render_color_swatch(
-                            "swatch-spot-black".into(),
-                            theme.palette_black,
-                            current_color == theme.palette_black,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.stroke_color = this.theme.palette_black;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
-                        .child(render_color_swatch(
-                            "swatch-spot-red".into(),
-                            theme.palette_red,
-                            current_color == theme.palette_red,
-                            cx.listener(|this, _, _, cx| {
-                                this.tool_props.stroke_color = this.theme.palette_red;
-                                this.sync_and_save_tool_props();
-                                cx.notify();
-                            }),
-                        ))
-                        // Full Palette Button
-                        .child(
-                            div()
-                                .id("btn-open-palette")
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .size(px(24.0))
-                                .rounded_full()
-                                .bg(if self.show_color_palette {
-                                    rgba(0x8174FF33)
-                                } else {
-                                    theme.bg_secondary
-                                })
-                                .border_1()
-                                .border_color(if self.show_color_palette {
-                                    theme.accent
-                                } else {
-                                    theme.border_subtle
-                                })
-                                .hover(|s| s.bg(theme.bg_hover))
-                                .cursor_pointer()
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.show_color_palette = !this.show_color_palette;
-                                    if this.show_color_palette {
-                                        this.sync_picker_from_color();
-                                    }
-                                    cx.notify();
-                                }))
-                                .child(
-                                    svg()
-                                        .path("icons/palette.svg")
-                                        .size(px(14.0))
-                                        .text_color(if self.show_color_palette {
-                                            theme.accent
-                                        } else {
-                                            theme.text_secondary
-                                        }),
                                 ),
                         ),
                 );
