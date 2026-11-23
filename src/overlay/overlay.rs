@@ -14,7 +14,7 @@ use crate::capture::region::crop_region;
 use crate::capture::screen::ScreenCapture;
 use crate::config::AppConfig;
 use crate::editor::annotations::{
-    Annotation, AnnotationHandle, calculate_arrow_geometry, wrap_text_to_lines,
+    Annotation, AnnotationHandle, calculate_arrow_geometry, text_bounds_dimensions, wrap_text_to_lines,
 };
 use crate::editor::canvas::render_annotations_to_image;
 use crate::editor::history::EditHistory;
@@ -110,6 +110,7 @@ pub struct ScreenOverlayView {
     pub text_input_mode: bool,
     pub text_input_pos: Point<Pixels>,
     pub text_input_width: Option<f32>,
+    pub text_input_height: Option<f32>,
     pub text_input_buffer: String,
 
     // Numeric value typing for px
@@ -265,6 +266,7 @@ impl ScreenOverlayView {
             text_input_mode: false,
             text_input_pos: point(px(0.0), px(0.0)),
             text_input_width: None,
+            text_input_height: None,
             text_input_buffer: String::new(),
 
             numeric_input_mode: None,
@@ -551,6 +553,7 @@ impl ScreenOverlayView {
         self.text_input_mode = false;
         self.text_input_buffer.clear();
         self.text_input_width = None;
+        self.text_input_height = None;
         self.hex_input_mode = false;
         self.show_color_palette = false;
         self.show_shapes_menu = false;
@@ -582,6 +585,7 @@ impl ScreenOverlayView {
             self.text_input_mode = false;
             self.text_input_buffer.clear();
             self.text_input_width = None;
+        self.text_input_height = None;
         }
     }
 
@@ -948,6 +952,7 @@ impl ScreenOverlayView {
             self.text_input_mode = false;
             self.text_input_buffer.clear();
             self.text_input_width = None;
+        self.text_input_height = None;
             cx.notify();
             return;
         }
@@ -1072,6 +1077,7 @@ impl ScreenOverlayView {
                         self.text_input_mode = true;
                         self.text_input_pos = *origin;
                         self.text_input_width = *box_width;
+                        self.text_input_height = None;
                         self.text_input_buffer = text.clone();
                         self.tool_props.font_size = *font_size;
                         cx.notify();
@@ -1593,20 +1599,21 @@ impl ScreenOverlayView {
                 let w = (px_f - f32::from(start.x)).abs();
                 let h = (py_f - f32::from(start.y)).abs();
 
-                let (pos, box_w) = if w >= 24.0 && h >= 16.0 {
-                    (point(px(min_x), px(min_y)), w)
+                let (pos, box_w, box_h) = if w >= 24.0 && h >= 16.0 {
+                    (point(px(min_x), px(min_y)), w, Some(h))
                 } else {
                     let remaining_w = if self.selection.is_active {
                         (self.selection.x() + self.selection.width() - f32::from(start.x)).max(180.0)
                     } else {
                         (self.capture.bounds.width as f32 - f32::from(start.x)).max(180.0)
                     };
-                    (start, remaining_w.clamp(200.0, 380.0))
+                    (start, remaining_w.clamp(200.0, 380.0), None)
                 };
 
                 self.text_input_mode = true;
                 self.text_input_pos = pos;
                 self.text_input_width = Some(box_w);
+                self.text_input_height = box_h;
                 self.text_input_buffer.clear();
                 cx.notify();
                 return;
@@ -1802,6 +1809,7 @@ impl ScreenOverlayView {
                 self.text_input_mode = false;
                 self.text_input_buffer.clear();
                 self.text_input_width = None;
+        self.text_input_height = None;
                 cx.notify();
                 return;
             } else if key == "backspace" {
@@ -1971,6 +1979,12 @@ impl Render for ScreenOverlayView {
         let text_drag_start = if self.active_tool == ToolKind::Text { self.drawing_start } else { None };
         let active_tool = self.active_tool;
         let cursor_pos = self.cursor_pos;
+        let text_input_mode = self.text_input_mode;
+        let text_input_pos = self.text_input_pos;
+        let text_input_width = self.text_input_width;
+        let text_input_height = self.text_input_height;
+        let text_input_buffer = self.text_input_buffer.clone();
+        let tool_font_size = self.tool_props.font_size;
 
         // Determine cursor style
         let is_over_floating_panel = self.current_toolbar_bounds.map_or(false, |b| b.contains(&self.cursor_pos))
@@ -2437,6 +2451,38 @@ impl Render for ScreenOverlayView {
                         }
                     }
 
+                    if text_input_mode {
+                        let font_size = tool_font_size;
+                        let (calc_w, calc_h) = text_bounds_dimensions(&text_input_buffer, font_size, text_input_width);
+                        let frame_w = text_input_width.unwrap_or(calc_w);
+                        let frame_h = text_input_height.unwrap_or(calc_h).max(calc_h);
+
+                        let b = Bounds {
+                            origin: text_input_pos,
+                            size: size(px(frame_w), px(frame_h)),
+                        };
+                        window.paint_quad(outline(b, rgba(0x8174FFAA), BorderStyle::Dashed));
+                        let x = b.origin.x;
+                        let y = b.origin.y;
+                        let w = b.size.width;
+                        let h = b.size.height;
+                        let mid_x = x + w / 2.0;
+                        let mid_y = y + h / 2.0;
+                        let pts = [
+                            point(x, y), point(mid_x, y), point(x + w, y),
+                            point(x + w, mid_y), point(x + w, y + h), point(mid_x, y + h),
+                            point(x, y + h), point(x, mid_y),
+                        ];
+                        for pt in pts {
+                            let h_bounds = Bounds {
+                                origin: point(pt.x - px(4.0), pt.y - px(4.0)),
+                                size: size(px(8.0), px(8.0)),
+                            };
+                            window.paint_quad(fill(h_bounds, rgb(0xFFFFFF)));
+                            window.paint_quad(outline(h_bounds, rgb(0x8174FF), BorderStyle::Solid));
+                        }
+                    }
+
                     // Render selection box and control handles for currently selected annotation
                     if let Some(idx) = selected_annotation {
                         if let Some(ann) = annotations.get(idx) {
@@ -2538,10 +2584,12 @@ impl Render for ScreenOverlayView {
             let lines = wrap_text_to_lines(&self.text_input_buffer, font_size, self.text_input_width);
             let box_w = self.text_input_width.unwrap_or(360.0);
 
+            let inner_w = (box_w - 2.0 * pad).max(10.0);
+
             let mut text_lines_col = div()
                 .flex()
                 .flex_col()
-                .w_full()
+                .w(px(inner_w))
                 .text_size(px(font_size))
                 .text_color(self.tool_props.stroke_color)
                 .font_weight(gpui::FontWeight::BOLD)
@@ -2563,15 +2611,9 @@ impl Render for ScreenOverlayView {
             root = root.child(
                 div()
                     .absolute()
-                    .left(self.text_input_pos.x)
-                    .top(self.text_input_pos.y)
-                    .w(px(box_w))
-                    .p(px(pad))
-                    .rounded_sm()
-                    .bg(rgba(0x151519EE))
-                    .border_1()
-                    .border_color(theme.accent)
-                    .shadow_lg()
+                    .left(self.text_input_pos.x + px(pad))
+                    .top(self.text_input_pos.y + px(pad - 0.20 * font_size))
+                    .w(px(inner_w))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
                     })
