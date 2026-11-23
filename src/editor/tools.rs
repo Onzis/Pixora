@@ -15,6 +15,7 @@ pub enum ToolKind {
     Pixelate,
     Spotlight,
     NumberBadge,
+    Sticker,
     Eyedropper,
 }
 
@@ -36,6 +37,7 @@ impl ToolKind {
             ToolKind::Pixelate => "Pixelate",
             ToolKind::Spotlight => "Spotlight",
             ToolKind::NumberBadge => "Step Badge",
+            ToolKind::Sticker => "Sticker",
             ToolKind::Eyedropper => "Color Picker",
         }
     }
@@ -57,6 +59,7 @@ impl ToolKind {
             ToolKind::Pixelate => if is_ru { "Пикселизация" } else { "Pixelate" },
             ToolKind::Spotlight => if is_ru { "Фокус / Затемнение" } else { "Spotlight" },
             ToolKind::NumberBadge => if is_ru { "Шаги / Нумерация" } else { "Step Badge" },
+            ToolKind::Sticker => if is_ru { "Стикеры и значки" } else { "Stickers" },
             ToolKind::Eyedropper => if is_ru { "Пипетка" } else { "Color Picker" },
         }
     }
@@ -78,6 +81,7 @@ impl ToolKind {
             ToolKind::Pixelate => "icons/pixelate.svg",
             ToolKind::Spotlight => "icons/spotlight.svg",
             ToolKind::NumberBadge => "icons/step.svg",
+            ToolKind::Sticker => "icons/sticker.svg",
             ToolKind::Eyedropper => "icons/eyedropper.svg",
         }
     }

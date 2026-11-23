@@ -3,6 +3,7 @@ use gpui::{Bounds, Pixels, Point, Rgba, point, px, size};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AnnotationHandle {
     Endpoint(bool), // true = start (from), false = end (to)
+    BezierControl,
     TopLeft,
     Top,
     TopRight,
@@ -11,6 +12,65 @@ pub enum AnnotationHandle {
     Bottom,
     BottomLeft,
     Left,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BadgeShape {
+    Circle,
+    RoundedRect,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BadgeMode {
+    Numbers,
+    Alphabet,
+}
+
+pub fn number_to_badge_label(number: u32, mode: BadgeMode) -> String {
+    match mode {
+        BadgeMode::Numbers => number.to_string(),
+        BadgeMode::Alphabet => {
+            let mut n = number;
+            let mut s = String::new();
+            while n > 0 {
+                let rem = ((n - 1) % 26) as u8;
+                s.insert(0, (b'A' + rem) as char);
+                n = (n - 1) / 26;
+            }
+            if s.is_empty() {
+                "A".to_string()
+            } else {
+                s
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StickerKind {
+    Checkmark,
+    Cross,
+    Warning,
+    Cursor,
+    Star,
+    Heart,
+    Question,
+    Lightbulb,
+}
+
+impl StickerKind {
+    pub fn icon_path(&self) -> &'static str {
+        match self {
+            StickerKind::Checkmark => "icons/sticker-check.svg",
+            StickerKind::Cross => "icons/sticker-cross.svg",
+            StickerKind::Warning => "icons/sticker-warning.svg",
+            StickerKind::Cursor => "icons/sticker-cursor.svg",
+            StickerKind::Star => "icons/sticker-star.svg",
+            StickerKind::Heart => "icons/sticker-heart.svg",
+            StickerKind::Question => "icons/sticker-question.svg",
+            StickerKind::Lightbulb => "icons/sticker-bulb.svg",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -28,6 +88,8 @@ pub enum Annotation {
     Arrow {
         from: Point<Pixels>,
         to: Point<Pixels>,
+        control: Option<Point<Pixels>>,
+        two_headed: bool,
         color: Rgba,
         width: f32,
     },
@@ -93,6 +155,15 @@ pub enum Annotation {
         number: u32,
         color: Rgba,
         radius: f32,
+        shape: BadgeShape,
+        mode: BadgeMode,
+        filled: bool,
+    },
+    Sticker {
+        center: Point<Pixels>,
+        kind: StickerKind,
+        size: f32,
+        color: Option<Rgba>,
     },
 }
 
@@ -136,6 +207,71 @@ pub fn dist_to_segment_sq(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
     let ex = p.0 - proj_x;
     let ey = p.1 - proj_y;
     ex * ex + ey * ey
+}
+
+pub fn sample_quadratic_bezier(
+    p0: (f32, f32),
+    p1: (f32, f32),
+    p2: (f32, f32),
+    steps: usize,
+) -> Vec<(f32, f32)> {
+    let mut pts = Vec::with_capacity(steps + 1);
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let u = 1.0 - t;
+        let x = u * u * p0.0 + 2.0 * u * t * p1.0 + t * t * p2.0;
+        let y = u * u * p0.1 + 2.0 * u * t * p1.1 + t * t * p2.1;
+        pts.push((x, y));
+    }
+    pts
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ArrowHeadGeometry {
+    pub tip: (f32, f32),
+    pub left_wing: (f32, f32),
+    pub right_wing: (f32, f32),
+    pub base_center: (f32, f32),
+    pub shaft_attachment: (f32, f32),
+}
+
+pub fn calculate_arrowhead(
+    tip: (f32, f32),
+    dir_from: (f32, f32),
+    width: f32,
+    total_len: f32,
+) -> Option<ArrowHeadGeometry> {
+    let dx = tip.0 - dir_from.0;
+    let dy = tip.1 - dir_from.1;
+    let len = (dx * dx + dy * dy).sqrt();
+    if len < 2.0 {
+        return None;
+    }
+    let ux = dx / len;
+    let uy = dy / len;
+    let nx = -uy;
+    let ny = ux;
+
+    let base_head_len = width * 2.5 + 12.0;
+    let head_len = base_head_len.min(total_len * 0.80);
+    let half_width = (head_len * 0.48).max(width * 0.95 + 4.0);
+
+    let base_x = tip.0 - head_len * ux;
+    let base_y = tip.1 - head_len * uy;
+
+    let left_wing = (base_x + half_width * nx, base_y + half_width * ny);
+    let right_wing = (base_x - half_width * nx, base_y - half_width * ny);
+
+    let overlap = (width * 0.4).min(head_len * 0.35);
+    let shaft_attachment = (base_x + overlap * ux, base_y + overlap * uy);
+
+    Some(ArrowHeadGeometry {
+        tip,
+        left_wing,
+        right_wing,
+        base_center: (base_x, base_y),
+        shaft_attachment,
+    })
 }
 
 pub fn resize_bounds_with_handle(
@@ -384,7 +520,30 @@ impl Annotation {
                     size: size(px((max_x - min_x) + *width), px((max_y - min_y) + *width)),
                 }
             }
-            Annotation::Arrow { from, to, width, .. } | Annotation::Line { from, to, width, .. } => {
+            Annotation::Arrow { from, to, control, width, .. } => {
+                let x1 = f32::from(from.x);
+                let y1 = f32::from(from.y);
+                let x2 = f32::from(to.x);
+                let y2 = f32::from(to.y);
+                let mut min_x = x1.min(x2);
+                let mut max_x = x1.max(x2);
+                let mut min_y = y1.min(y2);
+                let mut max_y = y1.max(y2);
+                if let Some(cp) = control {
+                    let cx = f32::from(cp.x);
+                    let cy = f32::from(cp.y);
+                    min_x = min_x.min(cx);
+                    max_x = max_x.max(cx);
+                    min_y = min_y.min(cy);
+                    max_y = max_y.max(cy);
+                }
+                let pad = (*width * 2.5).max(10.0);
+                Bounds {
+                    origin: point(px(min_x - pad), px(min_y - pad)),
+                    size: size(px((max_x - min_x) + pad * 2.0), px((max_y - min_y) + pad * 2.0)),
+                }
+            }
+            Annotation::Line { from, to, width, .. } => {
                 let x1 = f32::from(from.x);
                 let y1 = f32::from(from.y);
                 let x2 = f32::from(to.x);
@@ -420,6 +579,13 @@ impl Annotation {
                     size: size(px(*radius * 2.0), px(*radius * 2.0)),
                 }
             }
+            Annotation::Sticker { center, size: sticker_size, .. } => {
+                let half = *sticker_size / 2.0;
+                Bounds {
+                    origin: point(center.x - px(half), center.y - px(half)),
+                    size: size(px(*sticker_size), px(*sticker_size)),
+                }
+            }
         }
     }
 
@@ -447,6 +613,14 @@ impl Annotation {
                 *center = point(
                     norm.origin.x + px(*radius),
                     norm.origin.y + px(*radius),
+                );
+            }
+            Annotation::Sticker { center, size: sticker_size, .. } => {
+                let new_s = f32::from(norm.size.width).max(f32::from(norm.size.height)).clamp(16.0, 256.0);
+                *sticker_size = new_s;
+                *center = point(
+                    norm.origin.x + px(new_s / 2.0),
+                    norm.origin.y + px(new_s / 2.0),
                 );
             }
             _ => {}
@@ -527,6 +701,13 @@ impl Annotation {
                 let ratio = ratio_w.max(ratio_h).clamp(0.2, 5.0);
                 *radius = (orig_r * ratio).clamp(8.0, 64.0);
             }
+            Annotation::Sticker { size: sticker_size, .. } => {
+                let orig_s = *sticker_size;
+                let ratio_w = (ow + dx.abs()) / ow.max(1.0);
+                let ratio_h = (oh + dy.abs()) / oh.max(1.0);
+                let ratio = ratio_w.max(ratio_h).clamp(0.2, 5.0);
+                *sticker_size = (orig_s * ratio).clamp(16.0, 256.0);
+            }
             _ => {
                 let new_bounds = resize_bounds_with_handle(orig_bounds, handle, start_mouse, cur_mouse);
                 self.set_bounds(new_bounds);
@@ -546,25 +727,71 @@ impl Annotation {
                 let tol = tolerance + *width / 2.0;
                 dist_to_segment_sq(p_f, a_f, b_f) <= tol * tol
             }
-            Annotation::Arrow { from, to, width, .. } => {
+            Annotation::Arrow { from, to, control, two_headed, width, .. } => {
                 let a_f = (f32::from(from.x), f32::from(from.y));
                 let b_f = (f32::from(to.x), f32::from(to.y));
                 let tol = tolerance + *width / 2.0;
                 let tol_sq = tol * tol;
-                if dist_to_segment_sq(p_f, a_f, b_f) <= tol_sq {
-                    return true;
-                }
-                let geom = calculate_arrow_geometry(a_f, b_f, *width);
-                if geom.has_head {
-                    if dist_to_segment_sq(p_f, geom.tip, geom.left_wing) <= tol_sq
-                        || dist_to_segment_sq(p_f, geom.tip, geom.right_wing) <= tol_sq
-                        || dist_to_segment_sq(p_f, geom.left_wing, geom.right_wing) <= tol_sq
-                        || point_in_triangle(p_f, geom.tip, geom.left_wing, geom.right_wing)
-                    {
+
+                if let Some(cp) = control {
+                    let c_f = (f32::from(cp.x), f32::from(cp.y));
+                    let pts = sample_quadratic_bezier(a_f, c_f, b_f, 24);
+                    for pair in pts.windows(2) {
+                        if dist_to_segment_sq(p_f, pair[0], pair[1]) <= tol_sq {
+                            return true;
+                        }
+                    }
+                    let head_to_geom = calculate_arrowhead(b_f, c_f, *width, 100.0);
+                    if let Some(geom) = head_to_geom {
+                        if dist_to_segment_sq(p_f, geom.tip, geom.left_wing) <= tol_sq
+                            || dist_to_segment_sq(p_f, geom.tip, geom.right_wing) <= tol_sq
+                            || dist_to_segment_sq(p_f, geom.left_wing, geom.right_wing) <= tol_sq
+                            || point_in_triangle(p_f, geom.tip, geom.left_wing, geom.right_wing)
+                        {
+                            return true;
+                        }
+                    }
+                    if *two_headed {
+                        let head_from_geom = calculate_arrowhead(a_f, c_f, *width, 100.0);
+                        if let Some(geom) = head_from_geom {
+                            if dist_to_segment_sq(p_f, geom.tip, geom.left_wing) <= tol_sq
+                                || dist_to_segment_sq(p_f, geom.tip, geom.right_wing) <= tol_sq
+                                || dist_to_segment_sq(p_f, geom.left_wing, geom.right_wing) <= tol_sq
+                                || point_in_triangle(p_f, geom.tip, geom.left_wing, geom.right_wing)
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                } else {
+                    if dist_to_segment_sq(p_f, a_f, b_f) <= tol_sq {
                         return true;
                     }
+                    let geom = calculate_arrow_geometry(a_f, b_f, *width);
+                    if geom.has_head {
+                        if dist_to_segment_sq(p_f, geom.tip, geom.left_wing) <= tol_sq
+                            || dist_to_segment_sq(p_f, geom.tip, geom.right_wing) <= tol_sq
+                            || dist_to_segment_sq(p_f, geom.left_wing, geom.right_wing) <= tol_sq
+                            || point_in_triangle(p_f, geom.tip, geom.left_wing, geom.right_wing)
+                        {
+                            return true;
+                        }
+                    }
+                    if *two_headed {
+                        let geom_rev = calculate_arrow_geometry(b_f, a_f, *width);
+                        if geom_rev.has_head {
+                            if dist_to_segment_sq(p_f, geom_rev.tip, geom_rev.left_wing) <= tol_sq
+                                || dist_to_segment_sq(p_f, geom_rev.tip, geom_rev.right_wing) <= tol_sq
+                                || dist_to_segment_sq(p_f, geom_rev.left_wing, geom_rev.right_wing) <= tol_sq
+                                || point_in_triangle(p_f, geom_rev.tip, geom_rev.left_wing, geom_rev.right_wing)
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                    false
                 }
-                false
             }
             Annotation::Rectangle { bounds, filled, width, .. } => {
                 let norm = normalize_bounds(*bounds);
@@ -694,6 +921,12 @@ impl Annotation {
                 let bottom = top + f32::from(norm.size.height);
                 px_f >= left - tolerance && px_f <= right + tolerance && py_f >= top - tolerance && py_f <= bottom + tolerance
             }
+            Annotation::Sticker { center, size, .. } => {
+                let half = size / 2.0;
+                let cx = f32::from(center.x);
+                let cy = f32::from(center.y);
+                (px_f - cx).abs() <= half + tolerance && (py_f - cy).abs() <= half + tolerance
+            }
         }
     }
 
@@ -701,7 +934,24 @@ impl Annotation {
         let r_f32 = f32::from(radius);
         let r_sq = r_f32 * r_f32;
         match self {
-            Annotation::Arrow { from, to, .. } | Annotation::Line { from, to, .. } => {
+            Annotation::Arrow { from, to, control, .. } => {
+                if let Some(cp) = control {
+                    let d_cp_sq = f32::from(p.x - cp.x).powi(2) + f32::from(p.y - cp.y).powi(2);
+                    if d_cp_sq <= r_sq {
+                        return Some(AnnotationHandle::BezierControl);
+                    }
+                }
+                let d_from_sq = f32::from(p.x - from.x).powi(2) + f32::from(p.y - from.y).powi(2);
+                let d_to_sq = f32::from(p.x - to.x).powi(2) + f32::from(p.y - to.y).powi(2);
+                if d_from_sq <= r_sq && d_from_sq <= d_to_sq {
+                    return Some(AnnotationHandle::Endpoint(true));
+                }
+                if d_to_sq <= r_sq {
+                    return Some(AnnotationHandle::Endpoint(false));
+                }
+                None
+            }
+            Annotation::Line { from, to, .. } => {
                 let d_from_sq = f32::from(p.x - from.x).powi(2) + f32::from(p.y - from.y).powi(2);
                 let d_to_sq = f32::from(p.x - to.x).powi(2) + f32::from(p.y - to.y).powi(2);
                 if d_from_sq <= r_sq && d_from_sq <= d_to_sq {
@@ -721,7 +971,8 @@ impl Annotation {
             | Annotation::Pixelate { .. }
             | Annotation::Spotlight { .. }
             | Annotation::Text { .. }
-            | Annotation::NumberBadge { .. } => {
+            | Annotation::NumberBadge { .. }
+            | Annotation::Sticker { .. } => {
                 let b = self.bounds();
                 let x = b.origin.x;
                 let y = b.origin.y;
@@ -765,7 +1016,14 @@ impl Annotation {
                     *pt = point(pt.x + delta.x, pt.y + delta.y);
                 }
             }
-            Annotation::Arrow { from, to, .. } | Annotation::Line { from, to, .. } => {
+            Annotation::Arrow { from, to, control, .. } => {
+                *from = point(from.x + delta.x, from.y + delta.y);
+                *to = point(to.x + delta.x, to.y + delta.y);
+                if let Some(cp) = control {
+                    *cp = point(cp.x + delta.x, cp.y + delta.y);
+                }
+            }
+            Annotation::Line { from, to, .. } => {
                 *from = point(from.x + delta.x, from.y + delta.y);
                 *to = point(to.x + delta.x, to.y + delta.y);
             }
@@ -785,6 +1043,9 @@ impl Annotation {
             Annotation::NumberBadge { center, .. } => {
                 *center = point(center.x + delta.x, center.y + delta.y);
             }
+            Annotation::Sticker { center, .. } => {
+                *center = point(center.x + delta.x, center.y + delta.y);
+            }
         }
     }
 
@@ -802,6 +1063,7 @@ impl Annotation {
             | Annotation::Text { color, .. }
             | Annotation::Spotlight { color, .. }
             | Annotation::NumberBadge { color, .. } => Some(*color),
+            Annotation::Sticker { color, .. } => *color,
             _ => None,
         }
     }
@@ -820,6 +1082,7 @@ impl Annotation {
             | Annotation::Text { color, .. }
             | Annotation::Spotlight { color, .. }
             | Annotation::NumberBadge { color, .. } => *color = new_color,
+            Annotation::Sticker { color, .. } => *color = Some(new_color),
             _ => {}
         }
     }
@@ -888,7 +1151,8 @@ impl Annotation {
             | Annotation::Ellipse { filled, .. }
             | Annotation::Triangle { filled, .. }
             | Annotation::Star { filled, .. }
-            | Annotation::Diamond { filled, .. } => Some(*filled),
+            | Annotation::Diamond { filled, .. }
+            | Annotation::NumberBadge { filled, .. } => Some(*filled),
             _ => None,
         }
     }
@@ -899,8 +1163,101 @@ impl Annotation {
             | Annotation::Ellipse { filled, .. }
             | Annotation::Triangle { filled, .. }
             | Annotation::Star { filled, .. }
-            | Annotation::Diamond { filled, .. } => *filled = new_filled,
+            | Annotation::Diamond { filled, .. }
+            | Annotation::NumberBadge { filled, .. } => *filled = new_filled,
             _ => {}
+        }
+    }
+
+    pub fn badge_shape(&self) -> Option<BadgeShape> {
+        match self {
+            Annotation::NumberBadge { shape, .. } => Some(*shape),
+            _ => None,
+        }
+    }
+
+    pub fn set_badge_shape(&mut self, new_shape: BadgeShape) {
+        if let Annotation::NumberBadge { shape, .. } = self {
+            *shape = new_shape;
+        }
+    }
+
+    pub fn badge_mode(&self) -> Option<BadgeMode> {
+        match self {
+            Annotation::NumberBadge { mode, .. } => Some(*mode),
+            _ => None,
+        }
+    }
+
+    pub fn set_badge_mode(&mut self, new_mode: BadgeMode) {
+        if let Annotation::NumberBadge { mode, .. } = self {
+            *mode = new_mode;
+        }
+    }
+
+    pub fn is_two_headed(&self) -> Option<bool> {
+        match self {
+            Annotation::Arrow { two_headed, .. } => Some(*two_headed),
+            _ => None,
+        }
+    }
+
+    pub fn set_two_headed(&mut self, th: bool) {
+        if let Annotation::Arrow { two_headed, .. } = self {
+            *two_headed = th;
+        }
+    }
+
+    pub fn is_curved(&self) -> Option<bool> {
+        match self {
+            Annotation::Arrow { control, .. } => Some(control.is_some()),
+            _ => None,
+        }
+    }
+
+    pub fn set_curved(&mut self, curved: bool) {
+        if let Annotation::Arrow { from, to, control, .. } = self {
+            if curved {
+                if control.is_none() {
+                    let mx = (f32::from(from.x) + f32::from(to.x)) / 2.0;
+                    let my = (f32::from(from.y) + f32::from(to.y)) / 2.0;
+                    let dx = f32::from(to.x) - f32::from(from.x);
+                    let dy = f32::from(to.y) - f32::from(from.y);
+                    let len = (dx * dx + dy * dy).sqrt().max(1.0);
+                    let nx = -dy / len;
+                    let ny = dx / len;
+                    let offset = (len * 0.25).max(30.0);
+                    *control = Some(point(px(mx + nx * offset), px(my + ny * offset)));
+                }
+            } else {
+                *control = None;
+            }
+        }
+    }
+
+    pub fn sticker_kind(&self) -> Option<StickerKind> {
+        match self {
+            Annotation::Sticker { kind, .. } => Some(*kind),
+            _ => None,
+        }
+    }
+
+    pub fn set_sticker_kind(&mut self, new_kind: StickerKind) {
+        if let Annotation::Sticker { kind, .. } = self {
+            *kind = new_kind;
+        }
+    }
+
+    pub fn sticker_size(&self) -> Option<f32> {
+        match self {
+            Annotation::Sticker { size, .. } => Some(*size),
+            _ => None,
+        }
+    }
+
+    pub fn set_sticker_size(&mut self, new_size: f32) {
+        if let Annotation::Sticker { size, .. } = self {
+            *size = new_size;
         }
     }
 }

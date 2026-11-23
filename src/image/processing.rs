@@ -110,6 +110,7 @@ pub fn apply_spotlights(
                 corner_radius,
                 spot.border_width,
                 spot.border_color,
+                false,
             );
         }
     }

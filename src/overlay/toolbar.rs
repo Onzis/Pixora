@@ -7,7 +7,7 @@ use gpui::{
 use image::{Frame, RgbaImage};
 use smallvec::smallvec;
 
-pub const TOOLBAR_WIDTH: f32 = 826.0;
+pub const TOOLBAR_WIDTH: f32 = 864.0;
 pub const TOOLBAR_MAIN_HEIGHT: f32 = 46.0;
 pub const TOOLBAR_PROPS_HEIGHT: f32 = 46.0;
 pub const TOOLBAR_TOTAL_HEIGHT: f32 = 98.0;

@@ -1,4 +1,5 @@
 use gpui::{Rgba, rgb};
+use crate::editor::annotations::{BadgeMode, BadgeShape, StickerKind};
 
 #[derive(Clone, Debug)]
 pub struct ToolProperties {
@@ -10,6 +11,13 @@ pub struct ToolProperties {
     pub is_filled: bool,
     pub current_badge_number: u32,
     pub spotlight_dim: f32,
+    pub arrow_two_headed: bool,
+    pub arrow_curved: bool,
+    pub badge_shape: BadgeShape,
+    pub badge_mode: BadgeMode,
+    pub badge_filled: bool,
+    pub sticker_kind: StickerKind,
+    pub sticker_size: f32,
 }
 
 impl Default for ToolProperties {
@@ -23,6 +31,13 @@ impl Default for ToolProperties {
             is_filled: false,
             current_badge_number: 1,
             spotlight_dim: 0.60,
+            arrow_two_headed: false,
+            arrow_curved: false,
+            badge_shape: BadgeShape::Circle,
+            badge_mode: BadgeMode::Numbers,
+            badge_filled: true,
+            sticker_kind: StickerKind::Checkmark,
+            sticker_size: 40.0,
         }
     }
 }

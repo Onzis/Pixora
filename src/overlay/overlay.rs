@@ -14,7 +14,9 @@ use crate::capture::region::crop_region;
 use crate::capture::screen::ScreenCapture;
 use crate::config::AppConfig;
 use crate::editor::annotations::{
-    Annotation, AnnotationHandle, calculate_arrow_geometry, text_bounds_dimensions, wrap_text_to_lines,
+    Annotation, AnnotationHandle, BadgeMode, BadgeShape, StickerKind,
+    calculate_arrow_geometry, calculate_arrowhead, number_to_badge_label,
+    sample_quadratic_bezier, text_bounds_dimensions, wrap_text_to_lines,
 };
 use crate::editor::canvas::render_annotations_to_image;
 use crate::editor::history::EditHistory;
@@ -66,6 +68,9 @@ pub enum AnnotationDragMode {
     },
     DraggingEndpoint {
         is_start: bool,
+        orig_annotation: Annotation,
+    },
+    DraggingBezierControl {
         orig_annotation: Annotation,
     },
     Resizing {
@@ -194,6 +199,7 @@ impl ScreenOverlayView {
             spotlight_dim: 0.60,
             is_filled: false,
             current_badge_number: 1,
+            ..ToolProperties::default()
         };
         let custom_hex = config.default_color_hex.trim_start_matches('#').to_string();
 
@@ -382,6 +388,19 @@ impl ScreenOverlayView {
                 ann.set_stroke_width(self.tool_props.stroke_width);
                 ann.set_font_size(self.tool_props.font_size);
                 ann.set_filled(self.tool_props.is_filled);
+                if let Annotation::Arrow { .. } = ann {
+                    ann.set_two_headed(self.tool_props.arrow_two_headed);
+                    ann.set_curved(self.tool_props.arrow_curved);
+                }
+                if let Annotation::NumberBadge { .. } = ann {
+                    ann.set_badge_shape(self.tool_props.badge_shape);
+                    ann.set_badge_mode(self.tool_props.badge_mode);
+                    ann.set_filled(self.tool_props.badge_filled);
+                }
+                if let Annotation::Sticker { .. } = ann {
+                    ann.set_sticker_kind(self.tool_props.sticker_kind);
+                    ann.set_sticker_size(self.tool_props.sticker_size);
+                }
                 match ann {
                     Annotation::Blur { radius, .. } => *radius = self.tool_props.blur_radius,
                     Annotation::Pixelate { block_size, .. } => *block_size = self.tool_props.pixelate_block,
@@ -1025,6 +1044,11 @@ impl ScreenOverlayView {
                                     orig_annotation: ann,
                                 };
                             }
+                            AnnotationHandle::BezierControl => {
+                                self.annotation_drag_mode = AnnotationDragMode::DraggingBezierControl {
+                                    orig_annotation: ann,
+                                };
+                            }
                             _ => {
                                 let orig_bounds = self.history.annotations[sel_idx].bounds();
                                 self.annotation_drag_mode = AnnotationDragMode::Resizing {
@@ -1097,12 +1121,35 @@ impl ScreenOverlayView {
                 if let Some(f) = ann.is_filled() {
                     self.tool_props.is_filled = f;
                 }
+                if let Some(th) = ann.is_two_headed() {
+                    self.tool_props.arrow_two_headed = th;
+                }
+                if let Some(curved) = ann.is_curved() {
+                    self.tool_props.arrow_curved = curved;
+                }
+                if let Some(shape) = ann.badge_shape() {
+                    self.tool_props.badge_shape = shape;
+                }
+                if let Some(mode) = ann.badge_mode() {
+                    self.tool_props.badge_mode = mode;
+                }
+                if let Some(kind) = ann.sticker_kind() {
+                    self.tool_props.sticker_kind = kind;
+                }
+                if let Some(size) = ann.sticker_size() {
+                    self.tool_props.sticker_size = size;
+                }
                 self.history.snapshot();
                 if let Some(h) = ann.hit_test_handle(p, px(14.0)) {
                     match h {
                         AnnotationHandle::Endpoint(is_start) => {
                             self.annotation_drag_mode = AnnotationDragMode::DraggingEndpoint {
                                 is_start,
+                                orig_annotation: ann,
+                            };
+                        }
+                        AnnotationHandle::BezierControl => {
+                            self.annotation_drag_mode = AnnotationDragMode::DraggingBezierControl {
                                 orig_annotation: ann,
                             };
                         }
@@ -1208,10 +1255,27 @@ impl ScreenOverlayView {
                 center: p,
                 number: self.tool_props.current_badge_number,
                 color: self.tool_props.stroke_color,
-                radius: 12.0,
+                radius: 14.0,
+                shape: self.tool_props.badge_shape,
+                mode: self.tool_props.badge_mode,
+                filled: self.tool_props.badge_filled,
             };
             self.history.push_annotation(badge);
             self.tool_props.current_badge_number += 1;
+            cx.notify();
+            return;
+        }
+
+        // Sticker placement
+        if self.active_tool == ToolKind::Sticker {
+            let sticker = Annotation::Sticker {
+                center: p,
+                kind: self.tool_props.sticker_kind,
+                size: self.tool_props.sticker_size,
+                color: Some(self.tool_props.stroke_color),
+            };
+            self.history.push_annotation(sticker);
+            self.selected_annotation = Some(self.history.annotations.len() - 1);
             cx.notify();
             return;
         }
@@ -1243,9 +1307,16 @@ impl ScreenOverlayView {
                     });
                 }
                 ToolKind::Arrow => {
+                    let control = if self.tool_props.arrow_curved {
+                        Some(p)
+                    } else {
+                        None
+                    };
                     self.current_drawing = Some(Annotation::Arrow {
                         from: p,
                         to: p,
+                        control,
+                        two_headed: self.tool_props.arrow_two_headed,
                         color: self.tool_props.stroke_color,
                         width: self.tool_props.stroke_width,
                     });
@@ -1439,6 +1510,15 @@ impl ScreenOverlayView {
                             cx.notify();
                             return;
                         }
+                        AnnotationDragMode::DraggingBezierControl { orig_annotation } => {
+                            let mut modified = orig_annotation.clone();
+                            if let Annotation::Arrow { control, .. } = &mut modified {
+                                *control = Some(p);
+                            }
+                            self.history.annotations[idx] = modified;
+                            cx.notify();
+                            return;
+                        }
                         AnnotationDragMode::Resizing { handle, start_mouse, orig_annotation, orig_bounds } => {
                             let mut modified = orig_annotation.clone();
                             modified.resize_with_handle(*orig_bounds, *handle, *start_mouse, p);
@@ -1479,8 +1559,24 @@ impl ScreenOverlayView {
                     Annotation::Pencil { points, .. } | Annotation::Marker { points, .. } => {
                         points.push(p);
                     }
-                    Annotation::Line { to, .. } | Annotation::Arrow { to, .. } => {
+                    Annotation::Line { to, .. } => {
                         *to = p;
+                    }
+                    Annotation::Arrow { to, from, control, .. } => {
+                        *to = p;
+                        if self.tool_props.arrow_curved {
+                            let mx = (f32::from(from.x) + f32::from(to.x)) / 2.0;
+                            let my = (f32::from(from.y) + f32::from(to.y)) / 2.0;
+                            let dx = f32::from(to.x) - f32::from(from.x);
+                            let dy = f32::from(to.y) - f32::from(from.y);
+                            let len = (dx * dx + dy * dy).sqrt();
+                            if len > 10.0 {
+                                let offset = (len * 0.25).max(25.0);
+                                let nx = -dy / len;
+                                let ny = dx / len;
+                                *control = Some(point(px(mx + nx * offset), px(my + ny * offset)));
+                            }
+                        }
                     }
                     Annotation::Rectangle { bounds, .. }
                     | Annotation::Ellipse { bounds, .. }
@@ -2002,7 +2098,7 @@ impl Render for ScreenOverlayView {
                     let ann = &self.history.annotations[sel_idx];
                     if let Some(h) = ann.hit_test_handle(self.cursor_pos, px(14.0)) {
                         match h {
-                            AnnotationHandle::Endpoint(_) => CursorStyle::Crosshair,
+                            AnnotationHandle::Endpoint(_) | AnnotationHandle::BezierControl => CursorStyle::Crosshair,
                             AnnotationHandle::Top | AnnotationHandle::Bottom => CursorStyle::ResizeUpDown,
                             AnnotationHandle::Left | AnnotationHandle::Right => CursorStyle::ResizeLeftRight,
                             AnnotationHandle::TopLeft | AnnotationHandle::BottomRight => CursorStyle::ResizeUpLeftDownRight,
@@ -2182,28 +2278,92 @@ impl Render for ScreenOverlayView {
                                     window.paint_path(p, *color);
                                 }
                             }
-                            Annotation::Arrow { from, to, color, width } => {
-                                let geom = calculate_arrow_geometry(
-                                    (f32::from(from.x), f32::from(from.y)),
-                                    (f32::from(to.x), f32::from(to.y)),
-                                    *width,
-                                );
+                            Annotation::Arrow { from, to, control, two_headed, color, width } => {
+                                let x1 = f32::from(from.x);
+                                let y1 = f32::from(from.y);
+                                let x2 = f32::from(to.x);
+                                let y2 = f32::from(to.y);
 
-                                let mut pb = PathBuilder::stroke(px(*width));
-                                pb.move_to(point(px(geom.shaft_from.0), px(geom.shaft_from.1)));
-                                pb.line_to(point(px(geom.shaft_to.0), px(geom.shaft_to.1)));
-                                if let Ok(p) = pb.build() {
-                                    window.paint_path(p, *color);
-                                }
+                                if let Some(cp) = control {
+                                    let cx_f = f32::from(cp.x);
+                                    let cy_f = f32::from(cp.y);
+                                    let steps = 24;
+                                    let pts = sample_quadratic_bezier((x1, y1), (cx_f, cy_f), (x2, y2), steps);
 
-                                if geom.has_head {
-                                    let mut head_b = PathBuilder::fill();
-                                    head_b.move_to(point(px(geom.tip.0), px(geom.tip.1)));
-                                    head_b.line_to(point(px(geom.left_wing.0), px(geom.left_wing.1)));
-                                    head_b.line_to(point(px(geom.right_wing.0), px(geom.right_wing.1)));
-                                    head_b.close();
-                                    if let Ok(hp) = head_b.build() {
-                                        window.paint_path(hp, *color);
+                                    let mut pb = PathBuilder::stroke(px(*width));
+                                    if !pts.is_empty() {
+                                        pb.move_to(point(px(pts[0].0), px(pts[0].1)));
+                                        for pt in &pts[1..] {
+                                            pb.line_to(point(px(pt.0), px(pt.1)));
+                                        }
+                                        if let Ok(p) = pb.build() {
+                                            window.paint_path(p, *color);
+                                        }
+                                    }
+
+                                    if let Some(head) = calculate_arrowhead((x2, y2), (cx_f, cy_f), *width, 100.0) {
+                                        let mut head_b = PathBuilder::fill();
+                                        head_b.move_to(point(px(head.tip.0), px(head.tip.1)));
+                                        head_b.line_to(point(px(head.left_wing.0), px(head.left_wing.1)));
+                                        head_b.line_to(point(px(head.right_wing.0), px(head.right_wing.1)));
+                                        head_b.close();
+                                        if let Ok(hp) = head_b.build() {
+                                            window.paint_path(hp, *color);
+                                        }
+                                    }
+
+                                    if *two_headed {
+                                        if let Some(head) = calculate_arrowhead((x1, y1), (cx_f, cy_f), *width, 100.0) {
+                                            let mut head_b = PathBuilder::fill();
+                                            head_b.move_to(point(px(head.tip.0), px(head.tip.1)));
+                                            head_b.line_to(point(px(head.left_wing.0), px(head.left_wing.1)));
+                                            head_b.line_to(point(px(head.right_wing.0), px(head.right_wing.1)));
+                                            head_b.close();
+                                            if let Ok(hp) = head_b.build() {
+                                                window.paint_path(hp, *color);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    let geom = calculate_arrow_geometry((x1, y1), (x2, y2), *width);
+
+                                    let shaft_start = if *two_headed {
+                                        let geom_rev = calculate_arrow_geometry((x2, y2), (x1, y1), *width);
+                                        geom_rev.shaft_to
+                                    } else {
+                                        geom.shaft_from
+                                    };
+
+                                    let mut pb = PathBuilder::stroke(px(*width));
+                                    pb.move_to(point(px(shaft_start.0), px(shaft_start.1)));
+                                    pb.line_to(point(px(geom.shaft_to.0), px(geom.shaft_to.1)));
+                                    if let Ok(p) = pb.build() {
+                                        window.paint_path(p, *color);
+                                    }
+
+                                    if geom.has_head {
+                                        let mut head_b = PathBuilder::fill();
+                                        head_b.move_to(point(px(geom.tip.0), px(geom.tip.1)));
+                                        head_b.line_to(point(px(geom.left_wing.0), px(geom.left_wing.1)));
+                                        head_b.line_to(point(px(geom.right_wing.0), px(geom.right_wing.1)));
+                                        head_b.close();
+                                        if let Ok(hp) = head_b.build() {
+                                            window.paint_path(hp, *color);
+                                        }
+                                    }
+
+                                    if *two_headed {
+                                        let geom_rev = calculate_arrow_geometry((x2, y2), (x1, y1), *width);
+                                        if geom_rev.has_head {
+                                            let mut head_b = PathBuilder::fill();
+                                            head_b.move_to(point(px(geom_rev.tip.0), px(geom_rev.tip.1)));
+                                            head_b.line_to(point(px(geom_rev.left_wing.0), px(geom_rev.left_wing.1)));
+                                            head_b.line_to(point(px(geom_rev.right_wing.0), px(geom_rev.right_wing.1)));
+                                            head_b.close();
+                                            if let Ok(hp) = head_b.build() {
+                                                window.paint_path(hp, *color);
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -2362,13 +2522,48 @@ impl Render for ScreenOverlayView {
                                 }
                             }
                             Annotation::Blur { .. } | Annotation::Pixelate { .. } | Annotation::Spotlight { .. } => {}
-                            Annotation::NumberBadge { center, color, radius, .. } => {
+                            Annotation::NumberBadge { center, color, radius, shape, mode: _, filled, .. } => {
                                 let badge_bounds = Bounds {
                                     origin: point(center.x - px(*radius), center.y - px(*radius)),
                                     size: size(px(*radius * 2.0), px(*radius * 2.0)),
                                 };
-                                window.paint_quad(fill(badge_bounds, *color));
-                                window.paint_quad(outline(badge_bounds, rgb(0xFFFFFF), BorderStyle::Solid));
+                                match shape {
+                                    BadgeShape::Circle => {
+                                        let cx = f32::from(center.x);
+                                        let cy = f32::from(center.y);
+                                        let r = *radius;
+                                        let k = r * 0.55228475;
+                                        let mut pb = if *filled { PathBuilder::fill() } else { PathBuilder::stroke(px(2.5)) };
+                                        pb.move_to(point(px(cx), px(cy - r)));
+                                        pb.cubic_bezier_to(point(px(cx + r), px(cy)), point(px(cx + k), px(cy - r)), point(px(cx + r), px(cy - k)));
+                                        pb.cubic_bezier_to(point(px(cx), px(cy + r)), point(px(cx + r), px(cy + k)), point(px(cx + k), px(cy + r)));
+                                        pb.cubic_bezier_to(point(px(cx - r), px(cy)), point(px(cx - k), px(cy + r)), point(px(cx - r), px(cy + k)));
+                                        pb.cubic_bezier_to(point(px(cx), px(cy - r)), point(px(cx - r), px(cy - k)), point(px(cx - k), px(cy - r)));
+                                        if *filled { pb.close(); }
+                                        if let Ok(path) = pb.build() {
+                                            window.paint_path(path, *color);
+                                        }
+                                        if *filled {
+                                            let mut outline_pb = PathBuilder::stroke(px(2.0));
+                                            outline_pb.move_to(point(px(cx), px(cy - r)));
+                                            outline_pb.cubic_bezier_to(point(px(cx + r), px(cy)), point(px(cx + k), px(cy - r)), point(px(cx + r), px(cy - k)));
+                                            outline_pb.cubic_bezier_to(point(px(cx), px(cy + r)), point(px(cx + r), px(cy + k)), point(px(cx + k), px(cy + r)));
+                                            outline_pb.cubic_bezier_to(point(px(cx - r), px(cy)), point(px(cx - k), px(cy + r)), point(px(cx - r), px(cy + k)));
+                                            outline_pb.cubic_bezier_to(point(px(cx), px(cy - r)), point(px(cx - r), px(cy - k)), point(px(cx - k), px(cy - r)));
+                                            if let Ok(outline_path) = outline_pb.build() {
+                                                window.paint_path(outline_path, rgb(0xFFFFFF));
+                                            }
+                                        }
+                                    }
+                                    BadgeShape::RoundedRect => {
+                                        if *filled {
+                                            window.paint_quad(fill(badge_bounds, *color));
+                                            window.paint_quad(outline(badge_bounds, rgb(0xFFFFFF), BorderStyle::Solid));
+                                        } else {
+                                            window.paint_quad(outline(badge_bounds, *color, BorderStyle::Solid));
+                                        }
+                                    }
+                                }
                             }
                             _ => {}
                         }
@@ -2487,7 +2682,25 @@ impl Render for ScreenOverlayView {
                     if let Some(idx) = selected_annotation {
                         if let Some(ann) = annotations.get(idx) {
                             match ann {
-                                Annotation::Arrow { from, to, .. } | Annotation::Line { from, to, .. } => {
+                                Annotation::Arrow { from, to, control, .. } => {
+                                    for pt in [*from, *to] {
+                                        let h_bounds = Bounds {
+                                            origin: point(pt.x - px(5.0), pt.y - px(5.0)),
+                                            size: size(px(10.0), px(10.0)),
+                                        };
+                                        window.paint_quad(fill(h_bounds, rgb(0xFFFFFF)));
+                                        window.paint_quad(outline(h_bounds, rgb(0x8174FF), BorderStyle::Solid));
+                                    }
+                                    if let Some(cp) = control {
+                                        let h_bounds = Bounds {
+                                            origin: point(cp.x - px(5.5), cp.y - px(5.5)),
+                                            size: size(px(11.0), px(11.0)),
+                                        };
+                                        window.paint_quad(fill(h_bounds, rgb(0xFFCC00)));
+                                        window.paint_quad(outline(h_bounds, rgb(0x8174FF), BorderStyle::Solid));
+                                    }
+                                }
+                                Annotation::Line { from, to, .. } => {
                                     for pt in [*from, *to] {
                                         let h_bounds = Bounds {
                                             origin: point(pt.x - px(5.0), pt.y - px(5.0)),
@@ -2558,7 +2771,9 @@ impl Render for ScreenOverlayView {
 
                     root = root.child(container);
                 }
-                if let Annotation::NumberBadge { center, number, radius, .. } = ann {
+                if let Annotation::NumberBadge { center, number, radius, mode, filled, color, .. } = ann {
+                    let label = number_to_badge_label(*number, *mode);
+                    let text_c = if *filled { rgb(0xFFFFFF) } else { *color };
                     root = root.child(
                         div()
                             .absolute()
@@ -2570,8 +2785,28 @@ impl Render for ScreenOverlayView {
                             .justify_center()
                             .text_xs()
                             .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(rgb(0xFFFFFF))
-                            .child(number.to_string()),
+                            .text_color(text_c)
+                            .child(label),
+                    );
+                }
+                if let Annotation::Sticker { center, kind, size, color } = ann {
+                    let sticker_color = color.unwrap_or(rgb(0xFF453A));
+                    let half = *size / 2.0;
+                    root = root.child(
+                        div()
+                            .absolute()
+                            .left(center.x - px(half))
+                            .top(center.y - px(half))
+                            .size(px(*size))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                svg()
+                                    .path(kind.icon_path())
+                                    .size(px(*size))
+                                    .text_color(sticker_color),
+                            ),
                     );
                 }
             }
@@ -2833,6 +3068,7 @@ impl Render for ScreenOverlayView {
                             Annotation::Pixelate { .. } => ToolKind::Pixelate,
                             Annotation::Spotlight { .. } => ToolKind::Spotlight,
                             Annotation::NumberBadge { .. } => ToolKind::NumberBadge,
+                            Annotation::Sticker { .. } => ToolKind::Sticker,
                         }
                     } else {
                         ToolKind::Select
@@ -2998,6 +3234,19 @@ impl Render for ScreenOverlayView {
                         }),
                         cx.listener(move |this, hovered, _, cx| {
                             this.set_tooltip(t(lang, "Step Badge Counter", "Шаги / Нумерация"), 219.0, *hovered, cx);
+                        }),
+                    ))
+                    .child(render_toolbar_button(
+                        "btn-sticker".into(),
+                        "icons/sticker.svg",
+                        active_tool == ToolKind::Sticker,
+                        theme_ref,
+                        cx.listener(|this, _, _, cx| {
+                            this.active_tool = ToolKind::Sticker;
+                            cx.notify();
+                        }),
+                        cx.listener(move |this, hovered, _, cx| {
+                            this.set_tooltip(t(lang, "Stickers and Icons", "Стикеры и значки"), 255.0, *hovered, cx);
                         }),
                     ))
                     .child(render_toolbar_divider(theme_ref))
@@ -3943,6 +4192,342 @@ impl Render for ScreenOverlayView {
                                             .child(svg().path("icons/plus.svg").size(px(12.0)).text_color(theme.text_secondary)),
                                     ),
                             )
+                        })
+                        // Arrow controls (Curved Bezier & Double-headed)
+                        .when(effective_tool == ToolKind::Arrow, |p| {
+                            p.child(render_toolbar_divider(theme_ref))
+                                .child(
+                                    div()
+                                        .id("toggle-arrow-curved")
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_md()
+                                        .bg(if self.tool_props.arrow_curved {
+                                            rgba(0x8174FF33)
+                                        } else {
+                                            theme.bg_secondary
+                                        })
+                                        .border_1()
+                                        .border_color(if self.tool_props.arrow_curved {
+                                            theme.accent
+                                        } else {
+                                            theme.border_subtle
+                                        })
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.tool_props.arrow_curved = !this.tool_props.arrow_curved;
+                                            this.sync_and_save_tool_props();
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(theme.text_primary)
+                                                .child(if self.tool_props.arrow_curved {
+                                                    t(lang, "Curved", "Изгиб")
+                                                } else {
+                                                    t(lang, "Straight", "Прямая")
+                                                }),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("toggle-arrow-double")
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_md()
+                                        .bg(if self.tool_props.arrow_two_headed {
+                                            rgba(0x8174FF33)
+                                        } else {
+                                            theme.bg_secondary
+                                        })
+                                        .border_1()
+                                        .border_color(if self.tool_props.arrow_two_headed {
+                                            theme.accent
+                                        } else {
+                                            theme.border_subtle
+                                        })
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.tool_props.arrow_two_headed = !this.tool_props.arrow_two_headed;
+                                            this.sync_and_save_tool_props();
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(theme.text_primary)
+                                                .child(if self.tool_props.arrow_two_headed {
+                                                    "<--->"
+                                                } else {
+                                                    "--->"
+                                                }),
+                                        ),
+                                )
+                        })
+                        // Step badge controls (Shape, Mode, Fill, Reset)
+                        .when(effective_tool == ToolKind::NumberBadge, |p| {
+                            p.child(render_toolbar_divider(theme_ref))
+                                .child(
+                                    div()
+                                        .id("toggle-badge-shape")
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_md()
+                                        .bg(if self.tool_props.badge_shape == BadgeShape::RoundedRect {
+                                            rgba(0x8174FF33)
+                                        } else {
+                                            theme.bg_secondary
+                                        })
+                                        .border_1()
+                                        .border_color(if self.tool_props.badge_shape == BadgeShape::RoundedRect {
+                                            theme.accent
+                                        } else {
+                                            theme.border_subtle
+                                        })
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.tool_props.badge_shape = match this.tool_props.badge_shape {
+                                                BadgeShape::Circle => BadgeShape::RoundedRect,
+                                                BadgeShape::RoundedRect => BadgeShape::Circle,
+                                            };
+                                            this.sync_and_save_tool_props();
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(theme.text_primary)
+                                                .child(if self.tool_props.badge_shape == BadgeShape::Circle {
+                                                    t(lang, "Circle", "Круг")
+                                                } else {
+                                                    t(lang, "Square", "Квадрат")
+                                                }),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("toggle-badge-mode")
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_md()
+                                        .bg(if self.tool_props.badge_mode == BadgeMode::Alphabet {
+                                            rgba(0x8174FF33)
+                                        } else {
+                                            theme.bg_secondary
+                                        })
+                                        .border_1()
+                                        .border_color(if self.tool_props.badge_mode == BadgeMode::Alphabet {
+                                            theme.accent
+                                        } else {
+                                            theme.border_subtle
+                                        })
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.tool_props.badge_mode = match this.tool_props.badge_mode {
+                                                BadgeMode::Numbers => BadgeMode::Alphabet,
+                                                BadgeMode::Alphabet => BadgeMode::Numbers,
+                                            };
+                                            this.sync_and_save_tool_props();
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(theme.text_primary)
+                                                .child(if self.tool_props.badge_mode == BadgeMode::Numbers {
+                                                    "123"
+                                                } else {
+                                                    "ABC"
+                                                }),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("toggle-badge-fill")
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_md()
+                                        .bg(if self.tool_props.badge_filled {
+                                            rgba(0x8174FF33)
+                                        } else {
+                                            theme.bg_secondary
+                                        })
+                                        .border_1()
+                                        .border_color(if self.tool_props.badge_filled {
+                                            theme.accent
+                                        } else {
+                                            theme.border_subtle
+                                        })
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.tool_props.badge_filled = !this.tool_props.badge_filled;
+                                            this.sync_and_save_tool_props();
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(theme.text_primary)
+                                                .child(if self.tool_props.badge_filled {
+                                                    t(lang, "Fill", "Заливка")
+                                                } else {
+                                                    t(lang, "Outline", "Контур")
+                                                }),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("btn-reset-badge-counter")
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_md()
+                                        .bg(theme.bg_secondary)
+                                        .border_1()
+                                        .border_color(theme.border_subtle)
+                                        .hover(|s| s.bg(theme.bg_hover))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.tool_props.current_badge_number = 1;
+                                            this.sync_and_save_tool_props();
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(theme.text_secondary)
+                                                .child(format!("↺ 1 ({})", self.tool_props.current_badge_number)),
+                                        ),
+                                )
+                        })
+                        // Sticker controls (Kind selector + Size stepper)
+                        .when(effective_tool == ToolKind::Sticker, |p| {
+                            let stickers = [
+                                (StickerKind::Checkmark, "icons/sticker-check.svg", "Checkmark"),
+                                (StickerKind::Cross, "icons/sticker-cross.svg", "Cross"),
+                                (StickerKind::Warning, "icons/sticker-warning.svg", "Warning"),
+                                (StickerKind::Cursor, "icons/sticker-cursor.svg", "Cursor"),
+                                (StickerKind::Star, "icons/sticker-star.svg", "Star"),
+                                (StickerKind::Heart, "icons/sticker-heart.svg", "Heart"),
+                                (StickerKind::Question, "icons/sticker-question.svg", "Question"),
+                                (StickerKind::Lightbulb, "icons/sticker-bulb.svg", "Bulb"),
+                            ];
+                            let cur_kind = self.tool_props.sticker_kind;
+                            let mut container = p.child(render_toolbar_divider(theme_ref));
+                            for (kind, icon, id) in stickers {
+                                let is_active = cur_kind == kind;
+                                container = container.child(
+                                    div()
+                                        .id(ElementId::Name(format!("sticker-btn-{}", id).into()))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .size(px(24.0))
+                                        .rounded_md()
+                                        .bg(if is_active {
+                                            rgba(0x8174FF33)
+                                        } else {
+                                            theme.bg_secondary
+                                        })
+                                        .border_1()
+                                        .border_color(if is_active {
+                                            theme.accent
+                                        } else {
+                                            theme.border_subtle
+                                        })
+                                        .hover(|s| s.bg(theme.bg_hover))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.tool_props.sticker_kind = kind;
+                                            this.sync_and_save_tool_props();
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            svg()
+                                                .path(icon)
+                                                .size(px(14.0))
+                                                .text_color(if is_active {
+                                                    theme.accent
+                                                } else {
+                                                    theme.text_primary
+                                                }),
+                                        ),
+                                );
+                            }
+                            container
+                                .child(render_toolbar_divider(theme_ref))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_1()
+                                        .child(
+                                            div()
+                                                .id("btn-dec-sticker-size")
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .size(px(22.0))
+                                                .rounded_md()
+                                                .bg(theme.bg_secondary)
+                                                .border_1()
+                                                .border_color(theme.border_subtle)
+                                                .hover(|s| s.bg(theme.bg_hover))
+                                                .cursor_pointer()
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.tool_props.sticker_size = (this.tool_props.sticker_size - 4.0).max(16.0);
+                                                    this.sync_and_save_tool_props();
+                                                    cx.notify();
+                                                }))
+                                                .child(svg().path("icons/minus.svg").size(px(12.0)).text_color(theme.text_secondary)),
+                                        )
+                                        .child(
+                                            div()
+                                                .px_2()
+                                                .py_0p5()
+                                                .min_w(px(40.0))
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .rounded_md()
+                                                .bg(theme.bg_secondary)
+                                                .border_1()
+                                                .border_color(theme.border_subtle)
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .font_weight(gpui::FontWeight::BOLD)
+                                                        .text_color(theme.text_primary)
+                                                        .child(format!("{}px", self.tool_props.sticker_size as u32)),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .id("btn-inc-sticker-size")
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .size(px(22.0))
+                                                .rounded_md()
+                                                .bg(theme.bg_secondary)
+                                                .border_1()
+                                                .border_color(theme.border_subtle)
+                                                .hover(|s| s.bg(theme.bg_hover))
+                                                .cursor_pointer()
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.tool_props.sticker_size = (this.tool_props.sticker_size + 4.0).min(128.0);
+                                                    this.sync_and_save_tool_props();
+                                                    cx.notify();
+                                                }))
+                                                .child(svg().path("icons/plus.svg").size(px(12.0)).text_color(theme.text_secondary)),
+                                        ),
+                                )
                         }),
                 );
             }

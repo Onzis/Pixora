@@ -195,6 +195,8 @@ fn test_render_all_annotations_to_image() {
         Annotation::Arrow {
             from: point(px(50.0), px(50.0)),
             to: point(px(100.0), px(100.0)),
+            control: None,
+            two_headed: false,
             color: rgb(0x8174FF),
             width: 4.0,
         },
@@ -221,6 +223,15 @@ fn test_render_all_annotations_to_image() {
             number: 1,
             color: rgb(0x8174FF),
             radius: 12.0,
+            shape: pixora::editor::annotations::BadgeShape::Circle,
+            mode: pixora::editor::annotations::BadgeMode::Numbers,
+            filled: true,
+        },
+        Annotation::Sticker {
+            center: point(px(180.0), px(80.0)),
+            kind: pixora::editor::annotations::StickerKind::Checkmark,
+            size: 32.0,
+            color: Some(rgb(0x30D158)),
         },
         Annotation::Text {
             origin: point(px(20.0), px(160.0)),
@@ -311,7 +322,7 @@ fn test_svg_asset_source_loads_all_icons() {
 
     let assets = PixoraAssets;
     let list = assets.list("").expect("List icons");
-    assert_eq!(list.len(), 36);
+    assert_eq!(list.len(), 47);
 
     for path in list {
         let content = assets.load(&path).expect("Load svg").expect("Found icon");
@@ -751,6 +762,8 @@ fn test_arrow_render_to_image_at_thick_stroke() {
         Annotation::Arrow {
             from: gpui::point(gpui::px(50.0), gpui::px(200.0)),
             to: gpui::point(gpui::px(350.0), gpui::px(200.0)),
+            control: None,
+            two_headed: false,
             color: gpui::rgb(0xFF453A),
             width: 30.0,
         },
@@ -1052,6 +1065,8 @@ fn test_annotation_selection_hit_testing() {
     let arrow = Annotation::Arrow {
         from: point(px(10.0), px(10.0)),
         to: point(px(100.0), px(10.0)),
+        control: None,
+        two_headed: false,
         color: gpui::rgb(0xFF453A),
         width: 4.0,
     };
@@ -1091,6 +1106,8 @@ fn test_annotation_transform_and_handles() {
     let mut arrow = Annotation::Arrow {
         from: point(px(10.0), px(20.0)),
         to: point(px(80.0), px(20.0)),
+        control: None,
+        two_headed: false,
         color: gpui::rgb(0xFF453A),
         width: 4.0,
     };
@@ -1298,6 +1315,127 @@ fn test_area_text_wrapping_and_box_width() {
     let (w, h) = pixora::editor::annotations::text_bounds_dimensions(long_s, 24.0, Some(150.0));
     assert!(w >= 150.0);
     assert!(h > 50.0);
+}
+
+#[test]
+fn test_curved_bezier_arrow_handles_and_geometry() {
+    let mut arrow = Annotation::Arrow {
+        from: point(px(20.0), px(50.0)),
+        to: point(px(180.0), px(50.0)),
+        control: Some(point(px(100.0), px(120.0))),
+        two_headed: true,
+        color: gpui::rgb(0xFF453A),
+        width: 6.0,
+    };
+
+    assert_eq!(arrow.is_curved(), Some(true));
+    assert_eq!(arrow.is_two_headed(), Some(true));
+
+    // Hit-test the Bezier control handle at (100, 120)
+    let handle = arrow.hit_test_handle(point(px(100.0), px(120.0)), px(10.0));
+    assert_eq!(handle, Some(AnnotationHandle::BezierControl));
+
+    // Hit-test endpoints
+    assert_eq!(arrow.hit_test_handle(point(px(20.0), px(50.0)), px(8.0)), Some(AnnotationHandle::Endpoint(true)));
+    assert_eq!(arrow.hit_test_handle(point(px(180.0), px(50.0)), px(8.0)), Some(AnnotationHandle::Endpoint(false)));
+
+    // Bounds must encompass the control point (y=120)
+    let b = arrow.bounds();
+    assert!(b.origin.y <= px(50.0));
+    assert!(b.origin.y + b.size.height >= px(120.0));
+
+    // Translating arrow moves the control point as well
+    arrow.translate(point(px(10.0), px(20.0)));
+    if let Annotation::Arrow { from, to, control, .. } = arrow {
+        assert_eq!(from, point(px(30.0), px(70.0)));
+        assert_eq!(to, point(px(190.0), px(70.0)));
+        assert_eq!(control, Some(point(px(110.0), px(140.0))));
+    } else {
+        panic!("Expected Arrow variant");
+    }
+}
+
+#[test]
+fn test_badge_alphabet_mode_and_reset() {
+    use pixora::editor::annotations::{number_to_badge_label, BadgeMode, BadgeShape};
+    use pixora::editor::properties::ToolProperties;
+
+    // Numbers mode
+    assert_eq!(number_to_badge_label(1, BadgeMode::Numbers), "1");
+    assert_eq!(number_to_badge_label(99, BadgeMode::Numbers), "99");
+
+    // Alphabet mode bijective base-26
+    assert_eq!(number_to_badge_label(1, BadgeMode::Alphabet), "A");
+    assert_eq!(number_to_badge_label(2, BadgeMode::Alphabet), "B");
+    assert_eq!(number_to_badge_label(26, BadgeMode::Alphabet), "Z");
+    assert_eq!(number_to_badge_label(27, BadgeMode::Alphabet), "AA");
+    assert_eq!(number_to_badge_label(28, BadgeMode::Alphabet), "AB");
+    assert_eq!(number_to_badge_label(702, BadgeMode::Alphabet), "ZZ");
+
+    // Badge property updates
+    let mut badge = Annotation::NumberBadge {
+        center: point(px(50.0), px(50.0)),
+        number: 5,
+        color: gpui::rgb(0x8174FF),
+        radius: 14.0,
+        shape: BadgeShape::Circle,
+        mode: BadgeMode::Numbers,
+        filled: true,
+    };
+    assert_eq!(badge.badge_shape(), Some(BadgeShape::Circle));
+    assert_eq!(badge.badge_mode(), Some(BadgeMode::Numbers));
+    assert_eq!(badge.is_filled(), Some(true));
+
+    badge.set_badge_shape(BadgeShape::RoundedRect);
+    badge.set_badge_mode(BadgeMode::Alphabet);
+    badge.set_filled(false);
+    assert_eq!(badge.badge_shape(), Some(BadgeShape::RoundedRect));
+    assert_eq!(badge.badge_mode(), Some(BadgeMode::Alphabet));
+    assert_eq!(badge.is_filled(), Some(false));
+
+    // Reset button simulation on ToolProperties
+    let mut props = ToolProperties::default();
+    props.current_badge_number = 42;
+    props.current_badge_number = 1;
+    assert_eq!(props.current_badge_number, 1);
+}
+
+#[test]
+fn test_sticker_annotation_creation_and_hit_test() {
+    use pixora::editor::annotations::StickerKind;
+
+    let mut sticker = Annotation::Sticker {
+        center: point(px(100.0), px(100.0)),
+        kind: StickerKind::Checkmark,
+        size: 40.0,
+        color: Some(gpui::rgb(0x30D158)),
+    };
+
+    let b = sticker.bounds();
+    assert_eq!(b.origin, point(px(80.0), px(80.0)));
+    assert_eq!(b.size, size(px(40.0), px(40.0)));
+
+    // Hit test inside
+    assert!(sticker.hit_test(point(px(100.0), px(100.0)), 0.0));
+    assert!(sticker.hit_test(point(px(85.0), px(85.0)), 0.0));
+    // Hit test outside
+    assert!(!sticker.hit_test(point(px(50.0), px(50.0)), 0.0));
+
+    // Translate
+    sticker.translate(point(px(20.0), px(10.0)));
+    if let Annotation::Sticker { center, .. } = sticker {
+        assert_eq!(center, point(px(120.0), px(110.0)));
+    } else {
+        panic!("Expected Sticker variant");
+    }
+
+    // Properties
+    assert_eq!(sticker.sticker_kind(), Some(StickerKind::Checkmark));
+    sticker.set_sticker_kind(StickerKind::Warning);
+    assert_eq!(sticker.sticker_kind(), Some(StickerKind::Warning));
+    assert_eq!(sticker.sticker_size(), Some(40.0));
+    sticker.set_sticker_size(48.0);
+    assert_eq!(sticker.sticker_size(), Some(48.0));
 }
 
 

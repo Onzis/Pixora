@@ -1,4 +1,7 @@
-use crate::editor::annotations::{Annotation, calculate_arrow_geometry};
+use crate::editor::annotations::{
+    Annotation, BadgeShape, StickerKind, calculate_arrow_geometry,
+    calculate_arrowhead, sample_quadratic_bezier,
+};
 use crate::image::processing::{apply_blur, apply_pixelate};
 use gpui::Rgba;
 use image::{Rgba as ImageRgba, RgbaImage};
@@ -92,6 +95,8 @@ pub fn render_annotations_to_image(
             Annotation::Arrow {
                 from,
                 to,
+                control,
+                two_headed,
                 color,
                 width,
             } => {
@@ -100,29 +105,89 @@ pub fn render_annotations_to_image(
                 let x2 = f32::from(to.x) - offset_x;
                 let y2 = f32::from(to.y) - offset_y;
 
-                let geom = calculate_arrow_geometry((x1, y1), (x2, y2), *width);
+                if let Some(cp) = control {
+                    let cx = f32::from(cp.x) - offset_x;
+                    let cy = f32::from(cp.y) - offset_y;
+                    let steps = 24;
+                    let pts = sample_quadratic_bezier((x1, y1), (cx, cy), (x2, y2), steps);
 
-                // 1. Shaft line (stops inside arrowhead base, never pokes past tip)
-                draw_line(
-                    image,
-                    geom.shaft_from.0,
-                    geom.shaft_from.1,
-                    geom.shaft_to.0,
-                    geom.shaft_to.1,
-                    *width,
-                    *color,
-                    false,
-                );
+                    for pair in pts.windows(2) {
+                        draw_line(
+                            image,
+                            pair[0].0,
+                            pair[0].1,
+                            pair[1].0,
+                            pair[1].1,
+                            *width,
+                            *color,
+                            false,
+                        );
+                    }
 
-                // 2. Arrowhead filled triangle
-                if geom.has_head {
-                    draw_filled_triangle(
+                    if let Some(head) = calculate_arrowhead((x2, y2), (cx, cy), *width, 100.0) {
+                        draw_filled_triangle(
+                            image,
+                            head.tip,
+                            head.left_wing,
+                            head.right_wing,
+                            *color,
+                        );
+                    }
+
+                    if *two_headed {
+                        if let Some(head) = calculate_arrowhead((x1, y1), (cx, cy), *width, 100.0) {
+                            draw_filled_triangle(
+                                image,
+                                head.tip,
+                                head.left_wing,
+                                head.right_wing,
+                                *color,
+                            );
+                        }
+                    }
+                } else {
+                    let geom = calculate_arrow_geometry((x1, y1), (x2, y2), *width);
+
+                    let shaft_start = if *two_headed {
+                        let geom_rev = calculate_arrow_geometry((x2, y2), (x1, y1), *width);
+                        geom_rev.shaft_to
+                    } else {
+                        geom.shaft_from
+                    };
+
+                    draw_line(
                         image,
-                        geom.tip,
-                        geom.left_wing,
-                        geom.right_wing,
+                        shaft_start.0,
+                        shaft_start.1,
+                        geom.shaft_to.0,
+                        geom.shaft_to.1,
+                        *width,
                         *color,
+                        false,
                     );
+
+                    if geom.has_head {
+                        draw_filled_triangle(
+                            image,
+                            geom.tip,
+                            geom.left_wing,
+                            geom.right_wing,
+                            *color,
+                        );
+                    }
+
+                    if *two_headed {
+                        let geom_rev = calculate_arrow_geometry((x2, y2), (x1, y1), *width);
+                        if geom_rev.has_head {
+                            draw_filled_triangle(
+                                image,
+                                geom_rev.tip,
+                                geom_rev.left_wing,
+                                geom_rev.right_wing,
+                                *color,
+                            );
+                        }
+                    }
                 }
             }
             Annotation::Pencil {
@@ -228,26 +293,54 @@ pub fn render_annotations_to_image(
                 number,
                 color,
                 radius,
+                shape,
+                mode,
+                filled,
             } => {
                 let cx = f32::from(center.x) - offset_x;
                 let cy = f32::from(center.y) - offset_y;
                 let r = *radius;
 
-                draw_circle(image, cx, cy, r, *color, true, 1.0);
-                draw_circle(
-                    image,
-                    cx,
-                    cy,
-                    r,
-                    gpui::rgb(0xFFFFFF),
-                    false,
-                    2.0,
-                );
+                match shape {
+                    BadgeShape::Circle => {
+                        if *filled {
+                            draw_circle(image, cx, cy, r, *color, true, 1.0);
+                            draw_circle(image, cx, cy, r, gpui::rgb(0xFFFFFF), false, 2.0);
+                        } else {
+                            draw_circle(image, cx, cy, r, *color, false, 2.5);
+                        }
+                    }
+                    BadgeShape::RoundedRect => {
+                        let rx = cx - r;
+                        let ry = cy - r;
+                        let rw = r * 2.0;
+                        let rh = r * 2.0;
+                        if *filled {
+                            draw_rounded_rectangle(image, rx, ry, rw, rh, 5.0, 2.0, *color, true);
+                            draw_rounded_rectangle(image, rx, ry, rw, rh, 5.0, 2.0, gpui::rgb(0xFFFFFF), false);
+                        } else {
+                            draw_rounded_rectangle(image, rx, ry, rw, rh, 5.0, 2.5, *color, false);
+                        }
+                    }
+                }
 
-                let num_str = number.to_string();
-                let text_x = cx - (num_str.len() as f32 * 4.5);
+                let label = crate::editor::annotations::number_to_badge_label(*number, *mode);
+                let text_color = if *filled { gpui::rgb(0xFFFFFF) } else { *color };
+                let text_x = cx - (label.len() as f32 * 4.5);
                 let text_y = cy - 6.0;
-                draw_simple_text(image, text_x, text_y, &num_str, gpui::rgb(0xFFFFFF), 2);
+                draw_simple_text(image, text_x, text_y, &label, text_color, 2);
+            }
+            Annotation::Sticker {
+                center,
+                kind,
+                size,
+                color,
+            } => {
+                let cx = f32::from(center.x) - offset_x;
+                let cy = f32::from(center.y) - offset_y;
+                let s = *size;
+                let c = color.unwrap_or(gpui::rgb(0xFF453A));
+                draw_sticker_to_image(image, cx, cy, s, *kind, c);
             }
             Annotation::Text {
                 origin,
@@ -493,10 +586,47 @@ pub(crate) fn draw_rounded_rectangle(
     radius: f32,
     width: f32,
     color: Rgba,
+    filled: bool,
 ) {
     let r = radius.min(w / 2.0).min(h / 2.0).max(0.0);
     if r < 1.0 {
-        draw_rectangle(image, x, y, w, h, width, color, false);
+        draw_rectangle(image, x, y, w, h, width, color, filled);
+        return;
+    }
+    if filled {
+        let min_x = x.round() as i32;
+        let min_y = y.round() as i32;
+        let max_x = (x + w).round() as i32;
+        let max_y = (y + h).round() as i32;
+        let r2 = r * r;
+        for py in min_y..max_y {
+            let fy = py as f32 + 0.5;
+            for px in min_x..max_x {
+                let fx = px as f32 + 0.5;
+                let in_rect = if fx < x + r && fy < y + r {
+                    let dx = fx - (x + r);
+                    let dy = fy - (y + r);
+                    dx * dx + dy * dy <= r2
+                } else if fx > x + w - r && fy < y + r {
+                    let dx = fx - (x + w - r);
+                    let dy = fy - (y + r);
+                    dx * dx + dy * dy <= r2
+                } else if fx < x + r && fy > y + h - r {
+                    let dx = fx - (x + r);
+                    let dy = fy - (y + h - r);
+                    dx * dx + dy * dy <= r2
+                } else if fx > x + w - r && fy > y + h - r {
+                    let dx = fx - (x + w - r);
+                    let dy = fy - (y + h - r);
+                    dx * dx + dy * dy <= r2
+                } else {
+                    true
+                };
+                if in_rect {
+                    put_pixel_blended(image, px, py, color, 1.0);
+                }
+            }
+        }
         return;
     }
     // Straight edges
@@ -796,5 +926,62 @@ fn draw_simple_text(
         }
 
         cursor_x += (6 * s) as i32;
+    }
+}
+
+fn draw_sticker_to_image(
+    image: &mut RgbaImage,
+    cx: f32,
+    cy: f32,
+    size: f32,
+    kind: StickerKind,
+    color: Rgba,
+) {
+    let scale = size / 24.0;
+    match kind {
+        StickerKind::Checkmark => {
+            draw_line(image, cx - 7.0 * scale, cy, cx - 2.0 * scale, cy + 6.0 * scale, 3.5 * scale, color, false);
+            draw_line(image, cx - 2.0 * scale, cy + 6.0 * scale, cx + 8.0 * scale, cy - 6.0 * scale, 3.5 * scale, color, false);
+        }
+        StickerKind::Cross => {
+            draw_line(image, cx - 6.0 * scale, cy - 6.0 * scale, cx + 6.0 * scale, cy + 6.0 * scale, 3.5 * scale, color, false);
+            draw_line(image, cx + 6.0 * scale, cy - 6.0 * scale, cx - 6.0 * scale, cy + 6.0 * scale, 3.5 * scale, color, false);
+        }
+        StickerKind::Warning => {
+            draw_triangle(image, cx - 10.0 * scale, cy - 9.0 * scale, 20.0 * scale, 18.0 * scale, 2.5 * scale, color, true);
+            let dark = gpui::rgb(0x1C1C1E);
+            draw_line(image, cx, cy - 3.0 * scale, cx, cy + 2.0 * scale, 2.2 * scale, dark, false);
+            draw_circle(image, cx, cy + 5.5 * scale, 1.3 * scale, dark, true, 1.0);
+        }
+        StickerKind::Cursor => {
+            let p_tip = (cx - 6.0 * scale, cy - 9.0 * scale);
+            let p_bot = (cx - 6.0 * scale, cy + 5.0 * scale);
+            let p_notch = (cx - 1.5 * scale, cy + 1.0 * scale);
+            let p_stem_l = (cx + 1.5 * scale, cy + 7.5 * scale);
+            let p_stem_r = (cx + 4.0 * scale, cy + 6.0 * scale);
+            let p_stem_t = (cx + 1.0 * scale, cy - 0.5 * scale);
+            let p_right = (cx + 6.0 * scale, cy - 0.5 * scale);
+            draw_filled_triangle(image, p_tip, p_bot, p_notch, color);
+            draw_filled_triangle(image, p_tip, p_notch, p_right, color);
+            draw_filled_triangle(image, p_notch, p_stem_l, p_stem_r, color);
+            draw_filled_triangle(image, p_notch, p_stem_r, p_stem_t, color);
+        }
+        StickerKind::Star => {
+            draw_star(image, cx - size / 2.0, cy - size / 2.0, size, size, 2.0, color, true);
+        }
+        StickerKind::Heart => {
+            draw_circle(image, cx - 3.5 * scale, cy - 2.0 * scale, 4.2 * scale, color, true, 1.0);
+            draw_circle(image, cx + 3.5 * scale, cy - 2.0 * scale, 4.2 * scale, color, true, 1.0);
+            draw_filled_triangle(image, (cx, cy + 8.5 * scale), (cx - 7.5 * scale, cy - 1.0 * scale), (cx + 7.5 * scale, cy - 1.0 * scale), color);
+        }
+        StickerKind::Question => {
+            draw_circle(image, cx, cy, size / 2.0 - 1.0, color, false, 2.5 * scale);
+            draw_simple_text(image, cx - 4.5, cy - 6.0, "?", color, 2);
+        }
+        StickerKind::Lightbulb => {
+            draw_circle(image, cx, cy - 2.0 * scale, 6.0 * scale, color, true, 1.0);
+            draw_rounded_rectangle(image, cx - 3.0 * scale, cy + 4.5 * scale, 6.0 * scale, 3.0 * scale, 1.0, 1.0, color, true);
+            draw_line(image, cx - 1.5 * scale, cy + 8.5 * scale, cx + 1.5 * scale, cy + 8.5 * scale, 2.0 * scale, color, false);
+        }
     }
 }
