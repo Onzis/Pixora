@@ -15,7 +15,7 @@ use crate::capture::screen::ScreenCapture;
 use crate::config::AppConfig;
 use crate::editor::annotations::{
     Annotation, AnnotationHandle, BadgeMode, BadgeShape,
-    calculate_arrow_geometry, calculate_arrowhead, number_to_badge_label,
+    calculate_arrow_geometry, calculate_arrowhead, normalize_bounds, number_to_badge_label,
     sample_quadratic_bezier, text_bounds_dimensions, wrap_text_to_lines,
 };
 use crate::editor::canvas::render_annotations_to_image;
@@ -2714,50 +2714,9 @@ impl Render for ScreenOverlayView {
                                 window.paint_quad(fill(*bounds, rgba(0x30D15822)));
                                 window.paint_quad(outline(*bounds, rgba(0x30D15888), BorderStyle::Dashed));
                             }
-                            Annotation::Spotlight { bounds, color, width, dim_opacity } => {
-                                let sel = selection.bounds;
-                                let bx = bounds.origin.x;
-                                let by = bounds.origin.y;
-                                let bw = bounds.size.width;
-                                let bh = bounds.size.height;
-                                let min_x = bx.min(bx + bw).max(sel.origin.x);
-                                let min_y = by.min(by + bh).max(sel.origin.y);
-                                let max_x = (bx.max(bx + bw)).min(sel.origin.x + sel.size.width);
-                                let max_y = (by.max(by + bh)).min(sel.origin.y + sel.size.height);
-
-                                let dim_c = gpui::Rgba { r: 0.0, g: 0.0, b: 0.0, a: *dim_opacity };
-
-                                if min_y > sel.origin.y {
-                                    window.paint_quad(fill(
-                                        Bounds { origin: sel.origin, size: size(sel.size.width, min_y - sel.origin.y) },
-                                        dim_c,
-                                    ));
-                                }
-                                let sel_bottom = sel.origin.y + sel.size.height;
-                                if max_y < sel_bottom {
-                                    window.paint_quad(fill(
-                                        Bounds { origin: point(sel.origin.x, max_y), size: size(sel.size.width, sel_bottom - max_y) },
-                                        dim_c,
-                                    ));
-                                }
-                                if min_x > sel.origin.x {
-                                    window.paint_quad(fill(
-                                        Bounds { origin: point(sel.origin.x, min_y), size: size(min_x - sel.origin.x, max_y - min_y) },
-                                        dim_c,
-                                    ));
-                                }
-                                let sel_right = sel.origin.x + sel.size.width;
-                                if max_x < sel_right {
-                                    window.paint_quad(fill(
-                                        Bounds { origin: point(max_x, min_y), size: size(sel_right - max_x, max_y - min_y) },
-                                        dim_c,
-                                    ));
-                                }
-
-                                let norm_bounds = Bounds {
-                                    origin: point(min_x, min_y),
-                                    size: size(max_x - min_x, max_y - min_y),
-                                };
+                            Annotation::Spotlight { bounds, color, width, .. } => {
+                                let norm_bounds = normalize_bounds(*bounds);
+                                window.paint_quad(fill(norm_bounds, rgba(0x8174FF22)));
                                 if *width > 0.0 {
                                     window.paint_quad(outline(norm_bounds, *color, BorderStyle::Solid));
                                 } else {
