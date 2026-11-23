@@ -597,7 +597,7 @@ impl ScreenOverlayView {
                     box_width: self.text_input_width,
                 };
                 self.history.push_annotation(ann);
-                self.selected_annotation = Some(self.history.annotations.len() - 1);
+                self.selected_annotation = None;
             }
             self.text_input_mode = false;
             self.text_input_buffer.clear();
@@ -1170,11 +1170,20 @@ impl ScreenOverlayView {
                 cx.notify();
                 return;
             } else {
+                let had_selected = self.selected_annotation.is_some();
                 self.selected_annotation = None;
+                if had_selected {
+                    self.commit_text_input();
+                    cx.notify();
+                    return;
+                }
             }
         } else if self.selected_annotation.is_some() {
-            // Deselect previous annotation when starting to draw with another tool
+            // Deselect previous annotation when clicking on empty space
             self.selected_annotation = None;
+            self.commit_text_input();
+            cx.notify();
+            return;
         }
 
         // 3. Text input submission if clicking on empty space / outside
@@ -1741,12 +1750,29 @@ impl ScreenOverlayView {
         self.drawing_start = None;
 
         if let Some(drawing) = self.current_drawing.take() {
+            let b = drawing.bounds();
+            let is_too_small = match &drawing {
+                Annotation::Pencil { points, .. } | Annotation::Marker { points, .. } => {
+                    points.len() < 2
+                }
+                Annotation::Line { from, to, .. } | Annotation::Arrow { from, to, .. } => {
+                    let dx = f32::from(to.x - from.x);
+                    let dy = f32::from(to.y - from.y);
+                    (dx * dx + dy * dy).sqrt() < 4.0
+                }
+                _ => f32::from(b.size.width).abs() < 4.0 && f32::from(b.size.height).abs() < 4.0,
+            };
+            if is_too_small {
+                cx.notify();
+                return;
+            }
+
             let is_filter_or_spotlight = matches!(
                 drawing,
                 Annotation::Blur { .. } | Annotation::Pixelate { .. } | Annotation::Spotlight { .. }
             );
             self.history.push_annotation(drawing);
-            self.selected_annotation = Some(self.history.annotations.len() - 1);
+            self.selected_annotation = None;
             if is_filter_or_spotlight {
                 self.rebuild_render_image();
             }
