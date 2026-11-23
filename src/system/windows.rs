@@ -8,9 +8,11 @@ pub struct PhysicalRect {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DetectedWindow {
+    pub hwnd: isize,
     pub bounds: PhysicalRect,
     pub title: String,
     pub class_name: String,
+    pub is_child_element: bool,
 }
 
 #[cfg(windows)]
@@ -101,6 +103,7 @@ pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
             }
 
             ctx.windows.push(DetectedWindow {
+                hwnd: hwnd.0 as isize,
                 bounds: PhysicalRect {
                     x: rect.left,
                     y: rect.top,
@@ -109,6 +112,7 @@ pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
                 },
                 title,
                 class_name,
+                is_child_element: false,
             });
 
             BOOL(1)
@@ -125,6 +129,132 @@ pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
     }
 
     ctx.windows
+}
+
+#[cfg(windows)]
+pub fn find_element_at_point(
+    screen_x: i32,
+    screen_y: i32,
+    overlay_hwnd: Option<isize>,
+) -> Option<DetectedWindow> {
+    use std::cell::RefCell;
+    use windows::core::Interface;
+    use windows::Win32::Foundation::{HWND, POINT};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+    };
+    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation, IUIAutomation2};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongW, SetWindowLongW, GWL_EXSTYLE, WS_EX_TRANSPARENT,
+    };
+
+    thread_local! {
+        static UIA: RefCell<Option<IUIAutomation>> = const { RefCell::new(None) };
+    }
+
+    UIA.with(|cell| {
+        let mut opt = cell.borrow_mut();
+        if opt.is_none() {
+            unsafe {
+                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+                if let Ok(automation) =
+                    CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+                {
+                    if let Ok(uia2) = automation.cast::<IUIAutomation2>() {
+                        let _ = uia2.SetConnectionTimeout(100);
+                        let _ = uia2.SetTransactionTimeout(100);
+                    }
+                    *opt = Some(automation);
+                }
+            }
+        }
+
+        let automation = opt.as_ref()?;
+
+        unsafe {
+            let mut old_ex = 0;
+            let overlay_target =
+                overlay_hwnd.and_then(|h| if h != 0 { Some(HWND(h as *mut _)) } else { None });
+            if let Some(hwnd) = overlay_target {
+                old_ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, old_ex | (WS_EX_TRANSPARENT.0 as i32));
+            }
+
+            let pt = POINT {
+                x: screen_x,
+                y: screen_y,
+            };
+            let elem_res = automation.ElementFromPoint(pt);
+
+            if let Some(hwnd) = overlay_target {
+                let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, old_ex);
+            }
+
+            let elem = elem_res.ok()?;
+
+            // Reject elements belonging to Pixora itself
+            if let Ok(pid) = elem.CurrentProcessId() {
+                if pid as u32 == std::process::id() {
+                    return None;
+                }
+            }
+
+            let rect = elem.CurrentBoundingRectangle().ok()?;
+            let width = (rect.right - rect.left).max(0) as u32;
+            let height = (rect.bottom - rect.top).max(0) as u32;
+
+            if width < 16 || height < 12 {
+                return None;
+            }
+
+            let class_name = elem.CurrentClassName().unwrap_or_default().to_string();
+            if class_name == "#32769" || class_name == "Progman" || class_name == "WorkerW" {
+                return None;
+            }
+
+            let name = elem.CurrentName().unwrap_or_default().to_string();
+            let type_name = elem.CurrentLocalizedControlType().unwrap_or_default().to_string();
+
+            let title = if !name.trim().is_empty() {
+                name.trim().to_string()
+            } else if !type_name.trim().is_empty() {
+                let mut c = type_name.trim().chars();
+                match c.next() {
+                    None => String::new(),
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                }
+            } else {
+                String::new()
+            };
+
+            let native_hwnd = elem
+                .CurrentNativeWindowHandle()
+                .map(|h| h.0 as isize)
+                .unwrap_or(0);
+
+            Some(DetectedWindow {
+                hwnd: native_hwnd,
+                bounds: PhysicalRect {
+                    x: rect.left,
+                    y: rect.top,
+                    width,
+                    height,
+                },
+                title,
+                class_name,
+                is_child_element: true,
+            })
+        }
+    })
+}
+
+#[cfg(not(windows))]
+pub fn find_element_at_point(
+    _screen_x: i32,
+    _screen_y: i32,
+    _overlay_hwnd: Option<isize>,
+) -> Option<DetectedWindow> {
+    None
 }
 
 #[cfg(not(windows))]

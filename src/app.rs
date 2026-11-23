@@ -240,6 +240,7 @@ impl PixoraApp {
 
         let cap_bounds = capture.bounds;
         let _ = cx.open_window(window_options, |window, cx| {
+            let mut overlay_hwnd = None;
             #[cfg(windows)]
             {
                 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -253,6 +254,7 @@ impl PixoraApp {
                 if let Ok(wh) = window.window_handle() {
                     if let RawWindowHandle::Win32(handle) = wh.as_raw() {
                         let hwnd = HWND(handle.hwnd.get() as *mut _);
+                        overlay_hwnd = Some(handle.hwnd.get() as isize);
                         unsafe {
                             let style = GetWindowLongW(hwnd, GWL_STYLE);
                             let _ = SetWindowLongW(
@@ -284,7 +286,7 @@ impl PixoraApp {
                 }
             }
 
-            let view = cx.new(|cx| ScreenOverlayView::new(capture, config, cx));
+            let view = cx.new(|cx| ScreenOverlayView::new(capture, config, overlay_hwnd, cx));
             window.focus(&view.read(cx).focus_handle);
             view
         });

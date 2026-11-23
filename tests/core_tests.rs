@@ -832,6 +832,7 @@ fn test_window_snapping_detection_and_selection() {
             size: size(px(800.0), px(600.0)),
         },
         title: "Test Application Window".to_string(),
+        is_child_element: false,
     };
 
     // Point inside the window
@@ -853,6 +854,29 @@ fn test_window_snapping_detection_and_selection() {
     assert_eq!(snapped_sel.y(), 150.0);
     assert_eq!(snapped_sel.width(), 800.0);
     assert_eq!(snapped_sel.height(), 600.0);
+
+    // Child UI Automation element snapping (e.g. browser tab or toolbar button)
+    let child_candidate = WindowSnapCandidate {
+        bounds: Bounds {
+            origin: point(px(120.0), px(155.0)),
+            size: size(px(180.0), px(34.0)),
+        },
+        title: "New Tab".to_string(),
+        is_child_element: true,
+    };
+    assert!(child_candidate.is_child_element);
+    assert!(candidate.bounds.contains(&child_candidate.bounds.origin));
+
+    let child_snapped = SelectionState::new(
+        f32::from(child_candidate.bounds.origin.x),
+        f32::from(child_candidate.bounds.origin.y),
+        f32::from(child_candidate.bounds.size.width),
+        f32::from(child_candidate.bounds.size.height),
+    );
+    assert_eq!(child_snapped.x(), 120.0);
+    assert_eq!(child_snapped.y(), 155.0);
+    assert_eq!(child_snapped.width(), 180.0);
+    assert_eq!(child_snapped.height(), 34.0);
 }
 
 #[test]
@@ -1487,6 +1511,13 @@ fn test_heart_cross_checkmark_shape_annotations() {
     assert!(checkmark.hit_test(point(px(310.0), px(310.0)), 0.0));
     checkmark.translate(point(px(5.0), px(-5.0)));
     assert_eq!(checkmark.bounds().origin, point(px(305.0), px(295.0)));
+}
+
+#[cfg(windows)]
+#[test]
+fn test_ui_automation_element_snapping() {
+    let elem = pixora::system::windows::find_element_at_point(100, 100, None);
+    println!("find_element_at_point returned: {:?}", elem);
 }
 
 

@@ -58,6 +58,7 @@ pub enum NumericInputTarget {
 pub struct WindowSnapCandidate {
     pub bounds: Bounds<Pixels>,
     pub title: String,
+    pub is_child_element: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -108,6 +109,9 @@ pub struct ScreenOverlayView {
     pub is_ocr_running: bool,
 
     // Window snapping
+    pub overlay_hwnd: Option<isize>,
+    pub last_snap_check_time: Instant,
+    pub last_snap_check_pos: Point<Pixels>,
     pub detected_windows: Vec<WindowSnapCandidate>,
     pub hovered_window: Option<WindowSnapCandidate>,
     pub snap_candidate: Option<WindowSnapCandidate>,
@@ -157,7 +161,12 @@ pub struct ScreenOverlayView {
 }
 
 impl ScreenOverlayView {
-    pub fn new(capture: ScreenCapture, config: AppConfig, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        capture: ScreenCapture,
+        config: AppConfig,
+        overlay_hwnd: Option<isize>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         // GPUI RenderImage expects pixel data in BGRA format.
         // capture.image is standard RGBA, so we clone and convert byte channels (R <-> B)
         // for faithful GPUI onscreen rendering while keeping capture.image genuine RGBA.
@@ -230,13 +239,51 @@ impl ScreenOverlayView {
                             size: size(px(cl_w), px(cl_h)),
                         },
                         title: win.title,
+                        is_child_element: false,
                     });
                 }
             }
         }
 
         let hovered_window = if config.window_snapping {
-            detected_windows.iter().find(|w| w.bounds.contains(&initial_cursor)).cloned()
+            let max_w = capture.bounds.width as f32;
+            let max_h = capture.bounds.height as f32;
+            let screen_x = capture.bounds.x + f32::from(initial_cursor.x) as i32;
+            let screen_y = capture.bounds.y + f32::from(initial_cursor.y) as i32;
+            let mut cand = None;
+            #[cfg(windows)]
+            if let Some(elem) = crate::system::windows::find_element_at_point(screen_x, screen_y, overlay_hwnd) {
+                let el_x = (elem.bounds.x - capture.bounds.x) as f32;
+                let el_y = (elem.bounds.y - capture.bounds.y) as f32;
+                let el_w = elem.bounds.width as f32;
+                let el_h = elem.bounds.height as f32;
+
+                let cl_x = el_x.max(0.0);
+                let cl_y = el_y.max(0.0);
+                let cl_r = (el_x + el_w).min(max_w);
+                let cl_b = (el_y + el_h).min(max_h);
+
+                let cl_w = cl_r - cl_x;
+                let cl_h = cl_b - cl_y;
+
+                if cl_w >= 16.0 && cl_h >= 12.0 && (cl_w < max_w * 0.98 || cl_h < max_h * 0.98) {
+                    let b = Bounds {
+                        origin: point(px(cl_x), px(cl_y)),
+                        size: size(px(cl_w), px(cl_h)),
+                    };
+                    if b.contains(&initial_cursor) {
+                        cand = Some(WindowSnapCandidate {
+                            bounds: b,
+                            title: elem.title,
+                            is_child_element: true,
+                        });
+                    }
+                }
+            }
+            if cand.is_none() {
+                cand = detected_windows.iter().find(|w| w.bounds.contains(&initial_cursor)).cloned();
+            }
+            cand
         } else {
             None
         };
@@ -266,6 +313,9 @@ impl ScreenOverlayView {
             toast_message: None,
             is_ocr_running: false,
 
+            overlay_hwnd,
+            last_snap_check_time: Instant::now(),
+            last_snap_check_pos: initial_cursor,
             detected_windows,
             hovered_window,
             snap_candidate: None,
@@ -581,9 +631,67 @@ impl ScreenOverlayView {
         self.tool_props.current_badge_number = 1;
 
         if self.config.window_snapping {
-            self.hovered_window = self.detected_windows.iter().find(|w| w.bounds.contains(&self.cursor_pos)).cloned();
+            self.update_hovered_window(self.cursor_pos);
         }
         cx.notify();
+    }
+
+    pub fn update_hovered_window(&mut self, p: Point<Pixels>) -> bool {
+        if !self.config.window_snapping || self.selection.is_active {
+            if self.hovered_window.is_some() {
+                self.hovered_window = None;
+                return true;
+            }
+            return false;
+        }
+
+        let screen_x = self.capture.bounds.x + f32::from(p.x) as i32;
+        let screen_y = self.capture.bounds.y + f32::from(p.y) as i32;
+        let max_w = self.capture.bounds.width as f32;
+        let max_h = self.capture.bounds.height as f32;
+
+        let mut candidate = None;
+
+        #[cfg(windows)]
+        if let Some(elem) = crate::system::windows::find_element_at_point(screen_x, screen_y, self.overlay_hwnd) {
+            let el_x = (elem.bounds.x - self.capture.bounds.x) as f32;
+            let el_y = (elem.bounds.y - self.capture.bounds.y) as f32;
+            let el_w = elem.bounds.width as f32;
+            let el_h = elem.bounds.height as f32;
+
+            let cl_x = el_x.max(0.0);
+            let cl_y = el_y.max(0.0);
+            let cl_r = (el_x + el_w).min(max_w);
+            let cl_b = (el_y + el_h).min(max_h);
+
+            let cl_w = cl_r - cl_x;
+            let cl_h = cl_b - cl_y;
+
+            if cl_w >= 16.0 && cl_h >= 12.0 && (cl_w < max_w * 0.98 || cl_h < max_h * 0.98) {
+                let b = Bounds {
+                    origin: point(px(cl_x), px(cl_y)),
+                    size: size(px(cl_w), px(cl_h)),
+                };
+                if b.contains(&p) {
+                    candidate = Some(WindowSnapCandidate {
+                        bounds: b,
+                        title: elem.title,
+                        is_child_element: true,
+                    });
+                }
+            }
+        }
+
+        if candidate.is_none() {
+            candidate = self.detected_windows.iter().find(|w| w.bounds.contains(&p)).cloned();
+        }
+
+        if self.hovered_window != candidate {
+            self.hovered_window = candidate;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn commit_text_input(&mut self) {
@@ -1669,12 +1777,18 @@ impl ScreenOverlayView {
             SelectionDragMode::None => {
                 let mut should_notify = false;
                 if self.config.window_snapping && !self.selection.is_active {
-                    let prev_hover = self.hovered_window.as_ref().map(|w| w.bounds);
-                    let new_hover = self.detected_windows.iter().find(|w| w.bounds.contains(&p)).cloned();
-                    let new_bounds = new_hover.as_ref().map(|w| w.bounds);
-                    if prev_hover != new_bounds {
-                        self.hovered_window = new_hover;
-                        should_notify = true;
+                    let dx = f32::from(p.x - self.last_snap_check_pos.x);
+                    let dy = f32::from(p.y - self.last_snap_check_pos.y);
+                    let dist = dx.hypot(dy);
+                    let elapsed = self.last_snap_check_time.elapsed().as_millis();
+                    let outside_current = self.hovered_window.as_ref().map_or(true, |hw| !hw.bounds.contains(&p));
+
+                    if outside_current || (dist > 4.0 && elapsed >= 16) {
+                        self.last_snap_check_pos = p;
+                        self.last_snap_check_time = Instant::now();
+                        if self.update_hovered_window(p) {
+                            should_notify = true;
+                        }
                     }
                 }
                 let show_mag = self.active_tool == ToolKind::Eyedropper
@@ -3004,7 +3118,16 @@ impl Render for ScreenOverlayView {
                 let badge_w = 520.0;
                 let win_cx = f32::from(wb.origin.x) + f32::from(wb.size.width) / 2.0;
                 let badge_x = (win_cx - badge_w / 2.0).clamp(16.0, (scr_w - badge_w - 16.0).max(16.0));
-                let badge_y = (f32::from(wb.origin.y) + 16.0).clamp(16.0, (scr_h - 48.0).max(16.0));
+                let badge_y = if win.is_child_element && f32::from(wb.size.height) < 70.0 {
+                    let above = f32::from(wb.origin.y) - 38.0;
+                    if above >= 16.0 {
+                        above
+                    } else {
+                        (f32::from(wb.origin.y) + f32::from(wb.size.height) + 8.0).min(scr_h - 48.0)
+                    }
+                } else {
+                    (f32::from(wb.origin.y) + 16.0).clamp(16.0, (scr_h - 48.0).max(16.0))
+                };
 
                 let win_title = if !win.title.trim().is_empty() {
                     let mut s = win.title.trim().to_string();
@@ -3017,11 +3140,19 @@ impl Render for ScreenOverlayView {
                 };
 
                 let dim_text = format!("{} × {}", f32::from(wb.size.width) as u32, f32::from(wb.size.height) as u32);
-                let hint_text = t(
-                    lang,
-                    "Click to select window",
-                    "Клик — выбрать окно",
-                );
+                let hint_text = if win.is_child_element {
+                    t(
+                        lang,
+                        "Click to select element",
+                        "Клик — выбрать элемент",
+                    )
+                } else {
+                    t(
+                        lang,
+                        "Click to select window",
+                        "Клик — выбрать окно",
+                    )
+                };
 
                 root = root.child(
                     div()
