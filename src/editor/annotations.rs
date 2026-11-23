@@ -189,12 +189,22 @@ pub fn resize_bounds_with_handle(
 
 pub fn char_width(ch: char) -> f32 {
     match ch {
-        ' ' => 0.28,
-        'i' | 'j' | 'l' | '!' | '|' | ':' | ';' | '\'' | '.' | ',' => 0.26,
-        'f' | 'r' | 't' | '(' | ')' | '[' | ']' => 0.35,
-        'm' | 'w' | 'M' | 'W' | '—' | 'Ж' | 'Ш' | 'Щ' | 'Ю' => 0.85,
-        'A'..='Z' | 'А'..='Я' => 0.65,
-        _ => 0.52,
+        '.' | ',' | ':' | ';' | '\'' | ' ' => 0.28,
+        'i' | 'j' | 'l' | '!' | '|' | 'I' => 0.30,
+        '(' | ')' | '[' | ']' | '{' | '}' | 'f' | 't' | 'r' => 0.38,
+        '-' | '—' | 'г' | '?' | '/' | 's' => 0.44,
+        'т' | '*' | 'z' | 'э' | 'c' | 'з' | 'с' => 0.48,
+        'a' | 'e' | 'y' | 'v' | 'x' | 'а' | 'е' | 'ё' | 'у' | 'х' => 0.54,
+        '0'..='9' | 'k' | 'ь' | 'я' | 'к' => 0.58,
+        'в' | 'T' | 'Т' | '#' | 'ч' | 'h' | 'л' | 'n' | 'u' | 'Y' | 'Z' | 'б' | 'o' | 'о' | 'н' | 'п'
+        | 'P' | 'Р' | 'У' | 'd' | 'g' | 'q' | 'b' | 'p' | 'д' | 'р' | 'Ь' | 'C' | 'С' | 'Э' | 'и' | 'й' => 0.62,
+        'B' | 'В' | 'Б' | 'ъ' | 'K' | 'К' | 'ц' | 'R' | 'X' | 'Х' | 'V' => 0.66,
+        'A' | 'А' | '<' | '>' | '+' | '=' | 'G' | 'U' | 'Ч' | 'Л' | 'D' | 'Ъ' | 'O' | 'Q' | 'О' | 'П' | 'H' | 'Н' | 'Д' => 0.74,
+        'м' | 'ф' | 'N' | 'И' | 'Й' | 'w' | 'ы' | 'Ц' | 'Ф' => 0.80,
+        'ж' | '&' | 'ш' | '%' | 'ю' | 'Ы' | 'щ' => 0.88,
+        'm' | '@' | 'M' | 'М' | 'Ж' => 0.96,
+        'W' | 'Ш' | 'Ю' | 'Щ' => 1.05,
+        _ => 0.62,
     }
 }
 
@@ -206,11 +216,58 @@ pub fn string_width(s: &str, font_size: f32) -> f32 {
     total * font_size
 }
 
+#[cfg(windows)]
+pub fn measure_text_width(s: &str, font_size: f32) -> f32 {
+    if s.is_empty() {
+        return 0.0;
+    }
+    unsafe {
+        use windows::Win32::Graphics::Gdi::*;
+        use windows::Win32::Foundation::SIZE;
+        use windows::core::w;
+
+        let hdc = GetDC(None);
+        if !hdc.is_invalid() {
+            let font_h = -(font_size.round() as i32);
+            let hfont = CreateFontW(
+                font_h, 0, 0, 0, 700, 0, 0, 0,
+                FONT_CHARSET(1),
+                FONT_OUTPUT_PRECISION(0),
+                FONT_CLIP_PRECISION(0),
+                FONT_QUALITY(0),
+                0,
+                w!("Segoe UI"),
+            );
+            if !hfont.is_invalid() {
+                let old_font = SelectObject(hdc, hfont.into());
+                let wide: Vec<u16> = s.encode_utf16().collect();
+                let mut sz = SIZE::default();
+                let ok = GetTextExtentPoint32W(hdc, &wide, &mut sz).as_bool();
+                SelectObject(hdc, old_font);
+                let _ = DeleteObject(hfont.into());
+                ReleaseDC(None, hdc);
+
+                if ok && sz.cx > 0 {
+                    return sz.cx as f32;
+                }
+            } else {
+                ReleaseDC(None, hdc);
+            }
+        }
+    }
+    string_width(s, font_size)
+}
+
+#[cfg(not(windows))]
+pub fn measure_text_width(s: &str, font_size: f32) -> f32 {
+    string_width(s, font_size)
+}
+
 pub fn text_bounds_dimensions(text: &str, font_size: f32) -> (f32, f32) {
     let lines: Vec<&str> = text.lines().collect();
     let mut max_line_w = 0.0f32;
     for line in &lines {
-        let lw = string_width(line, font_size);
+        let lw = measure_text_width(line, font_size);
         if lw > max_line_w {
             max_line_w = lw;
         }

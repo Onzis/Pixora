@@ -1224,6 +1224,31 @@ fn test_text_free_transform_resizing_and_handles() {
 }
 
 #[test]
+fn test_long_string_and_latin_text_bounds() {
+    let long_text = Annotation::Text {
+        origin: point(px(10.0), px(10.0)),
+        text: "пвыаввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввв".into(),
+        color: gpui::rgb(0xFF0000),
+        font_size: 52.0,
+    };
+    let bounds = long_text.bounds();
+    let pad = (52.0 * 0.08f32).clamp(4.0, 10.0);
+    let measured = pixora::editor::annotations::measure_text_width("пвыаввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввввв", 52.0);
+    assert!(f32::from(bounds.size.width) >= measured + 2.0 * pad - 0.01);
+
+    let ghbdtn = Annotation::Text {
+        origin: point(px(10.0), px(10.0)),
+        text: "ghbdtn".into(),
+        color: gpui::rgb(0xFF0000),
+        font_size: 96.0,
+    };
+    let g_bounds = ghbdtn.bounds();
+    let g_pad = (96.0 * 0.08f32).clamp(4.0, 10.0);
+    let g_measured = pixora::editor::annotations::measure_text_width("ghbdtn", 96.0);
+    assert!(f32::from(g_bounds.size.width) >= g_measured + 2.0 * g_pad - 0.01);
+}
+
+#[test]
 fn test_history_pop_snapshot_if_unchanged() {
     let mut history = EditHistory::new();
     let text = Annotation::Text {
