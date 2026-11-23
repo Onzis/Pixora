@@ -22,6 +22,7 @@ pub fn copy_image_to_clipboard(image: &RgbaImage) -> Result<(), String> {
     let mut png_bytes = Vec::new();
     let mut cursor = std::io::Cursor::new(&mut png_bytes);
     if let Err(e) = image.write_to(&mut cursor, image::ImageFormat::Png) {
+        crate::logging::log_warn("clipboard", format!("Failed to encode PNG for clipboard: {}", e));
         eprintln!("Warning: Failed to encode PNG for clipboard: {}", e);
     }
 

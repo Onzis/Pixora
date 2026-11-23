@@ -1588,6 +1588,71 @@ fn test_ui_automation_element_snapping() {
     assert!(!picked_window.is_child_element);
 }
 
+#[test]
+fn test_crash_and_error_logging_to_log_folder() {
+    use pixora::logging::{
+        get_log_dir, get_log_file_path, init_logging, log_error, log_info, log_warn,
+        set_custom_log_dir,
+    };
+
+    let temp_dir = std::env::temp_dir().join(format!("pixora_test_log_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    set_custom_log_dir(Some(temp_dir.clone()));
+
+    assert_eq!(get_log_dir(), temp_dir);
+    let expected_file = temp_dir.join("pixora.log");
+    assert_eq!(get_log_file_path(), expected_file);
+
+    // 1. Initially folder and file do not exist
+    assert!(!expected_file.exists());
+
+    // 2. Log an error -> folder and pixora.log must be created automatically
+    log_error("test_module", "Critical system test error occurred");
+    assert!(expected_file.exists(), "pixora.log must be created on error");
+
+    // 3. Log a warning and info
+    log_warn("test_module", "Sample warning message");
+    log_info("test_module", "Sample info message");
+
+    let content = std::fs::read_to_string(&expected_file).expect("Must read log file");
+    assert!(content.contains("[ERROR] [test_module] Critical system test error occurred"));
+    assert!(content.contains("[WARN] [test_module] Sample warning message"));
+    assert!(content.contains("[INFO] [test_module] Sample info message"));
+
+    // 4. Verify panic hook logging
+    init_logging();
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|info| {
+        pixora::logging::log_panic(info);
+    }));
+
+    let _ = std::panic::catch_unwind(|| {
+        panic!("Simulated critical crash for log verification");
+    });
+
+    // Restore hook
+    std::panic::set_hook(hook);
+
+    let updated_content = std::fs::read_to_string(&expected_file).expect("Must read log file");
+    assert!(
+        updated_content.contains("PIXORA CRASH REPORT"),
+        "Crash report header must be logged"
+    );
+    assert!(
+        updated_content.contains("Simulated critical crash for log verification"),
+        "Panic message must be logged"
+    );
+    assert!(
+        updated_content.contains("Backtrace:"),
+        "Backtrace section must be present in crash report"
+    );
+
+    // Reset custom log dir and clean up
+    set_custom_log_dir(None);
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
 
 
 

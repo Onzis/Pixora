@@ -461,7 +461,9 @@ impl ScreenOverlayView {
     pub fn sync_and_save_tool_props(&mut self) {
         self.sync_tool_props();
         self.update_selected_annotation_from_props();
-        let _ = self.config.save();
+        if let Err(e) = self.config.save() {
+            crate::logging::log_warn("config", format!("Failed to auto-save tool props: {}", e));
+        }
     }
 
     pub fn sync_picker_from_color(&mut self) {
@@ -952,6 +954,7 @@ impl ScreenOverlayView {
                     }
                 }
                 Err(e) => {
+                    crate::logging::log_error("ocr", &e);
                     self.show_toast(format!("{}: {}", t(lang, "OCR failed", "Ошибка распознавания"), e), cx);
                 }
             }

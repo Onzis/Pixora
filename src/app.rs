@@ -208,6 +208,7 @@ impl PixoraApp {
             Ok(cap) => cap,
             Err(err) => {
                 IS_OVERLAY_OPEN.store(false, Ordering::SeqCst);
+                crate::logging::log_error("capture", format!("Screen capture failed: {}", err));
                 eprintln!("Capture error: {}", err);
                 return;
             }

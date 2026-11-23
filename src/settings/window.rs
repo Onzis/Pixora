@@ -99,6 +99,7 @@ impl SettingsWindowView {
             &self.config.hotkey_window,
         );
         if let Err(e) = self.config.save() {
+            crate::logging::log_error("config", format!("Failed to save config: {}", e));
             self.status_message = Some(format!("{}: {}", t(lang, "Error", "Ошибка"), e));
         } else {
             self.status_message = Some(t(lang, "Saved", "Сохранено").to_string());

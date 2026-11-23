@@ -7,6 +7,7 @@ pub mod config;
 pub mod editor;
 pub mod i18n;
 pub mod image;
+pub mod logging;
 pub mod ocr;
 pub mod overlay;
 pub mod pin;
