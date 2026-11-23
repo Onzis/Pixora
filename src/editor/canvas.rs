@@ -254,11 +254,12 @@ pub fn render_annotations_to_image(
                 text,
                 color,
                 font_size,
+                box_width,
             } => {
-                let lines: Vec<&str> = text.lines().collect();
+                let lines = crate::editor::annotations::wrap_text_to_lines(text, *font_size, *box_width);
                 let line_h = *font_size * 1.20;
                 let scale = ((*font_size / 9.0).round() as usize).max(1);
-                let pad = (*font_size * 0.08).clamp(4.0, 10.0);
+                let pad = (*font_size * 0.12).clamp(6.0, 14.0);
                 for (i, line) in lines.iter().enumerate() {
                     let y_offset = i as f32 * line_h;
                     draw_simple_text(

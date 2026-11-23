@@ -14,7 +14,7 @@ use crate::capture::region::crop_region;
 use crate::capture::screen::ScreenCapture;
 use crate::config::AppConfig;
 use crate::editor::annotations::{
-    Annotation, AnnotationHandle, calculate_arrow_geometry,
+    Annotation, AnnotationHandle, calculate_arrow_geometry, wrap_text_to_lines,
 };
 use crate::editor::canvas::render_annotations_to_image;
 use crate::editor::history::EditHistory;
@@ -109,6 +109,7 @@ pub struct ScreenOverlayView {
     // Text annotation editing
     pub text_input_mode: bool,
     pub text_input_pos: Point<Pixels>,
+    pub text_input_width: Option<f32>,
     pub text_input_buffer: String,
 
     // Numeric value typing for px
@@ -263,6 +264,7 @@ impl ScreenOverlayView {
 
             text_input_mode: false,
             text_input_pos: point(px(0.0), px(0.0)),
+            text_input_width: None,
             text_input_buffer: String::new(),
 
             numeric_input_mode: None,
@@ -548,6 +550,7 @@ impl ScreenOverlayView {
         self.snap_candidate = None;
         self.text_input_mode = false;
         self.text_input_buffer.clear();
+        self.text_input_width = None;
         self.hex_input_mode = false;
         self.show_color_palette = false;
         self.show_shapes_menu = false;
@@ -571,12 +574,14 @@ impl ScreenOverlayView {
                     text: self.text_input_buffer.clone(),
                     color: self.tool_props.stroke_color,
                     font_size: self.tool_props.font_size,
+                    box_width: self.text_input_width,
                 };
                 self.history.push_annotation(ann);
                 self.selected_annotation = Some(self.history.annotations.len() - 1);
             }
             self.text_input_mode = false;
             self.text_input_buffer.clear();
+            self.text_input_width = None;
         }
     }
 
@@ -942,6 +947,7 @@ impl ScreenOverlayView {
         if self.text_input_mode {
             self.text_input_mode = false;
             self.text_input_buffer.clear();
+            self.text_input_width = None;
             cx.notify();
             return;
         }
@@ -1058,8 +1064,21 @@ impl ScreenOverlayView {
 
             if let Some(idx) = hit_idx {
                 self.commit_text_input();
-                self.selected_annotation = Some(idx);
                 let ann = self.history.annotations[idx].clone();
+                if ev.click_count == 2 {
+                    if let Annotation::Text { origin, text, font_size, box_width, .. } = &ann {
+                        self.history.annotations.remove(idx);
+                        self.selected_annotation = None;
+                        self.text_input_mode = true;
+                        self.text_input_pos = *origin;
+                        self.text_input_width = *box_width;
+                        self.text_input_buffer = text.clone();
+                        self.tool_props.font_size = *font_size;
+                        cx.notify();
+                        return;
+                    }
+                }
+                self.selected_annotation = Some(idx);
                 if let Some(c) = ann.color() {
                     self.tool_props.stroke_color = c;
                 }
@@ -1170,9 +1189,9 @@ impl ScreenOverlayView {
 
         // Text tool placement
         if self.active_tool == ToolKind::Text {
-            self.text_input_mode = true;
-            self.text_input_pos = p;
-            self.text_input_buffer.clear();
+            self.commit_text_input();
+            self.selected_annotation = None;
+            self.drawing_start = Some(p);
             cx.notify();
             return;
         }
@@ -1433,6 +1452,11 @@ impl ScreenOverlayView {
             }
         }
 
+        if self.active_tool == ToolKind::Text && self.drawing_start.is_some() {
+            cx.notify();
+            return;
+        }
+
         // Update active drawing
         if let Some(drawing) = &mut self.current_drawing {
             if let Some(start) = self.drawing_start {
@@ -1533,10 +1557,11 @@ impl ScreenOverlayView {
 
     pub fn handle_mouse_up(
         &mut self,
-        _ev: &MouseUpEvent,
+        ev: &MouseUpEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let p = ev.position;
         if self.palette_drag_mode != PaletteDragMode::None {
             self.palette_drag_mode = PaletteDragMode::None;
             self.sync_and_save_tool_props();
@@ -1557,6 +1582,35 @@ impl ScreenOverlayView {
             }
             cx.notify();
             return;
+        }
+
+        if self.active_tool == ToolKind::Text {
+            if let Some(start) = self.drawing_start.take() {
+                let px_f = f32::from(p.x);
+                let py_f = f32::from(p.y);
+                let min_x = f32::from(start.x).min(px_f);
+                let min_y = f32::from(start.y).min(py_f);
+                let w = (px_f - f32::from(start.x)).abs();
+                let h = (py_f - f32::from(start.y)).abs();
+
+                let (pos, box_w) = if w >= 24.0 && h >= 16.0 {
+                    (point(px(min_x), px(min_y)), w)
+                } else {
+                    let remaining_w = if self.selection.is_active {
+                        (self.selection.x() + self.selection.width() - f32::from(start.x)).max(180.0)
+                    } else {
+                        (self.capture.bounds.width as f32 - f32::from(start.x)).max(180.0)
+                    };
+                    (start, remaining_w.clamp(200.0, 380.0))
+                };
+
+                self.text_input_mode = true;
+                self.text_input_pos = pos;
+                self.text_input_width = Some(box_w);
+                self.text_input_buffer.clear();
+                cx.notify();
+                return;
+            }
         }
 
         let was_moving_or_resizing = matches!(self.drag_mode, SelectionDragMode::Moving { .. } | SelectionDragMode::Resizing { .. });
@@ -1735,12 +1789,19 @@ impl ScreenOverlayView {
         // 2. Handling Text Annotation typing (supports Space, Russian/Cyrillic, and layout switching)
         if self.text_input_mode {
             if key == "enter" {
-                self.commit_text_input();
-                cx.notify();
-                return;
+                if ev.keystroke.modifiers.shift {
+                    self.text_input_buffer.push('\n');
+                    cx.notify();
+                    return;
+                } else {
+                    self.commit_text_input();
+                    cx.notify();
+                    return;
+                }
             } else if key == "escape" {
                 self.text_input_mode = false;
                 self.text_input_buffer.clear();
+                self.text_input_width = None;
                 cx.notify();
                 return;
             } else if key == "backspace" {
@@ -1907,6 +1968,9 @@ impl Render for ScreenOverlayView {
         let annotations = self.history.annotations.clone();
         let current_drawing = self.current_drawing.clone();
         let selected_annotation = self.selected_annotation;
+        let text_drag_start = if self.active_tool == ToolKind::Text { self.drawing_start } else { None };
+        let active_tool = self.active_tool;
+        let cursor_pos = self.cursor_pos;
 
         // Determine cursor style
         let is_over_floating_panel = self.current_toolbar_bounds.map_or(false, |b| b.contains(&self.cursor_pos))
@@ -2357,6 +2421,22 @@ impl Render for ScreenOverlayView {
                         }
                     }
 
+                    if active_tool == ToolKind::Text {
+                        if let Some(start) = text_drag_start {
+                            let min_x = f32::from(start.x).min(f32::from(cursor_pos.x));
+                            let min_y = f32::from(start.y).min(f32::from(cursor_pos.y));
+                            let w = (f32::from(cursor_pos.x) - f32::from(start.x)).abs();
+                            let h = (f32::from(cursor_pos.y) - f32::from(start.y)).abs();
+                            if w > 4.0 || h > 4.0 {
+                                let preview_b = Bounds {
+                                    origin: point(px(min_x), px(min_y)),
+                                    size: size(px(w), px(h)),
+                                };
+                                window.paint_quad(outline(preview_b, rgba(0x8174FFAA), BorderStyle::Dashed));
+                            }
+                        }
+                    }
+
                     // Render selection box and control handles for currently selected annotation
                     if let Some(idx) = selected_annotation {
                         if let Some(ann) = annotations.get(idx) {
@@ -2405,9 +2485,9 @@ impl Render for ScreenOverlayView {
         // Render text annotations as crisp UI elements only when selection is active
         if self.selection.is_active {
             for ann in &self.history.annotations {
-                if let Annotation::Text { origin, text, color, font_size } = ann {
-                    let lines: Vec<&str> = text.lines().collect();
-                    let pad = (*font_size * 0.08).clamp(4.0, 10.0);
+                if let Annotation::Text { origin, text, color, font_size, box_width } = ann {
+                    let lines = wrap_text_to_lines(text, *font_size, *box_width);
+                    let pad = (*font_size * 0.12).clamp(6.0, 14.0);
                     let mut container = div()
                         .absolute()
                         .left(origin.x + px(pad))
@@ -2419,9 +2499,14 @@ impl Render for ScreenOverlayView {
                         .flex()
                         .flex_col();
 
+                    if let Some(bw) = box_width {
+                        let inner_w = (*bw - 2.0 * pad).max(10.0);
+                        container = container.w(px(inner_w));
+                    }
+
                     for line in lines {
                         container = container.child(
-                            div().whitespace_nowrap().child(line.to_string())
+                            div().whitespace_nowrap().child(line)
                         );
                     }
 
@@ -2448,14 +2533,41 @@ impl Render for ScreenOverlayView {
 
         // Active text input box
         if self.text_input_mode {
+            let font_size = self.tool_props.font_size;
+            let pad = (font_size * 0.12).clamp(6.0, 14.0);
+            let lines = wrap_text_to_lines(&self.text_input_buffer, font_size, self.text_input_width);
+            let box_w = self.text_input_width.unwrap_or(360.0);
+
+            let mut text_lines_col = div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .text_size(px(font_size))
+                .text_color(self.tool_props.stroke_color)
+                .font_weight(gpui::FontWeight::BOLD)
+                .line_height(px(font_size * 1.20));
+
+            let total_lines = lines.len();
+            for (idx, line) in lines.iter().enumerate() {
+                let is_last = idx == total_lines - 1;
+                let display_str = if is_last {
+                    format!("{}▏", line)
+                } else {
+                    line.clone()
+                };
+                text_lines_col = text_lines_col.child(
+                    div().whitespace_nowrap().child(display_str)
+                );
+            }
+
             root = root.child(
                 div()
                     .absolute()
                     .left(self.text_input_pos.x)
                     .top(self.text_input_pos.y)
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
+                    .w(px(box_w))
+                    .p(px(pad))
+                    .rounded_sm()
                     .bg(rgba(0x151519EE))
                     .border_1()
                     .border_color(theme.accent)
@@ -2463,13 +2575,7 @@ impl Render for ScreenOverlayView {
                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
                     })
-                    .child(
-                        div()
-                            .text_size(px(self.tool_props.font_size))
-                            .text_color(self.tool_props.stroke_color)
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child(format!("{}▏", self.text_input_buffer)),
-                    ),
+                    .child(text_lines_col),
             );
         }
 
