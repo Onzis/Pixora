@@ -49,7 +49,7 @@ pub fn render_annotations_to_image(
             image.height(),
             &spotlights,
             max_dim,
-            6.0,
+            0.0,
         );
     }
 

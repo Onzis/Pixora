@@ -518,7 +518,7 @@ impl ScreenOverlayView {
                 sel_h,
                 &spotlights,
                 max_dim,
-                6.0,
+                0.0,
             );
         }
 
