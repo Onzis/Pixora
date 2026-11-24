@@ -2017,6 +2017,27 @@ fn test_ocr_modal_visual_line_wrapping_and_navigation() {
     assert_eq!(state.is_dragging, false);
 }
 
+#[test]
+fn test_wgc_support_and_capture_fallback() {
+    use pixora::capture::wgc::is_wgc_supported;
+    use pixora::capture::screen::{capture_virtual_screen, capture_virtual_screen_gdi};
+
+    // 1. WGC support check should not panic and return a boolean
+    let supported = is_wgc_supported();
+    println!("WGC supported on current machine: {}", supported);
+
+    // 2. GDI fallback capture check (may fail in headless/background sessions, but should not panic)
+    let _ = capture_virtual_screen_gdi();
+
+    // 3. Main capture_virtual_screen succeeds via WGC (or GDI fallback)
+    let main_res = capture_virtual_screen();
+    assert!(main_res.is_ok(), "capture_virtual_screen must succeed");
+    let main_cap = main_res.unwrap();
+    assert!(main_cap.bounds.width > 0 && main_cap.bounds.height > 0);
+    assert_eq!(main_cap.image.width(), main_cap.bounds.width);
+    assert_eq!(main_cap.image.height(), main_cap.bounds.height);
+}
+
 
 
 

@@ -675,4 +675,16 @@ pub fn detect_visual_panes(
     panes
 }
 
+#[cfg(windows)]
+pub fn set_window_exclude_from_capture(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WINDOW_DISPLAY_AFFINITY};
+    // WDA_EXCLUDEFROMCAPTURE = 0x00000011 (Windows 10 2004+ and Windows 11)
+    unsafe {
+        let _ = SetWindowDisplayAffinity(hwnd, WINDOW_DISPLAY_AFFINITY(0x00000011));
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_window_exclude_from_capture(_hwnd: isize) {}
+
 pub use crate::system::sound::play_capture_sound;

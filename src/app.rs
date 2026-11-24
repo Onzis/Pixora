@@ -282,6 +282,7 @@ impl PixoraApp {
 
                             let _ = BringWindowToTop(hwnd);
                             let _ = SetForegroundWindow(hwnd);
+                            crate::system::windows::set_window_exclude_from_capture(hwnd);
                         }
                     }
                 }
@@ -350,6 +351,7 @@ impl PixoraApp {
                                 let _ = ShowWindow(hwnd, SW_RESTORE);
                                 let _ = BringWindowToTop(hwnd);
                                 let _ = SetForegroundWindow(hwnd);
+                                crate::system::windows::set_window_exclude_from_capture(hwnd);
                             }
                         }
                     }
@@ -400,6 +402,7 @@ impl PixoraApp {
                             let _ = ShowWindow(hwnd, SW_RESTORE);
                             let _ = BringWindowToTop(hwnd);
                             let _ = SetForegroundWindow(hwnd);
+                            crate::system::windows::set_window_exclude_from_capture(hwnd);
                         }
                     }
                 }

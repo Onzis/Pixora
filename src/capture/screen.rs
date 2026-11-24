@@ -9,6 +9,25 @@ pub struct ScreenCapture {
 
 #[cfg(windows)]
 pub fn capture_virtual_screen() -> Result<ScreenCapture, String> {
+    // 1. Try modern Windows.Graphics.Capture (DirectX 11, hardware-accelerated, multi-monitor, protected surfaces, 144Hz+)
+    match crate::capture::wgc::capture_virtual_screen_wgc() {
+        Ok(cap) => {
+            crate::logging::log_info("capture", "Screen captured successfully via Windows.Graphics.Capture (WGC)");
+            Ok(cap)
+        }
+        Err(err) => {
+            crate::logging::log_warn(
+                "capture",
+                format!("Windows.Graphics.Capture unavailable or failed ({}), falling back to GDI BitBlt", err),
+            );
+            // 2. Seamless fallback to GDI BitBlt
+            capture_virtual_screen_gdi()
+        }
+    }
+}
+
+#[cfg(windows)]
+pub fn capture_virtual_screen_gdi() -> Result<ScreenCapture, String> {
     use windows::Win32::Graphics::Gdi::{
         BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC,
         DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, ROP_CODE, ReleaseDC, SRCCOPY,
@@ -131,5 +150,10 @@ pub fn capture_virtual_screen() -> Result<ScreenCapture, String> {
 
 #[cfg(not(windows))]
 pub fn capture_virtual_screen() -> Result<ScreenCapture, String> {
+    Err("Screen capture only implemented on Windows".to_string())
+}
+
+#[cfg(not(windows))]
+pub fn capture_virtual_screen_gdi() -> Result<ScreenCapture, String> {
     Err("Screen capture only implemented on Windows".to_string())
 }
