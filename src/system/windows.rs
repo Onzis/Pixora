@@ -9,6 +9,8 @@ pub struct PhysicalRect {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DetectedWindow {
     pub hwnd: isize,
+    pub top_level_hwnd: isize,
+    pub z_order: usize,
     pub bounds: PhysicalRect,
     pub title: String,
     pub class_name: String,
@@ -30,6 +32,7 @@ pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
     struct EnumContext {
         windows: Vec<DetectedWindow>,
         current_pid: u32,
+        current_z: usize,
     }
 
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -103,9 +106,15 @@ pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
                 return BOOL(1);
             }
 
+            let z_order = ctx.current_z;
+            ctx.current_z += 1;
+            let top_level_hwnd = hwnd.0 as isize;
+
             // 1. Full window bounds
             ctx.windows.push(DetectedWindow {
                 hwnd: hwnd.0 as isize,
+                top_level_hwnd,
+                z_order,
                 bounds: PhysicalRect {
                     x: rect.left,
                     y: rect.top,
@@ -127,6 +136,8 @@ pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
                 if cl_w >= 30 && cl_h >= 30 && (cl_w != width || cl_h != height) {
                     ctx.windows.push(DetectedWindow {
                         hwnd: hwnd.0 as isize,
+                        top_level_hwnd,
+                        z_order,
                         bounds: PhysicalRect {
                             x: pt.x,
                             y: pt.y,
@@ -145,6 +156,8 @@ pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
                 parent_hwnd: HWND,
                 parent_rect: RECT,
                 parent_title: String,
+                top_level_hwnd: isize,
+                z_order: usize,
                 children: Vec<DetectedWindow>,
             }
 
@@ -181,6 +194,8 @@ pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
                             };
                             ctx.children.push(DetectedWindow {
                                 hwnd: child.0 as isize,
+                                top_level_hwnd: ctx.top_level_hwnd,
+                                z_order: ctx.z_order,
                                 bounds: PhysicalRect {
                                     x: ix0,
                                     y: iy0,
@@ -201,6 +216,8 @@ pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
                 parent_hwnd: hwnd,
                 parent_rect: rect,
                 parent_title: title.clone(),
+                top_level_hwnd,
+                z_order,
                 children: Vec::new(),
             };
             let _ = EnumChildWindows(Some(hwnd), Some(enum_child), LPARAM(&mut child_ctx as *mut _ as isize));
@@ -213,6 +230,7 @@ pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
     let mut ctx = EnumContext {
         windows: Vec::new(),
         current_pid: std::process::id(),
+        current_z: 0,
     };
 
     unsafe {
@@ -325,6 +343,8 @@ pub fn find_element_at_point(
 
             Some(DetectedWindow {
                 hwnd: native_hwnd,
+                top_level_hwnd: 0,
+                z_order: 0,
                 bounds: PhysicalRect {
                     x: rect.left,
                     y: rect.top,

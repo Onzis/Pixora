@@ -219,7 +219,7 @@ impl ScreenOverlayView {
             let max_w = capture.bounds.width as f32;
             let max_h = capture.bounds.height as f32;
             let raw_windows = crate::system::windows::enumerate_visible_windows();
-            for (z_order, win) in raw_windows.iter().enumerate() {
+            for win in raw_windows {
                 let win_x = (win.bounds.x - capture.bounds.x) as f32;
                 let win_y = (win.bounds.y - capture.bounds.y) as f32;
                 let win_w = win.bounds.width as f32;
@@ -239,49 +239,10 @@ impl ScreenOverlayView {
                             origin: point(px(cl_x), px(cl_y)),
                             size: size(px(cl_w), px(cl_h)),
                         },
-                        title: win.title.clone(),
+                        title: win.title,
                         is_child_element: win.is_child_element,
-                        z_order,
+                        z_order: win.z_order,
                     });
-
-                    // For top-level windows, detect visual panes along dividers/edges
-                    // ONLY if the window is NOT completely occluded by any previous window in Z-order!
-                    let is_occluded = raw_windows[..z_order].iter().any(|prev| {
-                        !prev.is_child_element
-                            && prev.bounds.x <= win.bounds.x
-                            && prev.bounds.y <= win.bounds.y
-                            && (prev.bounds.x + prev.bounds.width as i32) >= (win.bounds.x + win.bounds.width as i32)
-                            && (prev.bounds.y + prev.bounds.height as i32) >= (win.bounds.y + win.bounds.height as i32)
-                    });
-
-                    if !is_occluded && !win.is_child_element && cl_w >= 100.0 && cl_h >= 100.0 {
-                        let panes = crate::system::windows::detect_visual_panes(
-                            &capture.image,
-                            cl_x as u32,
-                            cl_y as u32,
-                            cl_w as u32,
-                            cl_h as u32,
-                        );
-                        for pane in panes {
-                            let px0 = (pane.x as f32).max(0.0);
-                            let py0 = (pane.y as f32).max(0.0);
-                            let px1 = ((pane.x + pane.width as i32) as f32).min(max_w);
-                            let py1 = ((pane.y + pane.height as i32) as f32).min(max_h);
-                            let pw = px1 - px0;
-                            let ph = py1 - py0;
-                            if pw >= 40.0 && ph >= 24.0 {
-                                detected_windows.push(WindowSnapCandidate {
-                                    bounds: Bounds {
-                                        origin: point(px(px0), px(py0)),
-                                        size: size(px(pw), px(ph)),
-                                    },
-                                    title: win.title.clone(),
-                                    is_child_element: true,
-                                    z_order,
-                                });
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -726,10 +687,31 @@ impl ScreenOverlayView {
 
         #[cfg(windows)]
         {
-            let should_check_uia = candidate.as_ref().map_or(true, |c| !c.is_child_element);
-            if should_check_uia {
-                let screen_x = self.capture.bounds.x + f32::from(p.x) as i32;
-                let screen_y = self.capture.bounds.y + f32::from(p.y) as i32;
+            // If the user is pointing near the outer border of the top-level window, keep the whole window.
+            // Otherwise, query live UI Automation for the exact control under cursor (button, tab, input, etc.).
+            let px_f = f32::from(p.x);
+            let py_f = f32::from(p.y);
+            let is_near_window_border = if let Some(c) = candidate.as_ref() {
+                if !c.is_child_element {
+                    let bx = f32::from(c.bounds.origin.x);
+                    let by = f32::from(c.bounds.origin.y);
+                    let bw = f32::from(c.bounds.size.width);
+                    let bh = f32::from(c.bounds.size.height);
+                    let dl = px_f - bx;
+                    let dr = (bx + bw) - px_f;
+                    let dt = py_f - by;
+                    let db = (by + bh) - py_f;
+                    dl <= 8.0 || dr <= 8.0 || dt <= 8.0 || db <= 8.0
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if !is_near_window_border {
+                let screen_x = self.capture.bounds.x + px_f as i32;
+                let screen_y = self.capture.bounds.y + py_f as i32;
                 let max_w = self.capture.bounds.width as f32;
                 let max_h = self.capture.bounds.height as f32;
                 if let Some(elem) = crate::system::windows::find_element_at_point(screen_x, screen_y, self.overlay_hwnd) {
@@ -752,10 +734,15 @@ impl ScreenOverlayView {
                             size: size(px(cl_w), px(cl_h)),
                         };
                         if b.contains(&p) {
+                            let title = if !elem.title.trim().is_empty() {
+                                elem.title
+                            } else {
+                                candidate.as_ref().map_or(String::new(), |c| c.title.clone())
+                            };
                             let z = candidate.as_ref().map_or(0, |c| c.z_order);
                             candidate = Some(WindowSnapCandidate {
                                 bounds: b,
-                                title: elem.title,
+                                title,
                                 is_child_element: true,
                                 z_order: z,
                             });
@@ -2566,6 +2553,14 @@ impl Render for ScreenOverlayView {
                             mask_bg,
                         ));
                     }
+
+                    // High-contrast dashed selection outline requested by the user: - - - - -
+                    let dark_bg_b = Bounds {
+                        origin: point(win_b.origin.x - px(0.5), win_b.origin.y - px(0.5)),
+                        size: size(win_b.size.width + px(1.0), win_b.size.height + px(1.0)),
+                    };
+                    window.paint_quad(outline(dark_bg_b, rgba(0x00000088), BorderStyle::Solid));
+                    window.paint_quad(outline(win_b, theme.accent, BorderStyle::Dashed));
                 } else {
                     // Fullscreen dim overlay when no selection is active yet
                     window.paint_quad(fill(bounds, rgba(0x00000055)));
@@ -3238,111 +3233,8 @@ impl Render for ScreenOverlayView {
                 let wy = f32::from(wb.origin.y);
                 let ww = f32::from(wb.size.width);
                 let wh = f32::from(wb.size.height);
-                let is_maximized = wx <= 2.0 && wy <= 2.0;
 
-                // 1. High-precision luminous highlight frame with subtle ambient sheen & depth shadow
-                let mut highlight_box = div()
-                    .absolute()
-                    .left(wb.origin.x)
-                    .top(wb.origin.y)
-                    .w(wb.size.width)
-                    .h(wb.size.height)
-                    .bg(rgba(0x8174FF0A))
-                    .border_2()
-                    .border_color(rgb(0x8174FF))
-                    .shadow_2xl();
-
-                if !win.is_child_element && !is_maximized {
-                    highlight_box = highlight_box.rounded_md();
-                }
-                root = root.child(highlight_box);
-
-                // 2. Camera/Shottr Optic Viewfinder Corner Brackets (crisp white L-brackets at all 4 corners)
-                let b_len = 16.0f32.min(ww / 3.0).min(wh / 3.0);
-                let b_thick = 3.0f32;
-                let bracket_color = rgb(0xFFFFFF);
-
-                // Top-Left L-bracket
-                root = root.child(
-                    div()
-                        .absolute()
-                        .left(px(wx - 1.0))
-                        .top(px(wy - 1.0))
-                        .w(px(b_len))
-                        .h(px(b_thick))
-                        .bg(bracket_color),
-                );
-                root = root.child(
-                    div()
-                        .absolute()
-                        .left(px(wx - 1.0))
-                        .top(px(wy - 1.0))
-                        .w(px(b_thick))
-                        .h(px(b_len))
-                        .bg(bracket_color),
-                );
-
-                // Top-Right L-bracket
-                root = root.child(
-                    div()
-                        .absolute()
-                        .left(px(wx + ww - b_len + 1.0))
-                        .top(px(wy - 1.0))
-                        .w(px(b_len))
-                        .h(px(b_thick))
-                        .bg(bracket_color),
-                );
-                root = root.child(
-                    div()
-                        .absolute()
-                        .left(px(wx + ww - b_thick + 1.0))
-                        .top(px(wy - 1.0))
-                        .w(px(b_thick))
-                        .h(px(b_len))
-                        .bg(bracket_color),
-                );
-
-                // Bottom-Left L-bracket
-                root = root.child(
-                    div()
-                        .absolute()
-                        .left(px(wx - 1.0))
-                        .top(px(wy + wh - b_thick + 1.0))
-                        .w(px(b_len))
-                        .h(px(b_thick))
-                        .bg(bracket_color),
-                );
-                root = root.child(
-                    div()
-                        .absolute()
-                        .left(px(wx - 1.0))
-                        .top(px(wy + wh - b_len + 1.0))
-                        .w(px(b_thick))
-                        .h(px(b_len))
-                        .bg(bracket_color),
-                );
-
-                // Bottom-Right L-bracket
-                root = root.child(
-                    div()
-                        .absolute()
-                        .left(px(wx + ww - b_len + 1.0))
-                        .top(px(wy + wh - b_thick + 1.0))
-                        .w(px(b_len))
-                        .h(px(b_thick))
-                        .bg(bracket_color),
-                );
-                root = root.child(
-                    div()
-                        .absolute()
-                        .left(px(wx + ww - b_thick + 1.0))
-                        .top(px(wy + wh - b_len + 1.0))
-                        .w(px(b_thick))
-                        .h(px(b_len))
-                        .bg(bracket_color),
-                );
-
-                // 3. Premium Apple/Raycast glassmorphic HUD badge
+                // Premium Apple/Raycast glassmorphic HUD badge
                 let win_cx = wx + ww / 2.0;
                 let container_w = 640.0f32;
                 let container_x = (win_cx - container_w / 2.0).clamp(12.0, (scr_w - container_w - 12.0).max(12.0));
