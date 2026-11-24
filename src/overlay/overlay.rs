@@ -66,6 +66,27 @@ pub enum OcrFormatMode {
     CodeTable,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct VisualLine {
+    pub logical_line_num: usize,
+    pub is_wrapped_continuation: bool,
+    pub start_char: usize,
+    pub end_char: usize,
+    pub text: String,
+}
+
+impl VisualLine {
+    pub fn contains_cursor(&self, cursor_idx: usize, is_last: bool, next_is_continuation: bool) -> bool {
+        if is_last {
+            cursor_idx >= self.start_char && cursor_idx <= self.end_char
+        } else if next_is_continuation {
+            cursor_idx >= self.start_char && cursor_idx < self.end_char
+        } else {
+            cursor_idx >= self.start_char && cursor_idx <= self.end_char
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct OcrModalState {
     pub original_text: String,
@@ -78,6 +99,78 @@ pub struct OcrModalState {
 }
 
 impl OcrModalState {
+    pub fn visual_lines(&self, max_chars: usize) -> Vec<VisualLine> {
+        let max_chars = max_chars.max(10);
+        let mut result = Vec::new();
+        if self.edited_text.is_empty() {
+            result.push(VisualLine {
+                logical_line_num: 1,
+                is_wrapped_continuation: false,
+                start_char: 0,
+                end_char: 0,
+                text: String::new(),
+            });
+            return result;
+        }
+
+        let mut base_offset = 0;
+        let logical_lines: Vec<&str> = self.edited_text.split('\n').collect();
+
+        for (l_idx, l_str) in logical_lines.iter().enumerate() {
+            let logical_num = l_idx + 1;
+            let chars: Vec<char> = l_str.chars().collect();
+            let line_len = chars.len();
+
+            if line_len == 0 {
+                result.push(VisualLine {
+                    logical_line_num: logical_num,
+                    is_wrapped_continuation: false,
+                    start_char: base_offset,
+                    end_char: base_offset,
+                    text: String::new(),
+                });
+            } else {
+                let mut line_start = 0;
+                let mut is_cont = false;
+
+                while line_start < line_len {
+                    let remaining = line_len - line_start;
+                    let split_len = if remaining <= max_chars {
+                        remaining
+                    } else {
+                        let window_end = line_start + max_chars;
+                        if let Some(pos) = (line_start + 1..=window_end)
+                            .rev()
+                            .find(|&i| chars[i - 1].is_whitespace())
+                        {
+                            pos - line_start
+                        } else {
+                            max_chars
+                        }
+                    };
+
+                    let line_end = line_start + split_len;
+                    let sub_str: String = chars[line_start..line_end].iter().collect();
+
+                    result.push(VisualLine {
+                        logical_line_num: logical_num,
+                        is_wrapped_continuation: is_cont,
+                        start_char: base_offset + line_start,
+                        end_char: base_offset + line_end,
+                        text: sub_str,
+                    });
+
+                    line_start = line_end;
+                    is_cont = true;
+                }
+            }
+
+            base_offset += line_len + 1; // +1 for '\n'
+        }
+
+        result
+    }
+
     pub fn line_char_ranges(&self) -> Vec<(usize, usize, String)> {
         let mut ranges = Vec::new();
         let mut offset = 0;
@@ -91,21 +184,24 @@ impl OcrModalState {
     }
 
     pub fn set_cursor_to_line(&mut self, target_line_idx: usize) {
-        let ranges = self.line_char_ranges();
-        if target_line_idx < ranges.len() {
-            self.cursor_char_idx = ranges[target_line_idx].1;
+        let vlines = self.visual_lines(80);
+        if target_line_idx < vlines.len() {
+            self.cursor_char_idx = vlines[target_line_idx].end_char;
         }
     }
 
     pub fn move_cursor_up(&mut self) {
-        let ranges = self.line_char_ranges();
-        for (i, (start, end, _)) in ranges.iter().enumerate() {
-            if self.cursor_char_idx >= *start && self.cursor_char_idx <= *end {
+        let vlines = self.visual_lines(80);
+        let total = vlines.len();
+        for (i, vl) in vlines.iter().enumerate() {
+            let is_last = i + 1 == total;
+            let next_is_cont = !is_last && vlines[i + 1].is_wrapped_continuation;
+            if vl.contains_cursor(self.cursor_char_idx, is_last, next_is_cont) {
                 if i > 0 {
-                    let col = self.cursor_char_idx - *start;
-                    let prev_start = ranges[i - 1].0;
-                    let prev_len = ranges[i - 1].1 - prev_start;
-                    self.cursor_char_idx = prev_start + col.min(prev_len);
+                    let col = self.cursor_char_idx.saturating_sub(vl.start_char);
+                    let prev_vl = &vlines[i - 1];
+                    let prev_len = prev_vl.end_char.saturating_sub(prev_vl.start_char);
+                    self.cursor_char_idx = prev_vl.start_char + col.min(prev_len);
                 } else {
                     self.cursor_char_idx = 0;
                 }
@@ -115,16 +211,19 @@ impl OcrModalState {
     }
 
     pub fn move_cursor_down(&mut self) {
-        let ranges = self.line_char_ranges();
-        for (i, (start, end, _)) in ranges.iter().enumerate() {
-            if self.cursor_char_idx >= *start && self.cursor_char_idx <= *end {
-                if i + 1 < ranges.len() {
-                    let col = self.cursor_char_idx - *start;
-                    let next_start = ranges[i + 1].0;
-                    let next_len = ranges[i + 1].1 - next_start;
-                    self.cursor_char_idx = next_start + col.min(next_len);
+        let vlines = self.visual_lines(80);
+        let total = vlines.len();
+        for (i, vl) in vlines.iter().enumerate() {
+            let is_last = i + 1 == total;
+            let next_is_cont = !is_last && vlines[i + 1].is_wrapped_continuation;
+            if vl.contains_cursor(self.cursor_char_idx, is_last, next_is_cont) {
+                if i + 1 < total {
+                    let col = self.cursor_char_idx.saturating_sub(vl.start_char);
+                    let next_vl = &vlines[i + 1];
+                    let next_len = next_vl.end_char.saturating_sub(next_vl.start_char);
+                    self.cursor_char_idx = next_vl.start_char + col.min(next_len);
                 } else {
-                    self.cursor_char_idx = *end;
+                    self.cursor_char_idx = self.edited_text.chars().count();
                 }
                 return;
             }
@@ -132,10 +231,13 @@ impl OcrModalState {
     }
 
     pub fn move_cursor_home(&mut self) {
-        let ranges = self.line_char_ranges();
-        for (start, end, _) in ranges {
-            if self.cursor_char_idx >= start && self.cursor_char_idx <= end {
-                self.cursor_char_idx = start;
+        let vlines = self.visual_lines(80);
+        let total = vlines.len();
+        for (i, vl) in vlines.iter().enumerate() {
+            let is_last = i + 1 == total;
+            let next_is_cont = !is_last && vlines[i + 1].is_wrapped_continuation;
+            if vl.contains_cursor(self.cursor_char_idx, is_last, next_is_cont) {
+                self.cursor_char_idx = vl.start_char;
                 return;
             }
         }
@@ -143,10 +245,17 @@ impl OcrModalState {
     }
 
     pub fn move_cursor_end(&mut self) {
-        let ranges = self.line_char_ranges();
-        for (start, end, _) in ranges {
-            if self.cursor_char_idx >= start && self.cursor_char_idx <= end {
-                self.cursor_char_idx = end;
+        let vlines = self.visual_lines(80);
+        let total = vlines.len();
+        for (i, vl) in vlines.iter().enumerate() {
+            let is_last = i + 1 == total;
+            let next_is_cont = !is_last && vlines[i + 1].is_wrapped_continuation;
+            if vl.contains_cursor(self.cursor_char_idx, is_last, next_is_cont) {
+                if next_is_cont && vl.text.ends_with(' ') {
+                    self.cursor_char_idx = vl.end_char.saturating_sub(1);
+                } else {
+                    self.cursor_char_idx = vl.end_char;
+                }
                 return;
             }
         }
@@ -1167,6 +1276,29 @@ impl ScreenOverlayView {
     pub fn set_ocr_cursor_to_line(&mut self, line_idx: usize, cx: &mut Context<Self>) {
         if let Some(modal) = &mut self.ocr_modal {
             modal.set_cursor_to_line(line_idx);
+            cx.notify();
+        }
+    }
+
+    pub fn set_ocr_cursor_to_visual_line(
+        &mut self,
+        vl: &VisualLine,
+        mouse_x: f32,
+        screen_w: f32,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(modal) = &mut self.ocr_modal {
+            let modal_w = 880.0_f32.min(screen_w - 48.0);
+            let card_x = ((screen_w - modal_w) / 2.0).max(24.0);
+            // Offset from card left edge to text:
+            // px_4 (16px) + p_3 (12px) + line num (28px) + gap_2 (8px) = 64.0px
+            let text_start_x = card_x + 64.0;
+            let rel_x = (mouse_x - text_start_x).max(0.0);
+            // Consolas text_xs character width is approx 7.5px
+            let col = (rel_x / 7.5).round() as usize;
+            let vl_len = vl.end_char.saturating_sub(vl.start_char);
+            let target_char = vl.start_char + col.min(vl_len);
+            modal.cursor_char_idx = target_char.min(modal.edited_text.chars().count());
             cx.notify();
         }
     }
@@ -5909,13 +6041,16 @@ impl Render for ScreenOverlayView {
             let line_count = text_to_display.lines().count().max(1);
             let word_count = text_to_display.split_whitespace().count();
             let cursor_idx = ocr.cursor_char_idx;
-            let line_ranges = ocr.line_char_ranges();
+            let screen_w = f32::from(screen_size.width);
+
+            let vlines = ocr.visual_lines(80);
+            let total_vlines = vlines.len();
 
             let lines_view = div()
                 .id("ocr-text-lines")
                 .p_3()
-                .min_h(px(160.0))
-                .max_h(px(320.0))
+                .min_h(px(260.0))
+                .max_h(px(480.0))
                 .overflow_y_scroll()
                 .rounded_xl()
                 .bg(rgba(0x00000045))
@@ -5924,6 +6059,10 @@ impl Render for ScreenOverlayView {
                 .cursor(CursorStyle::IBeam)
                 .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
                     this.focus_handle.focus(window);
+                    if let Some(modal) = &mut this.ocr_modal {
+                        modal.cursor_char_idx = modal.edited_text.chars().count();
+                        cx.notify();
+                    }
                     cx.stop_propagation();
                 }))
                 .flex()
@@ -5952,68 +6091,83 @@ impl Render for ScreenOverlayView {
                         ),
                 );
             } else {
-                for (line_idx, (start_char, end_char, line_str)) in line_ranges.iter().enumerate() {
-                    let is_cursor_on_line = cursor_idx >= *start_char && cursor_idx <= *end_char;
+                for (vl_idx, vl) in vlines.iter().enumerate() {
+                    let is_last = vl_idx + 1 == total_vlines;
+                    let next_is_cont = !is_last && vlines[vl_idx + 1].is_wrapped_continuation;
+                    let is_cursor_here = vl.contains_cursor(cursor_idx, is_last, next_is_cont);
 
-                    let line_body = if is_cursor_on_line {
-                        let col = cursor_idx - *start_char;
-                        let line_chars: Vec<char> = line_str.chars().collect();
-                        let before: String = line_chars[..col.min(line_chars.len())].iter().collect();
-                        let after: String = line_chars[col.min(line_chars.len())..].iter().collect();
+                    let line_body = if is_cursor_here {
+                        let col = cursor_idx.saturating_sub(vl.start_char);
+                        let vl_chars: Vec<char> = vl.text.chars().collect();
+                        let split_idx = col.min(vl_chars.len());
+                        let before: String = vl_chars[..split_idx].iter().collect();
+                        let after: String = vl_chars[split_idx..].iter().collect();
 
                         div()
                             .flex_1()
                             .min_w(px(0.0))
-                            .w_full()
-                            .whitespace_normal()
+                            .flex()
+                            .items_center()
                             .text_xs()
                             .font_family("Consolas, monospace")
                             .text_color(theme.text_primary)
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .child(div().child(before))
+                            .child(
+                                div()
+                                    .whitespace_nowrap()
+                                    .child(before)
+                            )
                             .child(
                                 div()
                                     .w(px(2.0))
                                     .h(px(14.0))
                                     .bg(theme.accent)
-                                    .rounded_xs(),
+                                    .rounded_xs()
+                                    .mx(px(0.5))
                             )
-                            .child(div().child(after))
+                            .child(
+                                div()
+                                    .whitespace_nowrap()
+                                    .child(after)
+                            )
                     } else {
-                        let display = if line_str.is_empty() { " " } else { line_str.as_str() };
+                        let display = if vl.text.is_empty() { " " } else { vl.text.as_str() };
                         div()
                             .flex_1()
                             .min_w(px(0.0))
-                            .w_full()
-                            .whitespace_normal()
                             .text_xs()
                             .font_family("Consolas, monospace")
                             .text_color(theme.text_primary)
+                            .whitespace_nowrap()
                             .child(display.to_string())
                     };
 
+                    let line_num_str = if vl.is_wrapped_continuation {
+                        " ".to_string()
+                    } else {
+                        vl.logical_line_num.to_string()
+                    };
+
+                    let vl_clone = vl.clone();
                     lines_col = lines_col.child(
                         div()
-                            .id(("ocr-line", line_idx))
+                            .id(("ocr-vline", vl_idx))
                             .flex()
-                            .items_start()
+                            .items_center()
                             .gap_2()
                             .w_full()
                             .cursor(CursorStyle::IBeam)
-                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                                 this.focus_handle.focus(window);
-                                this.set_ocr_cursor_to_line(line_idx, cx);
+                                this.set_ocr_cursor_to_visual_line(&vl_clone, f32::from(ev.position.x), screen_w, cx);
                                 cx.stop_propagation();
                             }))
                             .child(
                                 div()
-                                    .w(px(24.0))
+                                    .w(px(28.0))
                                     .text_xs()
                                     .text_color(rgba(0xFFFFFF30))
                                     .font_family("Consolas, monospace")
-                                    .child((line_idx + 1).to_string()),
+                                    .child(line_num_str),
                             )
                             .child(line_body),
                     );
@@ -6044,8 +6198,8 @@ impl Render for ScreenOverlayView {
                     }))
                     .child(
                         div()
-                            .w(px(640.0))
-                            .max_w(px((f32::from(screen_size.width) - 48.0).min(680.0)))
+                            .w(px(880.0))
+                            .max_w(px((f32::from(screen_size.width) - 48.0).min(920.0)))
                             .rounded_2xl()
                             .bg(theme.bg_surface)
                             .border_1()

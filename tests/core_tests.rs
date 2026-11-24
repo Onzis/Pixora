@@ -1901,6 +1901,71 @@ fn test_qr_actions_parsing() {
     }
 }
 
+#[test]
+fn test_ocr_modal_visual_line_wrapping_and_navigation() {
+    use pixora::overlay::overlay::{OcrFormatMode, OcrModalState};
+
+    // Long single line of 144 characters (similar to OCR result in single line mode)
+    let single_line = "Проблема с регистрацией успешно устранена спешим обрадовать, что проблема с доступом к почте была успешно устранена, пользователи вновь могут...".to_string();
+    let char_count = single_line.chars().count();
+    assert_eq!(char_count, 144);
+
+    let mut state = OcrModalState {
+        original_text: single_line.clone(),
+        single_line_text: single_line.clone(),
+        code_table_text: single_line.clone(),
+        edited_text: single_line,
+        mode: OcrFormatMode::SingleLine,
+        is_copied: false,
+        cursor_char_idx: 0,
+    };
+
+    // 1. Visual lines wrapping with max_chars = 80
+    let vlines = state.visual_lines(80);
+    assert!(vlines.len() >= 2, "144 chars must be wrapped into at least 2 visual lines");
+
+    // All visual lines must not exceed 80 chars
+    for vl in &vlines {
+        assert!(vl.text.chars().count() <= 80, "Visual line length must be <= 80");
+    }
+
+    // Continuity: end_char of first line must match start_char of continuation line
+    assert_eq!(vlines[0].start_char, 0);
+    assert_eq!(vlines[0].logical_line_num, 1);
+    assert!(!vlines[0].is_wrapped_continuation);
+
+    assert_eq!(vlines[1].start_char, vlines[0].end_char);
+    assert_eq!(vlines[1].logical_line_num, 1);
+    assert!(vlines[1].is_wrapped_continuation);
+
+    let last_vl = vlines.last().unwrap();
+    assert_eq!(last_vl.end_char, 144);
+
+    // 2. contains_cursor checks across boundary
+    let split_boundary = vlines[0].end_char;
+    // Right before boundary belongs to first line
+    assert!(vlines[0].contains_cursor(split_boundary - 1, false, true));
+    // At boundary belongs to continuation line
+    assert!(vlines[1].contains_cursor(split_boundary, true, false));
+    // At end of text belongs to last line
+    assert!(last_vl.contains_cursor(144, true, false));
+
+    // 3. Navigation across visual lines
+    state.cursor_char_idx = 10;
+    state.move_cursor_down();
+    assert!(state.cursor_char_idx >= vlines[1].start_char, "Moving down must jump into next visual line");
+
+    state.move_cursor_up();
+    assert_eq!(state.cursor_char_idx, 10, "Moving up must return to initial position");
+
+    state.move_cursor_end();
+    assert!(state.cursor_char_idx <= 144);
+
+    state.move_cursor_home();
+    assert_eq!(state.cursor_char_idx, 0);
+}
+
+
 
 
 
