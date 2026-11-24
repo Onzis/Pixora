@@ -233,7 +233,7 @@ impl ScreenOverlayView {
                 let cl_w = cl_r - cl_x;
                 let cl_h = cl_b - cl_y;
 
-                if cl_w >= 40.0 && cl_h >= 40.0 {
+                if cl_w >= 10.0 && cl_h >= 8.0 {
                     detected_windows.push(WindowSnapCandidate {
                         bounds: Bounds {
                             origin: point(px(cl_x), px(cl_y)),
@@ -653,7 +653,7 @@ impl ScreenOverlayView {
             let dist_right = (bx + bw) - px_f;
             let dist_top = py_f - by;
             let dist_bottom = (by + bh) - py_f;
-            dist_left <= 8.0 || dist_right <= 8.0 || dist_top <= 8.0 || dist_bottom <= 8.0
+            dist_left <= 4.0 || dist_right <= 4.0 || dist_top <= 4.0 || dist_bottom <= 4.0
         } else {
             false
         };
@@ -701,7 +701,7 @@ impl ScreenOverlayView {
                     let dr = (bx + bw) - px_f;
                     let dt = py_f - by;
                     let db = (by + bh) - py_f;
-                    dl <= 8.0 || dr <= 8.0 || dt <= 8.0 || db <= 8.0
+                    dl <= 4.0 || dr <= 4.0 || dt <= 4.0 || db <= 4.0
                 } else {
                     false
                 }
@@ -728,12 +728,17 @@ impl ScreenOverlayView {
                     let cl_w = cl_r - cl_x;
                     let cl_h = cl_b - cl_y;
 
-                    if cl_w >= 16.0 && cl_h >= 12.0 && (cl_w < max_w * 0.98 || cl_h < max_h * 0.98) {
+                    if cl_w >= 8.0 && cl_h >= 8.0 && (cl_w < max_w * 0.98 || cl_h < max_h * 0.98) {
                         let b = Bounds {
                             origin: point(px(cl_x), px(cl_y)),
                             size: size(px(cl_w), px(cl_h)),
                         };
-                        if b.contains(&p) {
+                        let margin = 2.0;
+                        let hit_bounds = Bounds {
+                            origin: point(px(cl_x - margin), px(cl_y - margin)),
+                            size: size(px(cl_w + margin * 2.0), px(cl_h + margin * 2.0)),
+                        };
+                        if hit_bounds.contains(&p) {
                             let title = if !elem.title.trim().is_empty() {
                                 elem.title
                             } else {

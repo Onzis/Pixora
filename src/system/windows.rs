@@ -177,7 +177,7 @@ pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
                         let ih = (iy1 - iy0).max(0) as u32;
                         let pw = (ctx.parent_rect.right - ctx.parent_rect.left) as u32;
                         let ph = (ctx.parent_rect.bottom - ctx.parent_rect.top) as u32;
-                        if iw >= 24 && ih >= 16 && (iw < pw || ih < ph) {
+                        if iw >= 10 && ih >= 8 && (iw < pw || ih < ph) {
                             let mut text_buf = [0u16; 256];
                             let len = GetWindowTextW(child, &mut text_buf);
                             let title = if len > 0 {
@@ -254,7 +254,9 @@ pub fn find_element_at_point(
     };
     use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation, IUIAutomation2};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongW, SetWindowLongW, GWL_EXSTYLE, WS_EX_TRANSPARENT,
+        GetAncestor, GetWindowLongW, GetWindowTextW, SetWindowLongW, SetWindowPos, WindowFromPoint,
+        GA_ROOT, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+        WS_EX_TRANSPARENT,
     };
 
     thread_local! {
@@ -287,6 +289,15 @@ pub fn find_element_at_point(
             if let Some(hwnd) = overlay_target {
                 old_ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
                 let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, old_ex | (WS_EX_TRANSPARENT.0 as i32));
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+                );
             }
 
             let pt = POINT {
@@ -297,22 +308,87 @@ pub fn find_element_at_point(
 
             if let Some(hwnd) = overlay_target {
                 let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, old_ex);
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+                );
             }
 
-            let elem = elem_res.ok()?;
+            let mut elem = match elem_res {
+                Ok(e) => {
+                    if let Ok(pid) = e.CurrentProcessId() {
+                        if pid as u32 == std::process::id() {
+                            None
+                        } else {
+                            Some(e)
+                        }
+                    } else {
+                        Some(e)
+                    }
+                }
+                Err(_) => None,
+            };
 
-            // Reject elements belonging to Pixora itself
-            if let Ok(pid) = elem.CurrentProcessId() {
-                if pid as u32 == std::process::id() {
-                    return None;
+            // Fallback: If ElementFromPoint hit Pixora or nothing, use WindowFromPoint to get the underlying HWND
+            if elem.is_none() {
+                let hit_hwnd = WindowFromPoint(pt);
+                if !hit_hwnd.is_invalid() && hit_hwnd.0 as isize != overlay_hwnd.unwrap_or(0) {
+                    if let Ok(target_elem) = automation.ElementFromHandle(hit_hwnd) {
+                        elem = Some(target_elem);
+                    }
                 }
             }
+
+            let elem = elem?;
+
+            // Drill down to the innermost child element containing the cursor (buttons, tabs, list items, icons)
+            let mut deepest = elem.clone();
+            if let Ok(walker) = automation.ControlViewWalker() {
+                let mut current = elem;
+                for _ in 0..6 {
+                    let mut next_current = None;
+                    if let Ok(mut child) = walker.GetFirstChildElement(&current) {
+                        loop {
+                            if let Ok(cr) = child.CurrentBoundingRectangle() {
+                                if cr.left <= screen_x
+                                    && screen_x <= cr.right
+                                    && cr.top <= screen_y
+                                    && screen_y <= cr.bottom
+                                {
+                                    let cw = (cr.right - cr.left).max(0) as u32;
+                                    let ch = (cr.bottom - cr.top).max(0) as u32;
+                                    if cw >= 8 && ch >= 8 {
+                                        next_current = Some(child.clone());
+                                        break;
+                                    }
+                                }
+                            }
+                            match walker.GetNextSiblingElement(&child) {
+                                Ok(next) => child = next,
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                    if let Some(child_elem) = next_current {
+                        current = child_elem.clone();
+                        deepest = child_elem;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            let elem = deepest;
 
             let rect = elem.CurrentBoundingRectangle().ok()?;
             let width = (rect.right - rect.left).max(0) as u32;
             let height = (rect.bottom - rect.top).max(0) as u32;
 
-            if width < 16 || height < 12 {
+            if width < 8 || height < 8 {
                 return None;
             }
 
@@ -324,6 +400,11 @@ pub fn find_element_at_point(
             let name = elem.CurrentName().unwrap_or_default().to_string();
             let type_name = elem.CurrentLocalizedControlType().unwrap_or_default().to_string();
 
+            let native_hwnd = elem
+                .CurrentNativeWindowHandle()
+                .map(|h| h.0 as isize)
+                .unwrap_or(0);
+
             let title = if !name.trim().is_empty() {
                 name.trim().to_string()
             } else if !type_name.trim().is_empty() {
@@ -332,14 +413,23 @@ pub fn find_element_at_point(
                     None => String::new(),
                     Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
                 }
+            } else if native_hwnd != 0 {
+                let root_hwnd = GetAncestor(HWND(native_hwnd as *mut _), GA_ROOT);
+                let target_hwnd = if !root_hwnd.is_invalid() {
+                    root_hwnd
+                } else {
+                    HWND(native_hwnd as *mut _)
+                };
+                let mut text_buf = [0u16; 256];
+                let len = GetWindowTextW(target_hwnd, &mut text_buf);
+                if len > 0 {
+                    String::from_utf16_lossy(&text_buf[..len as usize])
+                } else {
+                    String::new()
+                }
             } else {
                 String::new()
             };
-
-            let native_hwnd = elem
-                .CurrentNativeWindowHandle()
-                .map(|h| h.0 as isize)
-                .unwrap_or(0);
 
             Some(DetectedWindow {
                 hwnd: native_hwnd,

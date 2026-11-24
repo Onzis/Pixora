@@ -1614,9 +1614,9 @@ fn test_ui_automation_element_snapping() {
     assert_ne!(picked_overlap.title, "Pixora — проводник");
     assert_ne!(picked_overlap.title, "Background Child");
 
-    // Near outer border (dist <= 8px from top-level window edge) -> snaps to entire foremost window
+    // Near outer border (dist <= 4px from top-level window edge) -> snaps to entire foremost window
     let near_border = ScreenOverlayView::find_best_snap_candidate(
-        point(px(4.0), px(300.0)),
+        point(px(3.0), px(300.0)),
         &candidates,
     );
     assert!(near_border.is_some());
@@ -1625,6 +1625,30 @@ fn test_ui_automation_element_snapping() {
     assert_eq!(picked_window.title, "Antigravity");
     assert_eq!(picked_window.z_order, 0);
     assert!(!picked_window.is_child_element);
+
+    // Test small block selection (toolbar button 32x32 inside foremost window)
+    let small_button = WindowSnapCandidate {
+        bounds: Bounds {
+            origin: point(px(140.0), px(190.0)),
+            size: size(px(32.0), px(32.0)),
+        },
+        title: "Создать".to_string(),
+        is_child_element: true,
+        z_order: 0,
+    };
+    let mut candidates_with_small = candidates.clone();
+    candidates_with_small.push(small_button);
+
+    let picked_small = ScreenOverlayView::find_best_snap_candidate(
+        point(px(150.0), px(200.0)),
+        &candidates_with_small,
+    );
+    assert!(picked_small.is_some());
+    let small = picked_small.unwrap();
+    assert_eq!(small.title, "Создать");
+    assert_eq!(small.bounds.size.width, px(32.0));
+    assert_eq!(small.bounds.size.height, px(32.0));
+    assert!(small.is_child_element);
 }
 
 #[test]
