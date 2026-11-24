@@ -1,40 +1,45 @@
 [changelog]
-header = """
-# Changelog
-
-All notable changes to Pixora will be documented in this file.
-"""
+header = ""
 body = """
 {% if version %}\
-    ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+## What's Changed in {{ version }}
 {% else %}\
-    ## [unreleased]
+## What's Changed
 {% endif %}\
+
 {% for group, commits in commits | group_by(attribute="group") %}
-    ### {{ group | upper_first }}
-    {% for commit in commits %}
-        - {% if commit.scope %}*({{ commit.scope }})* {% endif %}{{ commit.message | upper_first }}\
-    {% endfor %}
-{% endfor %}\n
+### {{ group | upper_first }}
+{% for commit in commits %}
+- {% if commit.scope %}*({{ commit.scope }})* {% endif %}{{ commit.message | upper_first }}
+{% endfor %}
+{% endfor %}
 """
 trim = true
 footer = ""
 
 [git]
-conventional_commits = true
+conventional_commits = false
 filter_unconventional = false
 split_commits = false
 commit_parsers = [
-    { message = "^feat", group = "Features" },
-    { message = "^fix", group = "Bug Fixes" },
-    { message = "^doc", group = "Documentation" },
-    { message = "^perf", group = "Performance" },
-    { message = "^refactor", group = "Refactoring" },
-    { message = "^style", group = "Styling" },
-    { message = "^test", group = "Testing" },
-    { message = "^chore\\(release\\)", skip = true },
-    { message = "^chore", group = "Miscellaneous Tasks" },
+    { message = "^[Ff]eat", group = "Features" },
+    { message = "^[Aa]dd", group = "Features" },
+    { message = "^[Ss]upport", group = "Features" },
+    { message = "^[Ii]mplement", group = "Features" },
+    { message = "^[Ff]ix", group = "Bug Fixes" },
+    { message = "^[Ss]witch", group = "Refactoring" },
+    { message = "^[Rr]eplace", group = "Refactoring" },
+    { message = "^[Rr]efactor", group = "Refactoring" },
+    { message = "^[Rr]edesign", group = "Styling & UI" },
+    { message = "^[Ss]tyle", group = "Styling & UI" },
+    { message = "^[Dd]oc", group = "Documentation" },
+    { message = "^[Pp]erf", group = "Performance" },
+    { message = "^[Tt]est", group = "Testing" },
+    { message = "^[Bb]ump", skip = true },
+    { message = "^[Cc]hore\\(release\\)", skip = true },
+    { message = "^[Cc]hore", group = "Miscellaneous Tasks" },
     { body = ".*security", group = "Security" },
+    { message = ".*", group = "Other Changes" },
 ]
 protect_breaking_commits = false
 filter_commits = false
