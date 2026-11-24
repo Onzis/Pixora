@@ -96,6 +96,8 @@ pub struct OcrModalState {
     pub mode: OcrFormatMode,
     pub is_copied: bool,
     pub cursor_char_idx: usize,
+    pub selection_range: Option<(usize, usize)>,
+    pub selection_anchor: Option<usize>,
 }
 
 impl OcrModalState {
@@ -260,6 +262,181 @@ impl OcrModalState {
             }
         }
         self.cursor_char_idx = self.edited_text.chars().count();
+    }
+
+    pub fn selected_text(&self) -> Option<String> {
+        if let Some((start, end)) = self.selection_range {
+            let chars: Vec<char> = self.edited_text.chars().collect();
+            if start < end && start < chars.len() {
+                let sel: String = chars[start..end.min(chars.len())].iter().collect();
+                return Some(sel);
+            }
+        }
+        None
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection_range = None;
+        self.selection_anchor = None;
+    }
+
+    pub fn select_all(&mut self) {
+        let total = self.edited_text.chars().count();
+        if total > 0 {
+            self.selection_range = Some((0, total));
+            self.cursor_char_idx = total;
+            self.selection_anchor = Some(0);
+        }
+    }
+
+    pub fn select_word_at_cursor(&mut self) {
+        let chars: Vec<char> = self.edited_text.chars().collect();
+        let total = chars.len();
+        if total == 0 {
+            return;
+        }
+        let pos = self.cursor_char_idx.min(total.saturating_sub(1));
+        let is_ws = chars[pos].is_whitespace();
+        let is_punc = is_ocr_punctuation(chars[pos]);
+
+        let mut start = pos;
+        while start > 0 {
+            let prev = chars[start - 1];
+            if is_ws && !prev.is_whitespace() {
+                break;
+            }
+            if !is_ws && (prev.is_whitespace() || is_ocr_punctuation(prev) != is_punc) {
+                break;
+            }
+            start -= 1;
+        }
+
+        let mut end = pos;
+        while end < total {
+            let ch = chars[end];
+            if is_ws && !ch.is_whitespace() {
+                break;
+            }
+            if !is_ws && (ch.is_whitespace() || is_ocr_punctuation(ch) != is_punc) {
+                break;
+            }
+            end += 1;
+        }
+
+        if start < end {
+            self.selection_range = Some((start, end));
+            self.cursor_char_idx = end;
+            self.selection_anchor = Some(start);
+        }
+    }
+
+    pub fn delete_selection(&mut self) -> bool {
+        if let Some((start, end)) = self.selection_range.take() {
+            let mut chars: Vec<char> = self.edited_text.chars().collect();
+            let start = start.min(chars.len());
+            let end = end.min(chars.len());
+            if start < end {
+                chars.drain(start..end);
+                self.cursor_char_idx = start;
+                self.edited_text = chars.into_iter().collect();
+                self.is_copied = false;
+                self.selection_range = None;
+                self.selection_anchor = None;
+                return true;
+            }
+        }
+        false
+    }
+}
+
+fn is_ocr_punctuation(ch: char) -> bool {
+    ch.is_ascii_punctuation() || matches!(ch, '«' | '»' | '—' | '–' | '…' | '“' | '”' | '„' | '’' | '‘')
+}
+
+#[cfg(windows)]
+pub fn measure_ocr_text_width(s: &str, font_size: f32) -> f32 {
+    if s.is_empty() {
+        return 0.0;
+    }
+    unsafe {
+        use windows::Win32::Graphics::Gdi::*;
+        use windows::Win32::Foundation::SIZE;
+        use windows::core::w;
+
+        let hdc = GetDC(None);
+        if !hdc.is_invalid() {
+            let font_h = -(font_size.round() as i32);
+            let hfont = CreateFontW(
+                font_h, 0, 0, 0, 400, 0, 0, 0,
+                FONT_CHARSET(1),
+                FONT_OUTPUT_PRECISION(0),
+                FONT_CLIP_PRECISION(0),
+                FONT_QUALITY(0),
+                0,
+                w!("Consolas"),
+            );
+            if !hfont.is_invalid() {
+                let old_font = SelectObject(hdc, hfont.into());
+                let wide: Vec<u16> = s.encode_utf16().collect();
+                let mut sz = SIZE::default();
+                let ok = GetTextExtentPoint32W(hdc, &wide, &mut sz).as_bool();
+                SelectObject(hdc, old_font);
+                let _ = DeleteObject(hfont.into());
+                ReleaseDC(None, hdc);
+
+                if ok && sz.cx > 0 {
+                    return sz.cx as f32;
+                }
+            } else {
+                ReleaseDC(None, hdc);
+            }
+        }
+    }
+    crate::editor::annotations::string_width(s, font_size)
+}
+
+#[cfg(not(windows))]
+pub fn measure_ocr_text_width(s: &str, font_size: f32) -> f32 {
+    crate::editor::annotations::string_width(s, font_size)
+}
+
+pub fn find_char_index_at_x(text: &str, font_size: f32, rel_x: f32) -> usize {
+    if rel_x <= 0.0 || text.is_empty() {
+        return 0;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let total_len = chars.len();
+
+    let full_w = measure_ocr_text_width(text, font_size);
+    if rel_x >= full_w {
+        return total_len;
+    }
+
+    let mut low = 0;
+    let mut high = total_len;
+    while low < high {
+        let mid = (low + high) / 2;
+        let prefix: String = chars[..mid].iter().collect();
+        let cur_w = measure_ocr_text_width(&prefix, font_size);
+        if cur_w < rel_x {
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+
+    if low > 0 {
+        let prev_prefix: String = chars[..low - 1].iter().collect();
+        let prev_w = measure_ocr_text_width(&prev_prefix, font_size);
+        let cur_prefix: String = chars[..low].iter().collect();
+        let cur_w = measure_ocr_text_width(&cur_prefix, font_size);
+        if (rel_x - prev_w).abs() < (cur_w - rel_x).abs() {
+            low - 1
+        } else {
+            low
+        }
+    } else {
+        0
     }
 }
 
@@ -1201,6 +1378,8 @@ impl ScreenOverlayView {
                             mode: OcrFormatMode::Original,
                             is_copied: true,
                             cursor_char_idx: full_chars_count,
+                            selection_range: None,
+                            selection_anchor: None,
                         });
                     }
                 }
@@ -1269,6 +1448,7 @@ impl ScreenOverlayView {
             };
             modal.cursor_char_idx = modal.edited_text.chars().count();
             modal.is_copied = false;
+            modal.clear_selection();
             cx.notify();
         }
     }
@@ -1276,8 +1456,24 @@ impl ScreenOverlayView {
     pub fn set_ocr_cursor_to_line(&mut self, line_idx: usize, cx: &mut Context<Self>) {
         if let Some(modal) = &mut self.ocr_modal {
             modal.set_cursor_to_line(line_idx);
+            modal.clear_selection();
             cx.notify();
         }
+    }
+
+    pub fn get_char_idx_for_visual_line(
+        &self,
+        vl: &VisualLine,
+        mouse_x: f32,
+        screen_w: f32,
+    ) -> usize {
+        let modal_w = 880.0_f32.min(screen_w - 48.0);
+        let card_x = ((screen_w - modal_w) / 2.0).max(24.0);
+        let text_start_x = card_x + 66.0;
+        let rel_x = (mouse_x - text_start_x).max(0.0);
+        let col = find_char_index_at_x(&vl.text, 12.0, rel_x);
+        let vl_len = vl.end_char.saturating_sub(vl.start_char);
+        vl.start_char + col.min(vl_len)
     }
 
     pub fn set_ocr_cursor_to_visual_line(
@@ -1285,30 +1481,75 @@ impl ScreenOverlayView {
         vl: &VisualLine,
         mouse_x: f32,
         screen_w: f32,
+        click_count: usize,
         cx: &mut Context<Self>,
     ) {
+        let char_idx = self.get_char_idx_for_visual_line(vl, mouse_x, screen_w);
         if let Some(modal) = &mut self.ocr_modal {
-            let modal_w = 880.0_f32.min(screen_w - 48.0);
-            let card_x = ((screen_w - modal_w) / 2.0).max(24.0);
-            // Offset from card left edge to text:
-            // px_4 (16px) + p_3 (12px) + line num (28px) + gap_2 (8px) = 64.0px
-            let text_start_x = card_x + 64.0;
-            let rel_x = (mouse_x - text_start_x).max(0.0);
-            // Consolas text_xs character width is approx 7.5px
-            let col = (rel_x / 7.5).round() as usize;
-            let vl_len = vl.end_char.saturating_sub(vl.start_char);
-            let target_char = vl.start_char + col.min(vl_len);
-            modal.cursor_char_idx = target_char.min(modal.edited_text.chars().count());
+            let total_chars = modal.edited_text.chars().count();
+            let target_char = char_idx.min(total_chars);
+            modal.cursor_char_idx = target_char;
+
+            if click_count == 2 {
+                modal.select_word_at_cursor();
+            } else if click_count >= 3 {
+                modal.selection_range = Some((vl.start_char, vl.end_char));
+                modal.cursor_char_idx = vl.end_char;
+                modal.selection_anchor = Some(vl.start_char);
+            } else {
+                modal.selection_anchor = Some(target_char);
+                modal.selection_range = None;
+            }
+            cx.notify();
+        }
+    }
+
+    pub fn update_ocr_selection_drag(
+        &mut self,
+        vl: &VisualLine,
+        mouse_x: f32,
+        screen_w: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self.get_char_idx_for_visual_line(vl, mouse_x, screen_w);
+        if let Some(modal) = &mut self.ocr_modal {
+            if let Some(anchor) = modal.selection_anchor {
+                modal.cursor_char_idx = current;
+                if current != anchor {
+                    let start = anchor.min(current);
+                    let end = anchor.max(current);
+                    modal.selection_range = Some((start, end));
+                } else {
+                    modal.selection_range = None;
+                }
+                cx.notify();
+            }
+        }
+    }
+
+    pub fn finish_ocr_selection_drag(&mut self, cx: &mut Context<Self>) {
+        if let Some(modal) = &mut self.ocr_modal {
+            modal.selection_anchor = None;
             cx.notify();
         }
     }
 
     pub fn copy_ocr_modal_text(&mut self, cx: &mut Context<Self>) {
         if let Some(modal) = &mut self.ocr_modal {
-            let _ = copy_text_to_clipboard(&modal.edited_text);
+            let (text_to_copy, is_selection) = if let Some(sel) = modal.selected_text() {
+                (sel, true)
+            } else {
+                (modal.edited_text.clone(), false)
+            };
+            let _ = copy_text_to_clipboard(&text_to_copy);
             modal.is_copied = true;
             let lang = self.config.language.resolve();
-            self.show_toast(t(lang, "Text copied to clipboard", "Текст скопирован в буфер обмена"), cx);
+            let msg = if is_selection {
+                t(lang, "Selected text copied to clipboard", "Выделенный текст скопирован в буфер обмена")
+            } else {
+                t(lang, "Text copied to clipboard", "Текст скопирован в буфер обмена")
+            };
+            self.show_toast(msg, cx);
             cx.notify();
         }
     }
@@ -2376,12 +2617,22 @@ impl ScreenOverlayView {
         // Modal Keyboard Navigation and Editing
         if let Some(modal) = &mut self.ocr_modal {
             if key == "escape" {
+                if modal.selection_range.is_some() {
+                    modal.clear_selection();
+                    cx.notify();
+                    return;
+                }
                 self.close_ocr_modal(cx);
+                return;
+            } else if (key == "a" || key == "A" || key == "ф" || key == "Ф") && ev.keystroke.modifiers.control {
+                modal.select_all();
+                cx.notify();
                 return;
             } else if (key == "c" || key == "C" || key == "с" || key == "С") && ev.keystroke.modifiers.control {
                 self.copy_ocr_modal_text(cx);
                 return;
             } else if (key == "v" || key == "V" || key == "м" || key == "М") && ev.keystroke.modifiers.control {
+                modal.delete_selection();
                 if let Some(clip) = get_text_from_clipboard() {
                     let mut chars: Vec<char> = modal.edited_text.chars().collect();
                     let ins_idx = modal.cursor_char_idx.min(chars.len());
@@ -2399,6 +2650,7 @@ impl ScreenOverlayView {
                     self.copy_ocr_modal_text(cx);
                     self.close_ocr_modal(cx);
                 } else {
+                    modal.delete_selection();
                     let mut chars: Vec<char> = modal.edited_text.chars().collect();
                     let ins_idx = modal.cursor_char_idx.min(chars.len());
                     chars.insert(ins_idx, '\n');
@@ -2409,6 +2661,10 @@ impl ScreenOverlayView {
                 }
                 return;
             } else if key == "backspace" {
+                if modal.delete_selection() {
+                    cx.notify();
+                    return;
+                }
                 let mut chars: Vec<char> = modal.edited_text.chars().collect();
                 if modal.cursor_char_idx > 0 && modal.cursor_char_idx <= chars.len() {
                     modal.cursor_char_idx -= 1;
@@ -2419,6 +2675,10 @@ impl ScreenOverlayView {
                 }
                 return;
             } else if key == "delete" {
+                if modal.delete_selection() {
+                    cx.notify();
+                    return;
+                }
                 let mut chars: Vec<char> = modal.edited_text.chars().collect();
                 if modal.cursor_char_idx < chars.len() {
                     chars.remove(modal.cursor_char_idx);
@@ -2428,31 +2688,48 @@ impl ScreenOverlayView {
                 }
                 return;
             } else if key == "left" {
+                if let Some((start, _)) = modal.selection_range.take() {
+                    modal.cursor_char_idx = start;
+                    modal.selection_anchor = None;
+                    cx.notify();
+                    return;
+                }
                 modal.cursor_char_idx = modal.cursor_char_idx.saturating_sub(1);
                 cx.notify();
                 return;
             } else if key == "right" {
+                if let Some((_, end)) = modal.selection_range.take() {
+                    modal.cursor_char_idx = end;
+                    modal.selection_anchor = None;
+                    cx.notify();
+                    return;
+                }
                 let total = modal.edited_text.chars().count();
                 modal.cursor_char_idx = (modal.cursor_char_idx + 1).min(total);
                 cx.notify();
                 return;
             } else if key == "up" {
+                modal.clear_selection();
                 modal.move_cursor_up();
                 cx.notify();
                 return;
             } else if key == "down" {
+                modal.clear_selection();
                 modal.move_cursor_down();
                 cx.notify();
                 return;
             } else if key == "home" {
+                modal.clear_selection();
                 modal.move_cursor_home();
                 cx.notify();
                 return;
             } else if key == "end" {
+                modal.clear_selection();
                 modal.move_cursor_end();
                 cx.notify();
                 return;
             } else if key == "space" {
+                modal.delete_selection();
                 let mut chars: Vec<char> = modal.edited_text.chars().collect();
                 let ins_idx = modal.cursor_char_idx.min(chars.len());
                 chars.insert(ins_idx, ' ');
@@ -2478,6 +2755,7 @@ impl ScreenOverlayView {
                 };
 
                 if let Some(s) = text_to_insert {
+                    modal.delete_selection();
                     let mut chars: Vec<char> = modal.edited_text.chars().collect();
                     let ins_idx = modal.cursor_char_idx.min(chars.len());
                     for (i, ch) in s.chars().enumerate() {
@@ -6041,6 +6319,7 @@ impl Render for ScreenOverlayView {
             let line_count = text_to_display.lines().count().max(1);
             let word_count = text_to_display.split_whitespace().count();
             let cursor_idx = ocr.cursor_char_idx;
+            let selection_range = ocr.selection_range;
             let screen_w = f32::from(screen_size.width);
 
             let vlines = ocr.visual_lines(80);
@@ -6061,9 +6340,13 @@ impl Render for ScreenOverlayView {
                     this.focus_handle.focus(window);
                     if let Some(modal) = &mut this.ocr_modal {
                         modal.cursor_char_idx = modal.edited_text.chars().count();
+                        modal.clear_selection();
                         cx.notify();
                     }
                     cx.stop_propagation();
+                }))
+                .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                    this.finish_ocr_selection_drag(cx);
                 }))
                 .flex()
                 .flex_col()
@@ -6096,7 +6379,69 @@ impl Render for ScreenOverlayView {
                     let next_is_cont = !is_last && vlines[vl_idx + 1].is_wrapped_continuation;
                     let is_cursor_here = vl.contains_cursor(cursor_idx, is_last, next_is_cont);
 
-                    let line_body = if is_cursor_here {
+                    let line_body = if let Some((sel_start, sel_end)) = selection_range {
+                        let line_sel_start = sel_start.max(vl.start_char);
+                        let line_sel_end = sel_end.min(vl.end_char);
+                        if line_sel_start < line_sel_end {
+                            let vl_chars: Vec<char> = vl.text.chars().collect();
+                            let col_start = line_sel_start.saturating_sub(vl.start_char).min(vl_chars.len());
+                            let col_end = line_sel_end.saturating_sub(vl.start_char).min(vl_chars.len());
+
+                            let before_sel: String = vl_chars[..col_start].iter().collect();
+                            let selected: String = vl_chars[col_start..col_end].iter().collect();
+                            let after_sel: String = vl_chars[col_end..].iter().collect();
+
+                            let mut body = div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .flex()
+                                .items_center()
+                                .text_xs()
+                                .font_family("Consolas")
+                                .text_color(theme.text_primary);
+
+                            if !before_sel.is_empty() {
+                                body = body.child(div().whitespace_nowrap().child(before_sel));
+                            }
+
+                            body = body.child(
+                                div()
+                                    .whitespace_nowrap()
+                                    .bg(rgba(0x8174FF60))
+                                    .text_color(rgb(0xFFFFFF))
+                                    .rounded_xs()
+                                    .px(px(1.0))
+                                    .child(selected),
+                            );
+
+                            if is_cursor_here {
+                                body = body.child(
+                                    div()
+                                        .w(px(2.0))
+                                        .h(px(14.0))
+                                        .bg(theme.accent)
+                                        .rounded_xs()
+                                        .mx(px(0.5)),
+                                );
+                            }
+
+                            if !after_sel.is_empty() {
+                                body = body.child(div().whitespace_nowrap().child(after_sel));
+                            }
+
+                            body
+                        } else {
+                            let display = if vl.text.is_empty() { " " } else { vl.text.as_str() };
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .text_xs()
+                                .font_family("Consolas")
+                                .text_color(theme.text_primary)
+                                .whitespace_nowrap()
+                                .child(display.to_string())
+                        }
+                    } else if is_cursor_here {
                         let col = cursor_idx.saturating_sub(vl.start_char);
                         let vl_chars: Vec<char> = vl.text.chars().collect();
                         let split_idx = col.min(vl_chars.len());
@@ -6109,7 +6454,7 @@ impl Render for ScreenOverlayView {
                             .flex()
                             .items_center()
                             .text_xs()
-                            .font_family("Consolas, monospace")
+                            .font_family("Consolas")
                             .text_color(theme.text_primary)
                             .child(
                                 div()
@@ -6135,7 +6480,7 @@ impl Render for ScreenOverlayView {
                             .flex_1()
                             .min_w(px(0.0))
                             .text_xs()
-                            .font_family("Consolas, monospace")
+                            .font_family("Consolas")
                             .text_color(theme.text_primary)
                             .whitespace_nowrap()
                             .child(display.to_string())
@@ -6148,6 +6493,7 @@ impl Render for ScreenOverlayView {
                     };
 
                     let vl_clone = vl.clone();
+                    let vl_clone_move = vl.clone();
                     lines_col = lines_col.child(
                         div()
                             .id(("ocr-vline", vl_idx))
@@ -6158,15 +6504,21 @@ impl Render for ScreenOverlayView {
                             .cursor(CursorStyle::IBeam)
                             .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                                 this.focus_handle.focus(window);
-                                this.set_ocr_cursor_to_visual_line(&vl_clone, f32::from(ev.position.x), screen_w, cx);
+                                this.set_ocr_cursor_to_visual_line(&vl_clone, f32::from(ev.position.x), screen_w, ev.click_count, cx);
                                 cx.stop_propagation();
+                            }))
+                            .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, _, cx| {
+                                this.update_ocr_selection_drag(&vl_clone_move, f32::from(ev.position.x), screen_w, cx);
+                            }))
+                            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                this.finish_ocr_selection_drag(cx);
                             }))
                             .child(
                                 div()
                                     .w(px(28.0))
                                     .text_xs()
                                     .text_color(rgba(0xFFFFFF30))
-                                    .font_family("Consolas, monospace")
+                                    .font_family("Consolas")
                                     .child(line_num_str),
                             )
                             .child(line_body),
@@ -6348,7 +6700,7 @@ impl Render for ScreenOverlayView {
                                             .px_1()
                                             .text_xs()
                                             .text_color(theme.text_secondary)
-                                            .child(t(lang, "Click to move cursor • Type to edit • Arrows to navigate • Ctrl+V to paste", "Кликните по строке для курсора • Вводите текст • Стрелки для навигации • Ctrl+V для вставки")),
+                                            .child(t(lang, "Click to move cursor • Drag to select text • Ctrl+A / Ctrl+C", "Кликните для курсора • Выделяйте текст мышью • Ctrl+A / Ctrl+C")),
                                     ),
                             )
                             // Bottom Action Bar

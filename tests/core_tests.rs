@@ -1918,6 +1918,8 @@ fn test_ocr_modal_visual_line_wrapping_and_navigation() {
         mode: OcrFormatMode::SingleLine,
         is_copied: false,
         cursor_char_idx: 0,
+        selection_range: None,
+        selection_anchor: None,
     };
 
     // 1. Visual lines wrapping with max_chars = 80
@@ -1963,6 +1965,32 @@ fn test_ocr_modal_visual_line_wrapping_and_navigation() {
 
     state.move_cursor_home();
     assert_eq!(state.cursor_char_idx, 0);
+
+    // 4. Word selection, select all, and deletion
+    state.cursor_char_idx = 15; // inside "регистрацией"
+    state.select_word_at_cursor();
+    assert!(state.selection_range.is_some());
+    let selected = state.selected_text().unwrap();
+    assert_eq!(selected, "регистрацией");
+
+    state.select_all();
+    assert_eq!(state.selection_range, Some((0, 144)));
+    assert_eq!(state.selected_text().unwrap().chars().count(), 144);
+
+    // 5. Accurate character hit test with find_char_index_at_x
+    use pixora::overlay::overlay::{find_char_index_at_x, measure_ocr_text_width};
+    let sample = "2. Что было сделано";
+    let idx_start = find_char_index_at_x(sample, 12.0, 0.0);
+    assert_eq!(idx_start, 0);
+
+    let idx_past = find_char_index_at_x(sample, 12.0, 5000.0);
+    assert_eq!(idx_past, sample.chars().count());
+
+    // Clicking inside "сделано" (past "2. Что было ")
+    let w_before = measure_ocr_text_width("2. Что было ", 12.0);
+    let idx_sdelano = find_char_index_at_x(sample, 12.0, w_before + 8.0);
+    let sample_chars: Vec<char> = sample.chars().collect();
+    assert!(idx_sdelano >= 12 && idx_sdelano <= sample_chars.len());
 }
 
 
