@@ -59,6 +59,7 @@ pub struct WindowSnapCandidate {
     pub bounds: Bounds<Pixels>,
     pub title: String,
     pub is_child_element: bool,
+    pub z_order: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -218,7 +219,7 @@ impl ScreenOverlayView {
             let max_w = capture.bounds.width as f32;
             let max_h = capture.bounds.height as f32;
             let raw_windows = crate::system::windows::enumerate_visible_windows();
-            for win in raw_windows {
+            for (z_order, win) in raw_windows.iter().enumerate() {
                 let win_x = (win.bounds.x - capture.bounds.x) as f32;
                 let win_y = (win.bounds.y - capture.bounds.y) as f32;
                 let win_w = win.bounds.width as f32;
@@ -240,10 +241,20 @@ impl ScreenOverlayView {
                         },
                         title: win.title.clone(),
                         is_child_element: win.is_child_element,
+                        z_order,
                     });
 
                     // For top-level windows, detect visual panes along dividers/edges
-                    if !win.is_child_element && cl_w >= 100.0 && cl_h >= 100.0 {
+                    // ONLY if the window is NOT completely occluded by any previous window in Z-order!
+                    let is_occluded = raw_windows[..z_order].iter().any(|prev| {
+                        !prev.is_child_element
+                            && prev.bounds.x <= win.bounds.x
+                            && prev.bounds.y <= win.bounds.y
+                            && (prev.bounds.x + prev.bounds.width as i32) >= (win.bounds.x + win.bounds.width as i32)
+                            && (prev.bounds.y + prev.bounds.height as i32) >= (win.bounds.y + win.bounds.height as i32)
+                    });
+
+                    if !is_occluded && !win.is_child_element && cl_w >= 100.0 && cl_h >= 100.0 {
                         let panes = crate::system::windows::detect_visual_panes(
                             &capture.image,
                             cl_x as u32,
@@ -266,6 +277,7 @@ impl ScreenOverlayView {
                                     },
                                     title: win.title.clone(),
                                     is_child_element: true,
+                                    z_order,
                                 });
                             }
                         }
@@ -643,15 +655,29 @@ impl ScreenOverlayView {
             return None;
         }
 
-        // Find enclosing top-level parent window
-        let top_level = matching
+        // 1. Find the foremost top-level window at point p (lowest z_order)
+        let foremost_z = matching
             .iter()
             .filter(|w| !w.is_child_element)
-            .max_by(|a, b| {
-                let area_a = f32::from(a.bounds.size.width) * f32::from(a.bounds.size.height);
-                let area_b = f32::from(b.bounds.size.width) * f32::from(b.bounds.size.height);
-                area_a.partial_cmp(&area_b).unwrap()
-            });
+            .map(|w| w.z_order)
+            .min()
+            .unwrap_or(0);
+
+        // 2. Only consider candidates belonging to the foremost window
+        let valid_matching: Vec<&WindowSnapCandidate> = matching
+            .into_iter()
+            .filter(|w| w.z_order == foremost_z)
+            .collect();
+
+        if valid_matching.is_empty() {
+            return None;
+        }
+
+        // Find enclosing top-level parent window among valid candidates
+        let top_level = valid_matching
+            .iter()
+            .filter(|w| !w.is_child_element)
+            .min_by_key(|w| w.z_order);
 
         let px_f = f32::from(p.x);
         let py_f = f32::from(p.y);
@@ -674,8 +700,8 @@ impl ScreenOverlayView {
         if is_near_border {
             top_level.cloned().cloned()
         } else {
-            // Select smallest enclosing candidate (child pane/control)
-            matching
+            // Select smallest enclosing candidate (child pane/control) of the foremost window
+            valid_matching
                 .iter()
                 .min_by(|a, b| {
                     let area_a = f32::from(a.bounds.size.width) * f32::from(a.bounds.size.height);
@@ -699,36 +725,41 @@ impl ScreenOverlayView {
         let mut candidate = Self::find_best_snap_candidate(p, &self.detected_windows);
 
         #[cfg(windows)]
-        if candidate.is_none() {
-            let screen_x = self.capture.bounds.x + f32::from(p.x) as i32;
-            let screen_y = self.capture.bounds.y + f32::from(p.y) as i32;
-            let max_w = self.capture.bounds.width as f32;
-            let max_h = self.capture.bounds.height as f32;
-            if let Some(elem) = crate::system::windows::find_element_at_point(screen_x, screen_y, self.overlay_hwnd) {
-                let el_x = (elem.bounds.x - self.capture.bounds.x) as f32;
-                let el_y = (elem.bounds.y - self.capture.bounds.y) as f32;
-                let el_w = elem.bounds.width as f32;
-                let el_h = elem.bounds.height as f32;
+        {
+            let should_check_uia = candidate.as_ref().map_or(true, |c| !c.is_child_element);
+            if should_check_uia {
+                let screen_x = self.capture.bounds.x + f32::from(p.x) as i32;
+                let screen_y = self.capture.bounds.y + f32::from(p.y) as i32;
+                let max_w = self.capture.bounds.width as f32;
+                let max_h = self.capture.bounds.height as f32;
+                if let Some(elem) = crate::system::windows::find_element_at_point(screen_x, screen_y, self.overlay_hwnd) {
+                    let el_x = (elem.bounds.x - self.capture.bounds.x) as f32;
+                    let el_y = (elem.bounds.y - self.capture.bounds.y) as f32;
+                    let el_w = elem.bounds.width as f32;
+                    let el_h = elem.bounds.height as f32;
 
-                let cl_x = el_x.max(0.0);
-                let cl_y = el_y.max(0.0);
-                let cl_r = (el_x + el_w).min(max_w);
-                let cl_b = (el_y + el_h).min(max_h);
+                    let cl_x = el_x.max(0.0);
+                    let cl_y = el_y.max(0.0);
+                    let cl_r = (el_x + el_w).min(max_w);
+                    let cl_b = (el_y + el_h).min(max_h);
 
-                let cl_w = cl_r - cl_x;
-                let cl_h = cl_b - cl_y;
+                    let cl_w = cl_r - cl_x;
+                    let cl_h = cl_b - cl_y;
 
-                if cl_w >= 16.0 && cl_h >= 12.0 && (cl_w < max_w * 0.98 || cl_h < max_h * 0.98) {
-                    let b = Bounds {
-                        origin: point(px(cl_x), px(cl_y)),
-                        size: size(px(cl_w), px(cl_h)),
-                    };
-                    if b.contains(&p) {
-                        candidate = Some(WindowSnapCandidate {
-                            bounds: b,
-                            title: elem.title,
-                            is_child_element: true,
-                        });
+                    if cl_w >= 16.0 && cl_h >= 12.0 && (cl_w < max_w * 0.98 || cl_h < max_h * 0.98) {
+                        let b = Bounds {
+                            origin: point(px(cl_x), px(cl_y)),
+                            size: size(px(cl_w), px(cl_h)),
+                        };
+                        if b.contains(&p) {
+                            let z = candidate.as_ref().map_or(0, |c| c.z_order);
+                            candidate = Some(WindowSnapCandidate {
+                                bounds: b,
+                                title: elem.title,
+                                is_child_element: true,
+                                z_order: z,
+                            });
+                        }
                     }
                 }
             }

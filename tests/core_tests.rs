@@ -833,6 +833,7 @@ fn test_window_snapping_detection_and_selection() {
         },
         title: "Test Application Window".to_string(),
         is_child_element: false,
+        z_order: 0,
     };
 
     // Point inside the window
@@ -863,6 +864,7 @@ fn test_window_snapping_detection_and_selection() {
         },
         title: "New Tab".to_string(),
         is_child_element: true,
+        z_order: 0,
     };
     assert!(child_candidate.is_child_element);
     assert!(candidate.bounds.contains(&child_candidate.bounds.origin));
@@ -1547,16 +1549,17 @@ fn test_ui_automation_element_snapping() {
 
     // Test find_best_snap_candidate priority (ShareX model)
     let candidates = vec![
-        // Top-level window
+        // Foremost Top-level window (z_order = 0)
         WindowSnapCandidate {
             bounds: Bounds {
                 origin: point(px(0.0), px(0.0)),
                 size: size(px(1000.0), px(600.0)),
             },
-            title: "Test App".to_string(),
+            title: "Antigravity".to_string(),
             is_child_element: false,
+            z_order: 0,
         },
-        // Sidebar child pane
+        // Sidebar child pane of foremost window
         WindowSnapCandidate {
             bounds: Bounds {
                 origin: point(px(0.0), px(0.0)),
@@ -1564,10 +1567,31 @@ fn test_ui_automation_element_snapping() {
             },
             title: "Sidebar".to_string(),
             is_child_element: true,
+            z_order: 0,
+        },
+        // Background window behind foremost window (z_order = 1)
+        WindowSnapCandidate {
+            bounds: Bounds {
+                origin: point(px(50.0), px(50.0)),
+                size: size(px(800.0), px(500.0)),
+            },
+            title: "Pixora — проводник".to_string(),
+            is_child_element: false,
+            z_order: 1,
+        },
+        // Child pane of background window with tiny area
+        WindowSnapCandidate {
+            bounds: Bounds {
+                origin: point(px(50.0), px(50.0)),
+                size: size(px(100.0), px(100.0)),
+            },
+            title: "Background Child".to_string(),
+            is_child_element: true,
+            z_order: 1,
         },
     ];
 
-    // Inside sidebar away from outer border -> snaps to sidebar
+    // Inside sidebar away from outer border -> snaps to sidebar of foremost window
     let inside_sidebar = ScreenOverlayView::find_best_snap_candidate(
         point(px(50.0), px(300.0)),
         &candidates,
@@ -1575,9 +1599,22 @@ fn test_ui_automation_element_snapping() {
     assert!(inside_sidebar.is_some());
     let picked = inside_sidebar.unwrap();
     assert_eq!(picked.bounds.size.width, px(200.0));
+    assert_eq!(picked.title, "Sidebar");
+    assert_eq!(picked.z_order, 0);
     assert!(picked.is_child_element);
 
-    // Near outer border (dist <= 8px from top-level window edge) -> snaps to entire window
+    // Point overlapping both foremost and background window -> MUST pick foremost window, NEVER background window!
+    let overlap_pt = ScreenOverlayView::find_best_snap_candidate(
+        point(px(80.0), px(80.0)),
+        &candidates,
+    );
+    assert!(overlap_pt.is_some());
+    let picked_overlap = overlap_pt.unwrap();
+    assert_eq!(picked_overlap.z_order, 0, "Must NEVER pick background window occluded by foremost window");
+    assert_ne!(picked_overlap.title, "Pixora — проводник");
+    assert_ne!(picked_overlap.title, "Background Child");
+
+    // Near outer border (dist <= 8px from top-level window edge) -> snaps to entire foremost window
     let near_border = ScreenOverlayView::find_best_snap_candidate(
         point(px(4.0), px(300.0)),
         &candidates,
@@ -1585,6 +1622,8 @@ fn test_ui_automation_element_snapping() {
     assert!(near_border.is_some());
     let picked_window = near_border.unwrap();
     assert_eq!(picked_window.bounds.size.width, px(1000.0));
+    assert_eq!(picked_window.title, "Antigravity");
+    assert_eq!(picked_window.z_order, 0);
     assert!(!picked_window.is_child_element);
 }
 
