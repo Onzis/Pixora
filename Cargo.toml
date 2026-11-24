@@ -63,9 +63,11 @@ features = [
 ]
 
 [target.'cfg(target_os = "linux")'.dependencies]
-libc = "=0.2.190"
 x11-clipboard = "0.9"
 x11rb = { version = "0.13", features = ["allow-unsafe-code", "shm", "randr"] }
+
+[patch.crates-io]
+xattr = { path = "patches/xattr" }
 
 [profile.release]
 opt-level = 3
