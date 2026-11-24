@@ -228,9 +228,9 @@ impl Render for PinnedScreenshotView {
                     }
 
                     if (this.zoom - old_zoom).abs() > 0.001 {
-                        let cur_w = orig_w * this.zoom;
-                        let cur_h = orig_h * this.zoom;
-                        let scale = window.scale_factor();
+                        let _cur_w = orig_w * this.zoom;
+                        let _cur_h = orig_h * this.zoom;
+                        let _scale = window.scale_factor();
 
                         #[cfg(windows)]
                         let hwnd_raw = {
@@ -249,7 +249,7 @@ impl Render for PinnedScreenshotView {
                             async move {
                                 #[cfg(windows)]
                                 if let Some(hwnd) = hwnd_raw {
-                                    Self::perform_native_resize(hwnd, scale, cur_w, cur_h);
+                                    Self::perform_native_resize(hwnd, _scale, _cur_w, _cur_h);
                                 }
                                 let _ = cx.update(|app| {
                                     let _ = this.update(app, |_view, cx| {

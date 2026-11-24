@@ -581,7 +581,9 @@ impl ScreenOverlayView {
         let render_image = Arc::new(RenderImage::new(smallvec![frame]));
         let focus_handle = cx.focus_handle();
 
+        #[allow(unused_mut)]
         let mut initial_cursor = point(px(0.0), px(0.0));
+        #[allow(unused_mut)]
         let mut initial_magnifier = None;
         #[cfg(windows)]
         {
@@ -1087,6 +1089,7 @@ impl ScreenOverlayView {
             return false;
         }
 
+        #[allow(unused_mut)]
         let mut candidate = Self::find_best_snap_candidate(p, &self.detected_windows);
 
         #[cfg(windows)]
@@ -1523,16 +1526,12 @@ impl ScreenOverlayView {
         screen_w: f32,
         cx: &mut Context<Self>,
     ) {
+        #[cfg(windows)]
         let is_left_down = unsafe {
-            #[cfg(windows)]
-            {
-                (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as i16) < 0
-            }
-            #[cfg(not(windows))]
-            {
-                true
-            }
+            (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as i16) < 0
         };
+        #[cfg(not(windows))]
+        let is_left_down = true;
 
         if !is_left_down {
             self.finish_ocr_selection_drag(cx);
@@ -2252,16 +2251,12 @@ impl ScreenOverlayView {
 
         if let Some(modal) = &mut self.ocr_modal {
             if modal.selection_anchor.is_some() || modal.is_dragging {
+                #[cfg(windows)]
                 let is_left_down = unsafe {
-                    #[cfg(windows)]
-                    {
-                        (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as i16) < 0
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        true
-                    }
+                    (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as i16) < 0
                 };
+                #[cfg(not(windows))]
+                let is_left_down = true;
                 if !is_left_down {
                     modal.selection_anchor = None;
                     modal.mouse_down_pos = None;
@@ -6419,16 +6414,12 @@ impl Render for ScreenOverlayView {
                     this.finish_ocr_selection_drag(cx);
                 }))
                 .on_mouse_move(cx.listener(|this, _, _, cx| {
+                    #[cfg(windows)]
                     let is_left_down = unsafe {
-                        #[cfg(windows)]
-                        {
-                            (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as i16) < 0
-                        }
-                        #[cfg(not(windows))]
-                        {
-                            true
-                        }
+                        (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as i16) < 0
                     };
+                    #[cfg(not(windows))]
+                    let is_left_down = true;
                     if !is_left_down {
                         this.finish_ocr_selection_drag(cx);
                     }
@@ -6672,16 +6663,12 @@ impl Render for ScreenOverlayView {
                                 cx.stop_propagation();
                             }))
                             .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, _, cx| {
+                                #[cfg(windows)]
                                 let is_left_down = unsafe {
-                                    #[cfg(windows)]
-                                    {
-                                        (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as i16) < 0
-                                    }
-                                    #[cfg(not(windows))]
-                                    {
-                                        true
-                                    }
+                                    (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as i16) < 0
                                 };
+                                #[cfg(not(windows))]
+                                let is_left_down = true;
                                 if !is_left_down {
                                     this.finish_ocr_selection_drag(cx);
                                     return;

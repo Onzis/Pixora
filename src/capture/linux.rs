@@ -1,8 +1,7 @@
 use crate::capture::screen::ScreenCapture;
 use crate::system::windows::PhysicalRect;
 use image::RgbaImage;
-use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 pub fn capture_virtual_screen_linux() -> Result<ScreenCapture, String> {
     // 1. If Wayland is active, try Wayland capture tools first

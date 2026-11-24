@@ -1,5 +1,8 @@
 use std::sync::Mutex;
-use std::sync::mpsc::{Sender, channel};
+use std::sync::mpsc::Sender;
+#[cfg(windows)]
+use std::sync::mpsc::channel;
+#[cfg(windows)]
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -343,7 +346,8 @@ fn start_linux_ipc_listener(sender: Sender<HotkeyAction>) {
 #[cfg(target_os = "linux")]
 fn start_linux_x11_hotkey_listener(sender: Sender<HotkeyAction>) {
     use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::{ConnectionExt, Event, ModMask};
+    use x11rb::protocol::Event;
+    use x11rb::protocol::xproto::{ConnectionExt, ModMask};
 
     std::thread::spawn(move || {
         let (conn, screen_num) = match x11rb::connect(None) {

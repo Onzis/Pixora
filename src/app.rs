@@ -239,8 +239,10 @@ impl PixoraApp {
             ..Default::default()
         };
 
+        #[cfg(windows)]
         let cap_bounds = capture.bounds;
         let _ = cx.open_window(window_options, |window, cx| {
+            #[allow(unused_mut)]
             let mut overlay_hwnd = None;
             #[cfg(windows)]
             {

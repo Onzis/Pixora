@@ -1,7 +1,9 @@
+use crate::capture::screen::ScreenCapture;
 #[cfg(windows)]
 use crate::capture::monitor::get_all_monitors;
-use crate::capture::screen::ScreenCapture;
+#[cfg(windows)]
 use crate::system::windows::PhysicalRect;
+#[cfg(windows)]
 use image::RgbaImage;
 
 #[cfg(windows)]
