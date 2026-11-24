@@ -148,12 +148,17 @@ pub fn capture_virtual_screen_gdi() -> Result<ScreenCapture, String> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn capture_virtual_screen() -> Result<ScreenCapture, String> {
-    Err("Screen capture only implemented on Windows".to_string())
+    crate::capture::linux::capture_virtual_screen_linux()
+}
+
+#[cfg(all(not(windows), not(target_os = "linux")))]
+pub fn capture_virtual_screen() -> Result<ScreenCapture, String> {
+    Err("Screen capture only implemented on Windows and Linux".to_string())
 }
 
 #[cfg(not(windows))]
 pub fn capture_virtual_screen_gdi() -> Result<ScreenCapture, String> {
-    Err("Screen capture only implemented on Windows".to_string())
+    Err("GDI BitBlt capture only supported on Windows".to_string())
 }

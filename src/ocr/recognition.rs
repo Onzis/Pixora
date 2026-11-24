@@ -403,12 +403,136 @@ fn merge_dual_engine_ocr(
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub fn recognize_text_from_image(
+    image: &RgbaImage,
+    preferred_lang: Option<&str>,
+) -> Result<OcrOutput, String> {
+    use std::process::Command;
+
+    let width = image.width();
+    let height = image.height();
+    if width == 0 || height == 0 {
+        return Err("Cannot run OCR on empty image".to_string());
+    }
+
+    let mut png_bytes = Vec::new();
+    let mut cursor = std::io::Cursor::new(&mut png_bytes);
+    image
+        .write_to(&mut cursor, image::ImageFormat::Png)
+        .map_err(|e| format!("Failed to encode PNG for OCR: {}", e))?;
+
+    let lang_arg = match preferred_lang {
+        Some(l) if l.to_lowercase().starts_with("ru") => "rus+eng",
+        Some(l) if l.to_lowercase().starts_with("en") => "eng",
+        _ => "rus+eng",
+    };
+
+    let tmp_file = std::env::temp_dir().join(format!("pixora_ocr_{}.png", std::process::id()));
+    std::fs::write(&tmp_file, &png_bytes)
+        .map_err(|e| format!("Failed to write temporary image for OCR: {}", e))?;
+
+    let output = Command::new("tesseract")
+        .arg(&tmp_file)
+        .arg("stdout")
+        .args(["-l", lang_arg, "--psm", "6", "tsv"])
+        .output();
+
+    let _ = std::fs::remove_file(&tmp_file);
+
+    let output = output.map_err(|_| {
+        "Tesseract OCR is not installed. Please install it with: sudo apt install tesseract-ocr tesseract-ocr-rus (or pacman -S tesseract tesseract-data-rus)".to_string()
+    })?;
+
+    if !output.status.success() {
+        return Err("Tesseract OCR execution failed".to_string());
+    }
+
+    let tsv_str = String::from_utf8_lossy(&output.stdout);
+    parse_tesseract_tsv(&tsv_str)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_tesseract_tsv(tsv: &str) -> Result<OcrOutput, String> {
+    use std::collections::BTreeMap;
+
+    let mut line_groups: BTreeMap<(u32, u32, u32), Vec<OcrWord>> = BTreeMap::new();
+
+    for line in tsv.lines().skip(1) {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() < 12 {
+            continue;
+        }
+
+        let level: u32 = parts[0].trim().parse().unwrap_or(0);
+        if level != 5 {
+            continue;
+        }
+
+        let block_num: u32 = parts[2].trim().parse().unwrap_or(0);
+        let par_num: u32 = parts[3].trim().parse().unwrap_or(0);
+        let line_num: u32 = parts[4].trim().parse().unwrap_or(0);
+
+        let left: f32 = parts[6].trim().parse().unwrap_or(0.0);
+        let top: f32 = parts[7].trim().parse().unwrap_or(0.0);
+        let width: f32 = parts[8].trim().parse().unwrap_or(0.0);
+        let height: f32 = parts[9].trim().parse().unwrap_or(0.0);
+        let text = parts[11].trim().to_string();
+
+        if text.is_empty() {
+            continue;
+        }
+
+        let word = OcrWord {
+            text,
+            x: left,
+            y: top,
+            width,
+            height,
+        };
+
+        line_groups.entry((block_num, par_num, line_num)).or_default().push(word);
+    }
+
+    let mut recognized_lines = Vec::new();
+    let mut full_text_lines = Vec::new();
+
+    for ((_b, _p, _l), words) in line_groups {
+        if words.is_empty() {
+            continue;
+        }
+
+        let min_x = words.iter().map(|w| w.x).fold(f32::INFINITY, f32::min);
+        let min_y = words.iter().map(|w| w.y).fold(f32::INFINITY, f32::min);
+        let max_x = words.iter().map(|w| w.x + w.width).fold(f32::NEG_INFINITY, f32::max);
+        let max_y = words.iter().map(|w| w.y + w.height).fold(f32::NEG_INFINITY, f32::max);
+
+        let line_text = words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
+        full_text_lines.push(line_text.clone());
+
+        recognized_lines.push(OcrRecognizedLine {
+            text: line_text,
+            x: min_x,
+            y: min_y,
+            width: (max_x - min_x).max(1.0),
+            height: (max_y - min_y).max(1.0),
+            words,
+        });
+    }
+
+    let full_text = full_text_lines.join("\n");
+    Ok(OcrOutput {
+        full_text,
+        lines: recognized_lines,
+    })
+}
+
+#[cfg(all(not(windows), not(target_os = "linux")))]
 pub fn recognize_text_from_image(
     _image: &RgbaImage,
     _preferred_lang: Option<&str>,
 ) -> Result<OcrOutput, String> {
-    Err("OCR only supported on Windows".to_string())
+    Err("OCR only supported on Windows and Linux".to_string())
 }
 
 /// Merges multi-line text into a single line, stripping hyphenation at line breaks

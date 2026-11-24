@@ -56,7 +56,8 @@ pub fn check_latest_release() -> Result<UpdateInfo, String> {
     #[cfg(windows)]
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    let mut cmd = std::process::Command::new("curl.exe");
+    let curl_bin = if cfg!(windows) { "curl.exe" } else { "curl" };
+    let mut cmd = std::process::Command::new(curl_bin);
     cmd.args(["-s", "-I", GITHUB_LATEST_RELEASE_URL]);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);

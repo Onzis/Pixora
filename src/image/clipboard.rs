@@ -246,17 +246,193 @@ pub fn get_text_from_clipboard() -> Option<String> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub fn copy_image_to_clipboard(image: &RgbaImage) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut png_bytes = Vec::new();
+    let mut cursor = std::io::Cursor::new(&mut png_bytes);
+    image
+        .write_to(&mut cursor, image::ImageFormat::Png)
+        .map_err(|e| format!("Failed to encode PNG for clipboard: {}", e))?;
+
+    // 1. Try Wayland wl-copy if running under Wayland
+    if std::env::var("WAYLAND_DISPLAY").is_ok() {
+        if let Ok(mut child) = Command::new("wl-copy")
+            .args(["-t", "image/png"])
+            .stdin(Stdio::piped())
+            .spawn()
+        {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(&png_bytes);
+            }
+            if let Ok(status) = child.wait() {
+                if status.success() {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    // 2. Try X11 xclip
+    if let Ok(mut child) = Command::new("xclip")
+        .args(["-selection", "clipboard", "-t", "image/png"])
+        .stdin(Stdio::piped())
+        .spawn()
+    {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(&png_bytes);
+        }
+        if let Ok(status) = child.wait() {
+            if status.success() {
+                return Ok(());
+            }
+        }
+    }
+
+    // 3. Fallback to wl-copy even without WAYLAND_DISPLAY variable
+    if let Ok(mut child) = Command::new("wl-copy")
+        .args(["-t", "image/png"])
+        .stdin(Stdio::piped())
+        .spawn()
+    {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(&png_bytes);
+        }
+        if let Ok(status) = child.wait() {
+            if status.success() {
+                return Ok(());
+            }
+        }
+    }
+
+    Err("Failed to copy image to Linux clipboard. Please install 'wl-clipboard' (Wayland) or 'xclip' (X11).".to_string())
+}
+
+#[cfg(target_os = "linux")]
+pub fn copy_text_to_clipboard(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    // 1. Try Wayland wl-copy
+    if std::env::var("WAYLAND_DISPLAY").is_ok() {
+        if let Ok(mut child) = Command::new("wl-copy").stdin(Stdio::piped()).spawn() {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            if let Ok(status) = child.wait() {
+                if status.success() {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    // 2. Try native X11 clipboard via x11-clipboard crate
+    if let Ok(clipboard) = x11_clipboard::Clipboard::new() {
+        if clipboard
+            .store(
+                clipboard.getter.atoms.clipboard,
+                clipboard.getter.atoms.utf8_string,
+                text.as_bytes(),
+            )
+            .is_ok()
+        {
+            return Ok(());
+        }
+    }
+
+    // 3. Fallback to xclip
+    if let Ok(mut child) = Command::new("xclip")
+        .args(["-selection", "clipboard"])
+        .stdin(Stdio::piped())
+        .spawn()
+    {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        if let Ok(status) = child.wait() {
+            if status.success() {
+                return Ok(());
+            }
+        }
+    }
+
+    // 4. Fallback to wl-copy
+    if let Ok(mut child) = Command::new("wl-copy").stdin(Stdio::piped()).spawn() {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        if let Ok(status) = child.wait() {
+            if status.success() {
+                return Ok(());
+            }
+        }
+    }
+
+    Err("Failed to copy text to Linux clipboard. Please install 'wl-clipboard' or 'xclip'.".to_string())
+}
+
+#[cfg(target_os = "linux")]
+pub fn get_text_from_clipboard() -> Option<String> {
+    use std::process::Command;
+
+    // 1. Try Wayland wl-paste
+    if std::env::var("WAYLAND_DISPLAY").is_ok() {
+        if let Ok(output) = Command::new("wl-paste").args(["-n"]).output() {
+            if output.status.success() && !output.stdout.is_empty() {
+                return Some(String::from_utf8_lossy(&output.stdout).to_string());
+            }
+        }
+    }
+
+    // 2. Try native X11 clipboard via x11-clipboard crate
+    if let Ok(clipboard) = x11_clipboard::Clipboard::new() {
+        if let Ok(bytes) = clipboard.load(
+            clipboard.getter.atoms.clipboard,
+            clipboard.getter.atoms.utf8_string,
+            clipboard.getter.atoms.property,
+            std::time::Duration::from_millis(150),
+        ) {
+            let s = String::from_utf8_lossy(&bytes).to_string();
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+
+    // 3. Fallback to xclip
+    if let Ok(output) = Command::new("xclip")
+        .args(["-selection", "clipboard", "-o"])
+        .output()
+    {
+        if output.status.success() && !output.stdout.is_empty() {
+            return Some(String::from_utf8_lossy(&output.stdout).to_string());
+        }
+    }
+
+    // 4. Fallback to wl-paste
+    if let Ok(output) = Command::new("wl-paste").args(["-n"]).output() {
+        if output.status.success() && !output.stdout.is_empty() {
+            return Some(String::from_utf8_lossy(&output.stdout).to_string());
+        }
+    }
+
+    None
+}
+
+#[cfg(all(not(windows), not(target_os = "linux")))]
 pub fn get_text_from_clipboard() -> Option<String> {
     None
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 pub fn copy_image_to_clipboard(_image: &RgbaImage) -> Result<(), String> {
-    Err("Clipboard only implemented on Windows".to_string())
+    Err("Clipboard only implemented on Windows and Linux".to_string())
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 pub fn copy_text_to_clipboard(_text: &str) -> Result<(), String> {
-    Err("Clipboard only implemented on Windows".to_string())
+    Err("Clipboard only implemented on Windows and Linux".to_string())
 }

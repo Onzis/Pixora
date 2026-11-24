@@ -11,6 +11,31 @@ fn main() {
     init_logging();
     init_dpi_awareness();
 
+    #[cfg(target_os = "linux")]
+    {
+        let args: Vec<String> = std::env::args().collect();
+        for arg in args.iter().skip(1) {
+            match arg.as_str() {
+                "--capture" | "-c" | "--region" => {
+                    if pixora::shortcuts::hotkeys::try_send_linux_ipc_command("region") {
+                        std::process::exit(0);
+                    }
+                }
+                "--fullscreen" | "-f" => {
+                    if pixora::shortcuts::hotkeys::try_send_linux_ipc_command("fullscreen") {
+                        std::process::exit(0);
+                    }
+                }
+                "--window" | "-w" => {
+                    if pixora::shortcuts::hotkeys::try_send_linux_ipc_command("window") {
+                        std::process::exit(0);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     let app = PixoraApp::new();
 
     Application::new()

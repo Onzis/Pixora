@@ -458,7 +458,97 @@ pub fn find_element_at_point(
     None
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
+    enumerate_linux_windows().unwrap_or_default()
+}
+
+#[cfg(target_os = "linux")]
+fn enumerate_linux_windows() -> Option<Vec<DetectedWindow>> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, Window};
+
+    let (conn, screen_num) = x11rb::connect(None).ok()?;
+    let screen = conn.setup().roots.get(screen_num)?;
+    let root = screen.root;
+
+    let client_list_atom = conn.intern_atom(false, b"_NET_CLIENT_LIST").ok()?.reply().ok()?.atom;
+    let net_wm_name_atom = conn.intern_atom(false, b"_NET_WM_NAME").ok()?.reply().ok()?.atom;
+    let utf8_string_atom = conn.intern_atom(false, b"UTF8_STRING").ok()?.reply().ok()?.atom;
+
+    let prop = conn.get_property(
+        false,
+        root,
+        client_list_atom,
+        AtomEnum::WINDOW,
+        0,
+        1024,
+    ).ok()?.reply().ok()?;
+
+    let mut result = Vec::new();
+    let mut z_order = 0;
+
+    for chunk in prop.value.chunks_exact(4) {
+        let win_id = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as Window;
+        if win_id == 0 || win_id == root {
+            continue;
+        }
+
+        let geom = match conn.get_geometry(win_id).ok().and_then(|c| c.reply().ok()) {
+            Some(g) => g,
+            None => continue,
+        };
+
+        let coords = match conn.translate_coordinates(win_id, root, 0, 0).ok().and_then(|c| c.reply().ok()) {
+            Some(tc) => tc,
+            None => continue,
+        };
+
+        let w = geom.width as u32;
+        let h = geom.height as u32;
+        if w < 30 || h < 30 {
+            continue;
+        }
+
+        let mut title = String::new();
+        if let Ok(name_cookie) = conn.get_property(false, win_id, net_wm_name_atom, utf8_string_atom, 0, 128) {
+            if let Ok(name_reply) = name_cookie.reply() {
+                if !name_reply.value.is_empty() {
+                    title = String::from_utf8_lossy(&name_reply.value).to_string();
+                }
+            }
+        }
+        if title.is_empty() {
+            if let Ok(name_cookie) = conn.get_property(false, win_id, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 128) {
+                if let Ok(name_reply) = name_cookie.reply() {
+                    if !name_reply.value.is_empty() {
+                        title = String::from_utf8_lossy(&name_reply.value).to_string();
+                    }
+                }
+            }
+        }
+
+        result.push(DetectedWindow {
+            hwnd: win_id as isize,
+            top_level_hwnd: win_id as isize,
+            z_order,
+            bounds: PhysicalRect {
+                x: coords.dst_x as i32,
+                y: coords.dst_y as i32,
+                width: w,
+                height: h,
+            },
+            title,
+            class_name: "X11Window".to_string(),
+            is_child_element: false,
+        });
+        z_order += 1;
+    }
+
+    Some(result)
+}
+
+#[cfg(all(not(windows), not(target_os = "linux")))]
 pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
     Vec::new()
 }
@@ -495,6 +585,39 @@ pub fn get_active_window_rect() -> Option<PhysicalRect> {
             height,
         })
     }
+}
+
+#[cfg(target_os = "linux")]
+pub fn get_active_window_rect() -> Option<PhysicalRect> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, Window};
+
+    let (conn, screen_num) = x11rb::connect(None).ok()?;
+    let screen = conn.setup().roots.get(screen_num)?;
+    let root = screen.root;
+
+    let active_win_atom = conn.intern_atom(false, b"_NET_ACTIVE_WINDOW").ok()?.reply().ok()?.atom;
+    let prop = conn.get_property(false, root, active_win_atom, AtomEnum::WINDOW, 0, 1).ok()?.reply().ok()?;
+
+    if prop.value.len() >= 4 {
+        let win_id = u32::from_ne_bytes([prop.value[0], prop.value[1], prop.value[2], prop.value[3]]) as Window;
+        if win_id != 0 && win_id != root {
+            let geom = conn.get_geometry(win_id).ok()?.reply().ok()?;
+            let coords = conn.translate_coordinates(win_id, root, 0, 0).ok()?.reply().ok()?;
+            return Some(PhysicalRect {
+                x: coords.dst_x as i32,
+                y: coords.dst_y as i32,
+                width: geom.width as u32,
+                height: geom.height as u32,
+            });
+        }
+    }
+    None
+}
+
+#[cfg(all(not(windows), not(target_os = "linux")))]
+pub fn get_active_window_rect() -> Option<PhysicalRect> {
+    None
 }
 
 #[cfg(windows)]
@@ -539,6 +662,35 @@ pub fn get_window_under_cursor_rect() -> Option<PhysicalRect> {
             height,
         })
     }
+}
+
+#[cfg(target_os = "linux")]
+pub fn get_window_under_cursor_rect() -> Option<PhysicalRect> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt;
+
+    let (conn, screen_num) = x11rb::connect(None).ok()?;
+    let screen = conn.setup().roots.get(screen_num)?;
+    let root = screen.root;
+
+    let pointer = conn.query_pointer(root).ok()?.reply().ok()?;
+    let child = pointer.child;
+    if child != 0 && child != root {
+        let geom = conn.get_geometry(child).ok()?.reply().ok()?;
+        let coords = conn.translate_coordinates(child, root, 0, 0).ok()?.reply().ok()?;
+        return Some(PhysicalRect {
+            x: coords.dst_x as i32,
+            y: coords.dst_y as i32,
+            width: geom.width as u32,
+            height: geom.height as u32,
+        });
+    }
+    None
+}
+
+#[cfg(all(not(windows), not(target_os = "linux")))]
+pub fn get_window_under_cursor_rect() -> Option<PhysicalRect> {
+    None
 }
 
 pub fn detect_visual_panes(

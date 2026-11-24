@@ -3961,6 +3961,8 @@ dependencies = [
  "smallvec",
  "toml 0.8.23",
  "windows 0.61.3",
+ "x11-clipboard",
+ "x11rb",
 ]
 
 [[package]]

@@ -258,5 +258,135 @@ pub fn start_hotkey_listener(sender: Sender<HotkeyAction>) {
     });
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub fn get_linux_ipc_socket_path() -> std::path::PathBuf {
+    let mut uid = 1000u32;
+    if let Ok(uid_str) = std::env::var("UID") {
+        if let Ok(u) = uid_str.parse::<u32>() {
+            uid = u;
+        }
+    } else if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+        for line in status.lines() {
+            if line.starts_with("Uid:") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() > 1 {
+                    if let Ok(u) = parts[1].parse::<u32>() {
+                        uid = u;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    std::env::temp_dir().join(format!("pixora-{}.sock", uid))
+}
+
+#[cfg(target_os = "linux")]
+pub fn try_send_linux_ipc_command(cmd: &str) -> bool {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+
+    let socket_path = get_linux_ipc_socket_path();
+    if !socket_path.exists() {
+        return false;
+    }
+
+    if let Ok(mut stream) = UnixStream::connect(&socket_path) {
+        if writeln!(stream, "{}", cmd).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn start_linux_ipc_listener(sender: Sender<HotkeyAction>) {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::net::UnixListener;
+
+    let socket_path = get_linux_ipc_socket_path();
+    let _ = std::fs::remove_file(&socket_path);
+
+    std::thread::spawn(move || {
+        let listener = match UnixListener::bind(&socket_path) {
+            Ok(l) => l,
+            Err(e) => {
+                crate::logging::log_warn("hotkeys", format!("Failed to bind Linux IPC socket: {}", e));
+                return;
+            }
+        };
+
+        for stream in listener.incoming() {
+            if let Ok(stream) = stream {
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                if reader.read_line(&mut line).is_ok() {
+                    let cmd = line.trim();
+                    match cmd {
+                        "region" | "capture" => {
+                            let _ = sender.send(HotkeyAction::CaptureRegion);
+                        }
+                        "fullscreen" => {
+                            let _ = sender.send(HotkeyAction::CaptureFullscreen);
+                        }
+                        "window" => {
+                            let _ = sender.send(HotkeyAction::CaptureActiveWindow);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[cfg(target_os = "linux")]
+fn start_linux_x11_hotkey_listener(sender: Sender<HotkeyAction>) {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{ConnectionExt, Event, ModMask};
+
+    std::thread::spawn(move || {
+        let (conn, screen_num) = match x11rb::connect(None) {
+            Ok(c) => c,
+            Err(_) => return, // Not running under X11 (e.g. pure Wayland session)
+        };
+
+        let screen = match conn.setup().roots.get(screen_num) {
+            Some(s) => s,
+            None => return,
+        };
+        let root = screen.root;
+
+        // PrintScreen keycode is typically 107 on Linux X11
+        let _ = conn.grab_key(
+            true,
+            root,
+            ModMask::ANY,
+            107,
+            x11rb::protocol::xproto::GrabMode::ASYNC,
+            x11rb::protocol::xproto::GrabMode::ASYNC,
+        );
+        let _ = conn.flush();
+
+        loop {
+            match conn.wait_for_event() {
+                Ok(Event::KeyPress(event)) => {
+                    if event.detail == 107 {
+                        let _ = sender.send(HotkeyAction::CaptureRegion);
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+    });
+}
+
+#[cfg(target_os = "linux")]
+pub fn start_hotkey_listener(sender: Sender<HotkeyAction>) {
+    start_linux_ipc_listener(sender.clone());
+    start_linux_x11_hotkey_listener(sender);
+}
+
+#[cfg(all(not(windows), not(target_os = "linux")))]
 pub fn start_hotkey_listener(_sender: Sender<HotkeyAction>) {}

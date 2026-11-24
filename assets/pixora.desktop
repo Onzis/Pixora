@@ -1,0 +1,20 @@
+[Desktop Entry]
+Name=Pixora
+Comment=Professional Screen Capture & Annotation Utility
+Exec=pixora %U
+Icon=pixora
+Terminal=false
+Type=Application
+Categories=Utility;Graphics;Photography;
+Keywords=screenshot;capture;annotation;screen;snipping;ocr;
+StartupNotify=true
+StartupWMClass=Pixora
+Actions=CaptureRegion;CaptureFullscreen;
+
+[Desktop Action CaptureRegion]
+Name=Capture Region
+Exec=pixora --capture
+
+[Desktop Action CaptureFullscreen]
+Name=Capture Fullscreen
+Exec=pixora --fullscreen

@@ -48,7 +48,17 @@ pub fn show_tray_notification(title: &str, message: &str) {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub fn show_tray_notification(title: &str, message: &str) {
+    let _ = std::process::Command::new("notify-send")
+        .arg(title)
+        .arg(message)
+        .arg("-a")
+        .arg("Pixora")
+        .spawn();
+}
+
+#[cfg(all(not(windows), not(target_os = "linux")))]
 pub fn show_tray_notification(_title: &str, _message: &str) {}
 
 #[cfg(windows)]
