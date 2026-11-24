@@ -537,21 +537,27 @@ pub fn detect_visual_panes(
         }
     }
 
-    // Non-sidebar content pane(s) below header
+    // Grid cell panes bounded by both vertical and horizontal dividers (e.g. content pane excluding sidebar, toolbar, and status bar)
     if !v_cuts.is_empty() && !h_cuts.is_empty() {
-        for i in 1..xs.len() - 1 {
+        for i in 0..xs.len() - 1 {
             let x0 = xs[i];
             let x1 = xs[i + 1];
             let pw = x1 - x0;
-            let y0 = ys[1];
-            let ph = max_y.saturating_sub(y0);
-            if pw >= 40 && ph >= 30 {
-                panes.push(PhysicalRect {
-                    x: x0 as i32,
-                    y: y0 as i32,
-                    width: pw,
-                    height: ph,
-                });
+            if pw < 40 {
+                continue;
+            }
+            for j in 0..ys.len() - 1 {
+                let y0 = ys[j];
+                let y1 = ys[j + 1];
+                let ph = y1 - y0;
+                if ph >= 24 && (pw < win_w || ph < win_h) {
+                    panes.push(PhysicalRect {
+                        x: x0 as i32,
+                        y: y0 as i32,
+                        width: pw,
+                        height: ph,
+                    });
+                }
             }
         }
     }

@@ -3203,39 +3203,130 @@ impl Render for ScreenOverlayView {
 
             if let Some(win) = &self.hovered_window {
                 let wb = win.bounds;
-                let is_maximized = f32::from(wb.origin.x) <= 2.0 && f32::from(wb.origin.y) <= 2.0;
+                let wx = f32::from(wb.origin.x);
+                let wy = f32::from(wb.origin.y);
+                let ww = f32::from(wb.size.width);
+                let wh = f32::from(wb.size.height);
+                let is_maximized = wx <= 2.0 && wy <= 2.0;
 
-                // 1. Crisp precision highlight border over detected window / UI element (zero murky tint!)
+                // 1. High-precision luminous highlight frame with subtle ambient sheen & depth shadow
                 let mut highlight_box = div()
                     .absolute()
                     .left(wb.origin.x)
                     .top(wb.origin.y)
                     .w(wb.size.width)
                     .h(wb.size.height)
+                    .bg(rgba(0x8174FF0A))
                     .border_2()
-                    .border_color(theme.accent);
+                    .border_color(rgb(0x8174FF))
+                    .shadow_2xl();
 
                 if !win.is_child_element && !is_maximized {
                     highlight_box = highlight_box.rounded_md();
                 }
                 root = root.child(highlight_box);
 
-                // 2. Premium Apple/Raycast glassmorphic HUD badge
-                let win_cx = f32::from(wb.origin.x) + f32::from(wb.size.width) / 2.0;
+                // 2. Camera/Shottr Optic Viewfinder Corner Brackets (crisp white L-brackets at all 4 corners)
+                let b_len = 16.0f32.min(ww / 3.0).min(wh / 3.0);
+                let b_thick = 3.0f32;
+                let bracket_color = rgb(0xFFFFFF);
+
+                // Top-Left L-bracket
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left(px(wx - 1.0))
+                        .top(px(wy - 1.0))
+                        .w(px(b_len))
+                        .h(px(b_thick))
+                        .bg(bracket_color),
+                );
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left(px(wx - 1.0))
+                        .top(px(wy - 1.0))
+                        .w(px(b_thick))
+                        .h(px(b_len))
+                        .bg(bracket_color),
+                );
+
+                // Top-Right L-bracket
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left(px(wx + ww - b_len + 1.0))
+                        .top(px(wy - 1.0))
+                        .w(px(b_len))
+                        .h(px(b_thick))
+                        .bg(bracket_color),
+                );
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left(px(wx + ww - b_thick + 1.0))
+                        .top(px(wy - 1.0))
+                        .w(px(b_thick))
+                        .h(px(b_len))
+                        .bg(bracket_color),
+                );
+
+                // Bottom-Left L-bracket
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left(px(wx - 1.0))
+                        .top(px(wy + wh - b_thick + 1.0))
+                        .w(px(b_len))
+                        .h(px(b_thick))
+                        .bg(bracket_color),
+                );
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left(px(wx - 1.0))
+                        .top(px(wy + wh - b_len + 1.0))
+                        .w(px(b_thick))
+                        .h(px(b_len))
+                        .bg(bracket_color),
+                );
+
+                // Bottom-Right L-bracket
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left(px(wx + ww - b_len + 1.0))
+                        .top(px(wy + wh - b_thick + 1.0))
+                        .w(px(b_len))
+                        .h(px(b_thick))
+                        .bg(bracket_color),
+                );
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left(px(wx + ww - b_thick + 1.0))
+                        .top(px(wy + wh - b_len + 1.0))
+                        .w(px(b_thick))
+                        .h(px(b_len))
+                        .bg(bracket_color),
+                );
+
+                // 3. Premium Apple/Raycast glassmorphic HUD badge
+                let win_cx = wx + ww / 2.0;
                 let container_w = 640.0f32;
                 let container_x = (win_cx - container_w / 2.0).clamp(12.0, (scr_w - container_w - 12.0).max(12.0));
 
-                let win_top = f32::from(wb.origin.y);
-                let win_bottom = win_top + f32::from(wb.size.height);
+                let win_top = wy;
+                let win_bottom = wy + wh;
                 let badge_h = 36.0f32;
 
-                // Position badge cleanly outside the window when space permits, so it never obscures title or tabs
-                let badge_y = if win_top >= badge_h + 12.0 {
-                    win_top - badge_h - 8.0
-                } else if win_bottom + badge_h + 12.0 <= scr_h {
-                    win_bottom + 8.0
+                // Position badge dock-mounted cleanly outside the window when space permits, so it never obscures title or tabs
+                let badge_y = if win_top >= badge_h + 8.0 {
+                    win_top - badge_h - 4.0
+                } else if win_bottom + badge_h + 8.0 <= scr_h {
+                    win_bottom + 4.0
                 } else {
-                    (win_top + 14.0).clamp(12.0, (scr_h - badge_h - 12.0).max(12.0))
+                    (win_top + 10.0).clamp(10.0, (scr_h - badge_h - 10.0).max(10.0))
                 };
 
                 let icon_path = if win.is_child_element {
