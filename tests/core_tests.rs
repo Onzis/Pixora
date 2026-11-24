@@ -1716,6 +1716,191 @@ fn test_crash_and_error_logging_to_log_folder() {
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
+#[test]
+fn test_ocr_single_line_formatting() {
+    use pixora::ocr::recognition::format_as_single_line;
+
+    // 1. Hyphenated word wrap stripping
+    let text1 = "Это автомати-\nческое распозна-\nвание текста.";
+    let res1 = format_as_single_line(text1);
+    assert_eq!(res1, "Это автоматическое распознавание текста.");
+
+    // 2. Multiline joining and space normalization
+    let text2 = "Первая строка\n   Вторая   строка  \nТретья строка";
+    let res2 = format_as_single_line(text2);
+    assert_eq!(res2, "Первая строка Вторая строка Третья строка");
+
+    // 3. Empty and whitespace input
+    assert_eq!(format_as_single_line(""), "");
+    assert_eq!(format_as_single_line("   \n\n  "), "");
+}
+
+#[test]
+fn test_ocr_code_indentation_and_table_tabs() {
+    use pixora::ocr::recognition::{
+        format_as_code_or_table, format_text_as_table_tabs, OcrRecognizedLine, OcrWord,
+    };
+
+    // 1. Code indentation test
+    let lines = vec![
+        OcrRecognizedLine {
+            text: "fn main() {".to_string(),
+            x: 20.0,
+            y: 10.0,
+            width: 88.0,
+            height: 16.0,
+            words: vec![
+                OcrWord { text: "fn".to_string(), x: 20.0, y: 10.0, width: 16.0, height: 16.0 },
+                OcrWord { text: "main()".to_string(), x: 40.0, y: 10.0, width: 48.0, height: 16.0 },
+                OcrWord { text: "{".to_string(), x: 92.0, y: 10.0, width: 8.0, height: 16.0 },
+            ],
+        },
+        OcrRecognizedLine {
+            text: "let a = 1;".to_string(),
+            x: 52.0,
+            y: 30.0,
+            width: 80.0,
+            height: 16.0,
+            words: vec![
+                OcrWord { text: "let".to_string(), x: 52.0, y: 30.0, width: 24.0, height: 16.0 },
+                OcrWord { text: "a".to_string(), x: 80.0, y: 30.0, width: 8.0, height: 16.0 },
+                OcrWord { text: "=".to_string(), x: 92.0, y: 30.0, width: 8.0, height: 16.0 },
+                OcrWord { text: "1;".to_string(), x: 104.0, y: 30.0, width: 16.0, height: 16.0 },
+            ],
+        },
+        OcrRecognizedLine {
+            text: "}".to_string(),
+            x: 20.0,
+            y: 50.0,
+            width: 8.0,
+            height: 16.0,
+            words: vec![
+                OcrWord { text: "}".to_string(), x: 20.0, y: 50.0, width: 8.0, height: 16.0 },
+            ],
+        },
+    ];
+
+    let code_formatted = format_as_code_or_table(&lines);
+    assert!(code_formatted.contains("fn main() {"));
+    assert!(code_formatted.contains("    let a = 1;"));
+    assert!(code_formatted.contains("}"));
+
+    // 2. Table column tab separation
+    let table_lines = vec![
+        OcrRecognizedLine {
+            text: "ID Name Status".to_string(),
+            x: 10.0,
+            y: 10.0,
+            width: 180.0,
+            height: 16.0,
+            words: vec![
+                OcrWord { text: "ID".to_string(), x: 10.0, y: 10.0, width: 16.0, height: 16.0 },
+                OcrWord { text: "Name".to_string(), x: 80.0, y: 10.0, width: 36.0, height: 16.0 },
+                OcrWord { text: "Status".to_string(), x: 160.0, y: 10.0, width: 48.0, height: 16.0 },
+            ],
+        },
+    ];
+    let table_formatted = format_as_code_or_table(&table_lines);
+    assert_eq!(table_formatted, "ID\tName\tStatus");
+
+    // 3. Fallback table formatter for space runs
+    let raw_table = "ID    Username    Role\n001   Alice       Admin\n002   Bob         User";
+    let formatted_tabs = format_text_as_table_tabs(raw_table);
+    assert!(formatted_tabs.contains("ID\tUsername\tRole"));
+    assert!(formatted_tabs.contains("001\tAlice\tAdmin"));
+}
+
+#[test]
+fn test_qr_actions_parsing() {
+    use pixora::ocr::qr_actions::{parse_qr_action, QrActionKind};
+    use pixora::ocr::qrcode::QrScanResult;
+
+    // 1. URL parsing
+    let res_url = QrScanResult {
+        content: "https://pixora.app/download".to_string(),
+        format: Some("QR_CODE".to_string()),
+    };
+    match parse_qr_action(&res_url) {
+        QrActionKind::Url { url } => assert_eq!(url, "https://pixora.app/download"),
+        _ => panic!("Must parse as Url action"),
+    }
+
+    let res_www = QrScanResult {
+        content: "www.example.com/item".to_string(),
+        format: Some("QR_CODE".to_string()),
+    };
+    match parse_qr_action(&res_www) {
+        QrActionKind::Url { url } => assert_eq!(url, "https://www.example.com/item"),
+        _ => panic!("Must prepend https:// to www. Url"),
+    }
+
+    // 2. Wi-Fi parsing
+    let res_wifi = QrScanResult {
+        content: "WIFI:T:WPA;S:OfficeNet;P:StrongPassword123;H:false;;".to_string(),
+        format: Some("QR_CODE".to_string()),
+    };
+    match parse_qr_action(&res_wifi) {
+        QrActionKind::Wifi { ssid, password, auth_type, hidden } => {
+            assert_eq!(ssid, "OfficeNet");
+            assert_eq!(password, "StrongPassword123");
+            assert_eq!(auth_type, "WPA/WPA2");
+            assert!(!hidden);
+        }
+        _ => panic!("Must parse as Wifi action"),
+    }
+
+    // Wi-Fi with escaped characters
+    let res_wifi_esc = QrScanResult {
+        content: "WIFI:T:WPA;S:My\\;Network;P:Pass\\:word;;".to_string(),
+        format: Some("QR_CODE".to_string()),
+    };
+    match parse_qr_action(&res_wifi_esc) {
+        QrActionKind::Wifi { ssid, password, .. } => {
+            assert_eq!(ssid, "My;Network");
+            assert_eq!(password, "Pass:word");
+        }
+        _ => panic!("Must unescape Wifi fields"),
+    }
+
+    // 3. Barcode parsing (EAN-13)
+    let res_barcode = QrScanResult {
+        content: "4601234567890".to_string(),
+        format: Some("EAN_13".to_string()),
+    };
+    match parse_qr_action(&res_barcode) {
+        QrActionKind::Barcode { code, format_name, search_url } => {
+            assert_eq!(code, "4601234567890");
+            assert_eq!(format_name, "EAN-13");
+            assert!(search_url.contains("4601234567890"));
+            assert!(search_url.starts_with("https://www.google.com/search?q="));
+        }
+        _ => panic!("Must parse as Barcode action"),
+    }
+
+    // Code 128
+    let res_code128 = QrScanResult {
+        content: "PKG-987654".to_string(),
+        format: Some("CODE_128".to_string()),
+    };
+    match parse_qr_action(&res_code128) {
+        QrActionKind::Barcode { code, format_name, .. } => {
+            assert_eq!(code, "PKG-987654");
+            assert_eq!(format_name, "Code 128");
+        }
+        _ => panic!("Must parse Code 128 barcode"),
+    }
+
+    // 4. Plain text fallback
+    let res_text = QrScanResult {
+        content: "Simple text note without links".to_string(),
+        format: Some("QR_CODE".to_string()),
+    };
+    match parse_qr_action(&res_text) {
+        QrActionKind::Text { text } => assert_eq!(text, "Simple text note without links"),
+        _ => panic!("Must parse as Text action"),
+    }
+}
+
 
 
 

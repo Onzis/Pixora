@@ -25,8 +25,11 @@ use crate::editor::tools::ToolKind;
 use crate::i18n::t;
 use crate::image::clipboard::{copy_image_to_clipboard, copy_text_to_clipboard};
 use crate::image::export::auto_save_screenshot;
-use crate::ocr::qrcode::decode_qr_from_image;
-use crate::ocr::recognition::recognize_text_from_image;
+use crate::ocr::qr_actions::{open_url_in_browser, parse_qr_action, QrActionKind};
+use crate::ocr::qrcode::{decode_qr_from_image, QrScanResult};
+use crate::ocr::recognition::{
+    format_as_code_or_table, format_as_single_line, recognize_text_from_image,
+};
 use crate::overlay::magnifier::{MagnifierInfo, render_magnifier};
 use crate::overlay::selection::{ResizeHandle, SelectionDragMode, SelectionState};
 use crate::overlay::toolbar::{
@@ -52,6 +55,31 @@ pub enum NumericInputTarget {
     PixelateBlock,
     FontSize,
     SpotlightDim,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OcrFormatMode {
+    Original,
+    SingleLine,
+    CodeTable,
+}
+
+#[derive(Clone, Debug)]
+pub struct OcrModalState {
+    pub original_text: String,
+    pub single_line_text: String,
+    pub code_table_text: String,
+    pub edited_text: String,
+    pub mode: OcrFormatMode,
+    pub is_copied: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct QrModalState {
+    pub result: QrScanResult,
+    pub action: QrActionKind,
+    pub is_copied: bool,
+    pub status_feedback: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -108,6 +136,8 @@ pub struct ScreenOverlayView {
 
     pub toast_message: Option<(String, Instant)>,
     pub is_ocr_running: bool,
+    pub ocr_modal: Option<OcrModalState>,
+    pub qr_modal: Option<QrModalState>,
 
     // Window snapping
     pub overlay_hwnd: Option<isize>,
@@ -277,6 +307,8 @@ impl ScreenOverlayView {
 
             toast_message: None,
             is_ocr_running: false,
+            ocr_modal: None,
+            qr_modal: None,
 
             overlay_hwnd,
             last_snap_check_time: Instant::now(),
@@ -966,14 +998,19 @@ impl ScreenOverlayView {
                         self.show_toast(t(lang, "No text found in selected area", "Текст в выбранной области не найден"), cx);
                     } else {
                         let _ = copy_text_to_clipboard(&output.full_text);
-                        let first_line = output.full_text.lines().next().unwrap_or(&output.full_text).trim();
-                        let char_count = first_line.chars().count();
-                        let preview: String = if char_count > 36 {
-                            format!("{}...", first_line.chars().take(36).collect::<String>())
-                        } else {
-                            first_line.to_string()
-                        };
-                        self.show_toast(format!("{}: \"{}\"", t(lang, "OCR copied", "Текст скопирован"), preview), cx);
+                        if self.config.sound_effects {
+                            play_capture_sound();
+                        }
+                        let single_line = format_as_single_line(&output.full_text);
+                        let code_table = format_as_code_or_table(&output.lines);
+                        self.ocr_modal = Some(OcrModalState {
+                            original_text: output.full_text.clone(),
+                            single_line_text: single_line,
+                            code_table_text: code_table,
+                            edited_text: output.full_text,
+                            mode: OcrFormatMode::Original,
+                            is_copied: true,
+                        });
                     }
                 }
                 Err(e) => {
@@ -1014,18 +1051,13 @@ impl ScreenOverlayView {
                     if self.config.sound_effects {
                         play_capture_sound();
                     }
-                    let first_line = result.content.lines().next().unwrap_or(&result.content).trim();
-                    let char_count = first_line.chars().count();
-                    let preview: String = if char_count > 36 {
-                        format!("{}...", first_line.chars().take(36).collect::<String>())
-                    } else {
-                        first_line.to_string()
-                    };
-                    let label = match result.format.as_deref() {
-                        Some("QR_CODE") | None => t(lang, "QR Code copied", "QR-код скопирован"),
-                        Some(_) => t(lang, "Code copied", "Код скопирован"),
-                    };
-                    self.show_toast(format!("{}: \"{}\"", label, preview), cx);
+                    let action = parse_qr_action(&result);
+                    self.qr_modal = Some(QrModalState {
+                        result,
+                        action,
+                        is_copied: true,
+                        status_feedback: None,
+                    });
                 }
                 Err(e) => {
                     self.show_toast(format!("{}: {}", t(lang, "QR scan failed", "QR-код не найден"), e), cx);
@@ -1034,6 +1066,49 @@ impl ScreenOverlayView {
         } else {
             self.show_toast(t(lang, "Select an area with QR code first", "Сначала выделите область с QR-кодом"), cx);
         }
+    }
+
+    pub fn set_ocr_mode(&mut self, mode: OcrFormatMode, cx: &mut Context<Self>) {
+        if let Some(modal) = &mut self.ocr_modal {
+            modal.mode = mode;
+            modal.edited_text = match mode {
+                OcrFormatMode::Original => modal.original_text.clone(),
+                OcrFormatMode::SingleLine => modal.single_line_text.clone(),
+                OcrFormatMode::CodeTable => modal.code_table_text.clone(),
+            };
+            modal.is_copied = false;
+            cx.notify();
+        }
+    }
+
+    pub fn copy_ocr_modal_text(&mut self, cx: &mut Context<Self>) {
+        if let Some(modal) = &mut self.ocr_modal {
+            let _ = copy_text_to_clipboard(&modal.edited_text);
+            modal.is_copied = true;
+            let lang = self.config.language.resolve();
+            self.show_toast(t(lang, "Text copied to clipboard", "Текст скопирован в буфер обмена"), cx);
+            cx.notify();
+        }
+    }
+
+    pub fn close_ocr_modal(&mut self, cx: &mut Context<Self>) {
+        self.ocr_modal = None;
+        cx.notify();
+    }
+
+    pub fn close_qr_modal(&mut self, cx: &mut Context<Self>) {
+        self.qr_modal = None;
+        cx.notify();
+    }
+
+    pub fn copy_qr_content(&mut self, text: &str, label: &str, cx: &mut Context<Self>) {
+        let _ = copy_text_to_clipboard(text);
+        if let Some(modal) = &mut self.qr_modal {
+            modal.is_copied = true;
+            modal.status_feedback = Some(label.to_string());
+        }
+        self.show_toast(label, cx);
+        cx.notify();
     }
 
     pub fn apply_custom_hex(&mut self, cx: &mut Context<Self>) {
@@ -1145,6 +1220,16 @@ impl ScreenOverlayView {
             return;
         }
 
+        if self.ocr_modal.is_some() {
+            self.close_ocr_modal(cx);
+            return;
+        }
+
+        if self.qr_modal.is_some() {
+            self.close_qr_modal(cx);
+            return;
+        }
+
         if self.text_input_mode {
             self.text_input_mode = false;
             self.text_input_buffer.clear();
@@ -1168,6 +1253,10 @@ impl ScreenOverlayView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.ocr_modal.is_some() || self.qr_modal.is_some() {
+            return;
+        }
+
         let p = ev.position;
         let px_f = f32::from(p.x);
         let py_f = f32::from(p.y);
@@ -2062,6 +2151,65 @@ impl ScreenOverlayView {
     ) {
         let key = ev.keystroke.key.as_str();
 
+        // Modal Keyboard Navigation and Editing
+        if let Some(modal) = &mut self.ocr_modal {
+            if key == "escape" {
+                self.close_ocr_modal(cx);
+                return;
+            } else if key == "c" && ev.keystroke.modifiers.control {
+                self.copy_ocr_modal_text(cx);
+                return;
+            } else if key == "enter" {
+                if ev.keystroke.modifiers.control {
+                    self.copy_ocr_modal_text(cx);
+                    self.close_ocr_modal(cx);
+                } else {
+                    modal.edited_text.push('\n');
+                    modal.is_copied = false;
+                    cx.notify();
+                }
+                return;
+            } else if key == "backspace" {
+                modal.edited_text.pop();
+                modal.is_copied = false;
+                cx.notify();
+                return;
+            } else if key == "space" {
+                modal.edited_text.push(' ');
+                modal.is_copied = false;
+                cx.notify();
+                return;
+            } else if let Some(key_char) = &ev.keystroke.key_char {
+                if !ev.keystroke.modifiers.control && !ev.keystroke.modifiers.alt {
+                    modal.edited_text.push_str(key_char);
+                    modal.is_copied = false;
+                    cx.notify();
+                    return;
+                }
+            } else if ev.keystroke.key.chars().count() == 1
+                && !ev.keystroke.modifiers.control
+                && !ev.keystroke.modifiers.alt
+            {
+                modal.edited_text.push_str(&ev.keystroke.key);
+                modal.is_copied = false;
+                cx.notify();
+                return;
+            }
+            return;
+        }
+
+        if let Some(modal) = &self.qr_modal {
+            if key == "escape" {
+                self.close_qr_modal(cx);
+                return;
+            } else if (key == "c" && ev.keystroke.modifiers.control) || key == "enter" {
+                let _ = copy_text_to_clipboard(&modal.result.content);
+                self.close_qr_modal(cx);
+                return;
+            }
+            return;
+        }
+
         // 0. Handling Numeric px Input (for stroke width, blur, pixelate, font size)
         if let Some(target) = self.numeric_input_mode {
             if key == "enter" {
@@ -2335,7 +2483,9 @@ impl Render for ScreenOverlayView {
         let is_over_floating_panel = self.current_toolbar_bounds.map_or(false, |b| b.contains(&self.cursor_pos))
             || (self.show_color_palette && self.palette_panel_bounds.map_or(false, |b| b.contains(&self.cursor_pos)))
             || (self.show_shapes_menu && self.shapes_panel_bounds.map_or(false, |b| b.contains(&self.cursor_pos)))
-            || (self.show_beautify_menu && self.beautify_panel_bounds.map_or(false, |b| b.contains(&self.cursor_pos)));
+            || (self.show_beautify_menu && self.beautify_panel_bounds.map_or(false, |b| b.contains(&self.cursor_pos)))
+            || self.ocr_modal.is_some()
+            || self.qr_modal.is_some();
 
         let cursor_style = if is_over_floating_panel {
             CursorStyle::Arrow
@@ -5581,6 +5731,760 @@ impl Render for ScreenOverlayView {
                         ),
                 );
             }
+        }
+
+        // Interactive OCR Modal Dialog
+        if let Some(ocr) = &self.ocr_modal {
+            let mode = ocr.mode;
+            let is_copied = ocr.is_copied;
+            let text_to_display = ocr.edited_text.clone();
+            let char_count = text_to_display.chars().count();
+            let line_count = text_to_display.lines().count().max(1);
+            let word_count = text_to_display.split_whitespace().count();
+
+            let lines_view = div()
+                .id("ocr-text-lines")
+                .p_3()
+                .min_h(px(140.0))
+                .max_h(px(280.0))
+                .overflow_y_scroll()
+                .rounded_xl()
+                .bg(rgba(0x00000045))
+                .border_1()
+                .border_color(rgba(0xFFFFFF15))
+                .flex()
+                .flex_col()
+                .gap_1();
+
+            let mut lines_col = lines_view;
+            if text_to_display.is_empty() {
+                lines_col = lines_col.child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.text_secondary)
+                        .child(t(lang, "(Empty text)", "(Пустой текст)")),
+                );
+            } else {
+                for (idx, line) in text_to_display.lines().enumerate() {
+                    let display_str = if line.is_empty() { " " } else { line };
+                    lines_col = lines_col.child(
+                        div()
+                            .id(("ocr-line", idx))
+                            .flex()
+                            .items_start()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .w(px(24.0))
+                                    .text_xs()
+                                    .text_color(rgba(0xFFFFFF30))
+                                    .font_family("Consolas, monospace")
+                                    .child((idx + 1).to_string()),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_xs()
+                                    .text_color(theme.text_primary)
+                                    .font_family("Consolas, monospace")
+                                    .child(display_str.to_string()),
+                            ),
+                    );
+                }
+            }
+
+            let orig_btn_bg = if mode == OcrFormatMode::Original { theme.accent } else { rgba(0xFFFFFF0D) };
+            let orig_btn_fg = if mode == OcrFormatMode::Original { rgb(0xFFFFFF) } else { theme.text_secondary };
+
+            let single_btn_bg = if mode == OcrFormatMode::SingleLine { theme.accent } else { rgba(0xFFFFFF0D) };
+            let single_btn_fg = if mode == OcrFormatMode::SingleLine { rgb(0xFFFFFF) } else { theme.text_secondary };
+
+            let code_btn_bg = if mode == OcrFormatMode::CodeTable { theme.accent } else { rgba(0xFFFFFF0D) };
+            let code_btn_fg = if mode == OcrFormatMode::CodeTable { rgb(0xFFFFFF) } else { theme.text_secondary };
+
+            root = root.child(
+                div()
+                    .absolute()
+                    .top(px(0.0))
+                    .left(px(0.0))
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(rgba(0x00000077))
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                        this.close_ocr_modal(cx);
+                    }))
+                    .child(
+                        div()
+                            .w(px(600.0))
+                            .max_w(px((f32::from(screen_size.width) - 48.0).min(640.0)))
+                            .rounded_2xl()
+                            .bg(theme.bg_surface)
+                            .border_1()
+                            .border_color(rgba(0xFFFFFF25))
+                            .shadow_2xl()
+                            .flex()
+                            .flex_col()
+                            .overflow_hidden()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            // Header
+                            .child(
+                                div()
+                                    .px_4()
+                                    .py_3()
+                                    .bg(rgba(0xFFFFFF08))
+                                    .border_b_1()
+                                    .border_color(rgba(0xFFFFFF15))
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                svg()
+                                                    .path("icons/ocr.svg")
+                                                    .size(px(16.0))
+                                                    .text_color(theme.accent),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                    .text_color(theme.text_primary)
+                                                    .child(t(lang, "Recognized Text (OCR)", "Распознанный текст (OCR)")),
+                                            )
+                                            .child(
+                                                div()
+                                                    .px_2()
+                                                    .py_0p5()
+                                                    .rounded_md()
+                                                    .bg(rgba(0xFFFFFF12))
+                                                    .text_xs()
+                                                    .text_color(theme.text_secondary)
+                                                    .child(format!("{} симв. • {} сл. • {} стр.", char_count, word_count, line_count)),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("btn-ocr-close-x")
+                                            .p_1p5()
+                                            .rounded_md()
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgba(0xFFFFFF15)))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                this.close_ocr_modal(cx);
+                                            }))
+                                            .child(
+                                                svg()
+                                                    .path("icons/close.svg")
+                                                    .size(px(14.0))
+                                                    .text_color(theme.text_secondary),
+                                            ),
+                                    ),
+                            )
+                            // Mode Switcher Controls
+                            .child(
+                                div()
+                                    .px_4()
+                                    .pt_3()
+                                    .pb_2()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .id("btn-ocr-mode-orig")
+                                            .px_3()
+                                            .py_1p5()
+                                            .rounded_lg()
+                                            .bg(orig_btn_bg)
+                                            .text_xs()
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(orig_btn_fg)
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.9))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                this.set_ocr_mode(OcrFormatMode::Original, cx);
+                                            }))
+                                            .child(t(lang, "Original", "Исходный")),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("btn-ocr-mode-single")
+                                            .px_3()
+                                            .py_1p5()
+                                            .rounded_lg()
+                                            .bg(single_btn_bg)
+                                            .text_xs()
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(single_btn_fg)
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.9))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                this.set_ocr_mode(OcrFormatMode::SingleLine, cx);
+                                            }))
+                                            .child(t(lang, "Single Line", "В одну строку")),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("btn-ocr-mode-code")
+                                            .px_3()
+                                            .py_1p5()
+                                            .rounded_lg()
+                                            .bg(code_btn_bg)
+                                            .text_xs()
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(code_btn_fg)
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.9))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                this.set_ocr_mode(OcrFormatMode::CodeTable, cx);
+                                            }))
+                                            .child(t(lang, "Code / Table", "Код / Таблица")),
+                                    ),
+                            )
+                            // Text Area Body
+                            .child(
+                                div()
+                                    .px_4()
+                                    .py_1()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1p5()
+                                    .child(lines_col)
+                                    .child(
+                                        div()
+                                            .px_1()
+                                            .text_xs()
+                                            .text_color(theme.text_secondary)
+                                            .child(t(lang, "Edit directly with keyboard • Enter for new line • Ctrl+Enter to copy", "Редактируйте текст с клавиатуры • Enter для новой строки • Ctrl+Enter для копирования")),
+                                    ),
+                            )
+                            // Bottom Action Bar
+                            .child(
+                                div()
+                                    .px_4()
+                                    .py_3()
+                                    .bg(rgba(0xFFFFFF06))
+                                    .border_t_1()
+                                    .border_color(rgba(0xFFFFFF15))
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        if is_copied {
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap_1p5()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(rgb(0x34C759))
+                                                .child(
+                                                    svg()
+                                                        .path("icons/check.svg")
+                                                        .size(px(13.0))
+                                                        .text_color(rgb(0x34C759)),
+                                                )
+                                                .child(t(lang, "Copied to clipboard", "Скопировано в буфер"))
+                                        } else {
+                                            div()
+                                        },
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .id("btn-ocr-cancel")
+                                                    .px_3p5()
+                                                    .py_1p5()
+                                                    .rounded_lg()
+                                                    .bg(rgba(0xFFFFFF10))
+                                                    .hover(|s| s.bg(rgba(0xFFFFFF20)))
+                                                    .text_xs()
+                                                    .text_color(theme.text_primary)
+                                                    .cursor_pointer()
+                                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                        this.close_ocr_modal(cx);
+                                                    }))
+                                                    .child(t(lang, "Close", "Закрыть")),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id("btn-ocr-copy")
+                                                    .px_4()
+                                                    .py_1p5()
+                                                    .rounded_lg()
+                                                    .bg(theme.accent)
+                                                    .hover(|s| s.opacity(0.9))
+                                                    .text_xs()
+                                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                                    .text_color(rgb(0xFFFFFF))
+                                                    .cursor_pointer()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1p5()
+                                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                        this.copy_ocr_modal_text(cx);
+                                                    }))
+                                                    .child(
+                                                        svg()
+                                                            .path("icons/copy.svg")
+                                                            .size(px(13.0))
+                                                            .text_color(rgb(0xFFFFFF)),
+                                                    )
+                                                    .child(t(lang, "Copy", "Скопировать")),
+                                            ),
+                                    ),
+                            ),
+                    ),
+            );
+        }
+
+        // Interactive QR / Barcode Modal Dialog
+        if let Some(qr) = &self.qr_modal {
+            let action = qr.action.clone();
+            let raw_content = qr.result.content.clone();
+            let format_label = qr.result.format.clone().unwrap_or_else(|| "QR".to_string());
+            let is_copied = qr.is_copied;
+            let status_feedback = qr.status_feedback.clone();
+
+            let title_str = match &action {
+                QrActionKind::Url { .. } => t(lang, "Web Link Detected", "Распознана веб-ссылка").to_string(),
+                QrActionKind::Wifi { .. } => t(lang, "Wi-Fi Network Detected", "Распознана сеть Wi-Fi").to_string(),
+                QrActionKind::Barcode { format_name, .. } => format!("{}: {}", t(lang, "Barcode Detected", "Распознан штрихкод"), format_name),
+                QrActionKind::Text { .. } => t(lang, "Code Content", "Распознанный код").to_string(),
+            };
+
+            let body_content = match &action {
+                QrActionKind::Url { url } => {
+                    let url_for_browser = url.clone();
+                    let url_for_copy = url.clone();
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child(
+                            div()
+                                .p_3()
+                                .rounded_xl()
+                                .bg(rgba(0x00000045))
+                                .border_1()
+                                .border_color(rgba(0xFFFFFF15))
+                                .text_xs()
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(theme.accent)
+                                .child(url.clone()),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .id("btn-qr-copy-url")
+                                        .px_3p5()
+                                        .py_1p5()
+                                        .rounded_lg()
+                                        .bg(rgba(0xFFFFFF10))
+                                        .hover(|s| s.bg(rgba(0xFFFFFF20)))
+                                        .text_xs()
+                                        .text_color(theme.text_primary)
+                                        .cursor_pointer()
+                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                            this.copy_qr_content(&url_for_copy, t(lang, "URL copied!", "Ссылка скопирована!"), cx);
+                                        }))
+                                        .child(t(lang, "Copy URL", "Скопировать ссылку")),
+                                )
+                                .child(
+                                    div()
+                                        .id("btn-qr-open-browser")
+                                        .px_4()
+                                        .py_1p5()
+                                        .rounded_lg()
+                                        .bg(theme.accent)
+                                        .hover(|s| s.opacity(0.9))
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(rgb(0xFFFFFF))
+                                        .cursor_pointer()
+                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                                            open_url_in_browser(&url_for_browser);
+                                            this.close_qr_modal(cx);
+                                            window.remove_window();
+                                        }))
+                                        .child(t(lang, "Open in Browser", "Открыть в браузере")),
+                                ),
+                        )
+                }
+                QrActionKind::Wifi { ssid, password, auth_type, hidden: _ } => {
+                    let pwd_for_copy = password.clone();
+                    let ssid_for_copy = ssid.clone();
+                    let all_for_copy = raw_content.clone();
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2p5()
+                        .child(
+                            div()
+                                .p_2p5()
+                                .rounded_xl()
+                                .bg(rgba(0x00000045))
+                                .border_1()
+                                .border_color(rgba(0xFFFFFF15))
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .child(div().text_xs().text_color(theme.text_secondary).child(t(lang, "Network name (SSID)", "Имя сети (SSID)")))
+                                        .child(div().text_sm().font_weight(gpui::FontWeight::SEMIBOLD).text_color(theme.text_primary).child(if ssid.is_empty() { "(Hidden)".to_string() } else { ssid.clone() })),
+                                )
+                                .child(
+                                    div()
+                                        .id("btn-copy-ssid")
+                                        .px_2p5()
+                                        .py_1()
+                                        .rounded_md()
+                                        .bg(rgba(0xFFFFFF10))
+                                        .hover(|s| s.bg(rgba(0xFFFFFF20)))
+                                        .text_xs()
+                                        .text_color(theme.text_primary)
+                                        .cursor_pointer()
+                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                            this.copy_qr_content(&ssid_for_copy, t(lang, "SSID copied!", "Имя сети скопировано!"), cx);
+                                        }))
+                                        .child(t(lang, "Copy SSID", "Копировать SSID")),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .p_2p5()
+                                .rounded_xl()
+                                .bg(rgba(0x00000045))
+                                .border_1()
+                                .border_color(rgba(0xFFFFFF15))
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .child(div().text_xs().text_color(theme.text_secondary).child(format!("{}: {}", t(lang, "Password", "Пароль"), auth_type)))
+                                        .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(theme.accent).child(if password.is_empty() { t(lang, "(No password)", "(Без пароля)").to_string() } else { password.clone() })),
+                                )
+                                .child(
+                                    div()
+                                        .id("btn-copy-wifi-pwd")
+                                        .px_3()
+                                        .py_1p5()
+                                        .rounded_md()
+                                        .bg(theme.accent)
+                                        .hover(|s| s.opacity(0.9))
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(rgb(0xFFFFFF))
+                                        .cursor_pointer()
+                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                            this.copy_qr_content(&pwd_for_copy, t(lang, "Password copied!", "Пароль скопирован!"), cx);
+                                        }))
+                                        .child(t(lang, "Copy Password", "Скопировать пароль")),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .child(
+                                    div()
+                                        .id("btn-copy-wifi-raw")
+                                        .px_3()
+                                        .py_1()
+                                        .rounded_lg()
+                                        .bg(rgba(0xFFFFFF0A))
+                                        .hover(|s| s.bg(rgba(0xFFFFFF18)))
+                                        .text_xs()
+                                        .text_color(theme.text_secondary)
+                                        .cursor_pointer()
+                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                            this.copy_qr_content(&all_for_copy, t(lang, "Wi-Fi data copied!", "Все данные Wi-Fi скопированы!"), cx);
+                                        }))
+                                        .child(t(lang, "Copy All Data", "Скопировать всё")),
+                                ),
+                        )
+                }
+                QrActionKind::Barcode { code, format_name, search_url } => {
+                    let code_for_copy = code.clone();
+                    let url_for_browser = search_url.clone();
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child(
+                            div()
+                                .p_3()
+                                .rounded_xl()
+                                .bg(rgba(0x00000045))
+                                .border_1()
+                                .border_color(rgba(0xFFFFFF15))
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .child(div().text_xs().text_color(theme.text_secondary).child(format!("{}: {}", t(lang, "Format", "Формат"), format_name)))
+                                        .child(div().text_base().font_weight(gpui::FontWeight::BOLD).font_family("Consolas, monospace").text_color(theme.text_primary).child(code.clone())),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .id("btn-copy-barcode-code")
+                                        .px_3p5()
+                                        .py_1p5()
+                                        .rounded_lg()
+                                        .bg(rgba(0xFFFFFF10))
+                                        .hover(|s| s.bg(rgba(0xFFFFFF20)))
+                                        .text_xs()
+                                        .text_color(theme.text_primary)
+                                        .cursor_pointer()
+                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                            this.copy_qr_content(&code_for_copy, t(lang, "Barcode copied!", "Штрихкод скопирован!"), cx);
+                                        }))
+                                        .child(t(lang, "Copy Code", "Скопировать код")),
+                                )
+                                .child(
+                                    div()
+                                        .id("btn-search-barcode")
+                                        .px_4()
+                                        .py_1p5()
+                                        .rounded_lg()
+                                        .bg(theme.accent)
+                                        .hover(|s| s.opacity(0.9))
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(rgb(0xFFFFFF))
+                                        .cursor_pointer()
+                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                                            open_url_in_browser(&url_for_browser);
+                                            this.close_qr_modal(cx);
+                                            window.remove_window();
+                                        }))
+                                        .child(t(lang, "Search on Web", "Искать в интернете")),
+                                ),
+                        )
+                }
+                QrActionKind::Text { text } => {
+                    let text_for_copy = text.clone();
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child(
+                            div()
+                                .id("qr-raw-text-scroll")
+                                .p_3()
+                                .min_h(px(80.0))
+                                .max_h(px(200.0))
+                                .overflow_y_scroll()
+                                .rounded_xl()
+                                .bg(rgba(0x00000045))
+                                .border_1()
+                                .border_color(rgba(0xFFFFFF15))
+                                .text_xs()
+                                .text_color(theme.text_primary)
+                                .child(text.clone()),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .child(
+                                    div()
+                                        .id("btn-copy-raw-text")
+                                        .px_4()
+                                        .py_1p5()
+                                        .rounded_lg()
+                                        .bg(theme.accent)
+                                        .hover(|s| s.opacity(0.9))
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(rgb(0xFFFFFF))
+                                        .cursor_pointer()
+                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                            this.copy_qr_content(&text_for_copy, t(lang, "Text copied!", "Текст скопирован!"), cx);
+                                        }))
+                                        .child(t(lang, "Copy", "Скопировать")),
+                                ),
+                        )
+                }
+            };
+
+            root = root.child(
+                div()
+                    .absolute()
+                    .top(px(0.0))
+                    .left(px(0.0))
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(rgba(0x00000077))
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                        this.close_qr_modal(cx);
+                    }))
+                    .child(
+                        div()
+                            .w(px(520.0))
+                            .max_w(px((f32::from(screen_size.width) - 48.0).min(560.0)))
+                            .rounded_2xl()
+                            .bg(theme.bg_surface)
+                            .border_1()
+                            .border_color(rgba(0xFFFFFF25))
+                            .shadow_2xl()
+                            .flex()
+                            .flex_col()
+                            .overflow_hidden()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            // Header
+                            .child(
+                                div()
+                                    .px_4()
+                                    .py_3()
+                                    .bg(rgba(0xFFFFFF08))
+                                    .border_b_1()
+                                    .border_color(rgba(0xFFFFFF15))
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                    .text_color(theme.text_primary)
+                                                    .child(title_str),
+                                            )
+                                            .child(
+                                                div()
+                                                    .px_2()
+                                                    .py_0p5()
+                                                    .rounded_md()
+                                                    .bg(rgba(0xFFFFFF12))
+                                                    .text_xs()
+                                                    .text_color(theme.text_secondary)
+                                                    .child(format_label),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("btn-qr-close-x")
+                                            .p_1p5()
+                                            .rounded_md()
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgba(0xFFFFFF15)))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                this.close_qr_modal(cx);
+                                            }))
+                                            .child(
+                                                svg()
+                                                    .path("icons/close.svg")
+                                                    .size(px(14.0))
+                                                    .text_color(theme.text_secondary),
+                                            ),
+                                    ),
+                            )
+                            // Body
+                            .child(
+                                div()
+                                    .px_4()
+                                    .py_3p5()
+                                    .child(body_content),
+                            )
+                            // Footer status
+                            .child(
+                                div()
+                                    .px_4()
+                                    .py_2p5()
+                                    .bg(rgba(0xFFFFFF06))
+                                    .border_t_1()
+                                    .border_color(rgba(0xFFFFFF15))
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        if let Some(msg) = &status_feedback {
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap_1p5()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(rgb(0x34C759))
+                                                .child(svg().path("icons/check.svg").size(px(13.0)).text_color(rgb(0x34C759)))
+                                                .child(msg.clone())
+                                        } else if is_copied {
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap_1p5()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(rgb(0x34C759))
+                                                .child(svg().path("icons/check.svg").size(px(13.0)).text_color(rgb(0x34C759)))
+                                                .child(t(lang, "Copied to clipboard", "Скопировано в буфер"))
+                                        } else {
+                                            div()
+                                        },
+                                    )
+                                    .child(
+                                        div()
+                                            .id("btn-qr-close-bottom")
+                                            .px_3p5()
+                                            .py_1p5()
+                                            .rounded_lg()
+                                            .bg(rgba(0xFFFFFF10))
+                                            .hover(|s| s.bg(rgba(0xFFFFFF20)))
+                                            .text_xs()
+                                            .text_color(theme.text_primary)
+                                            .cursor_pointer()
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                this.close_qr_modal(cx);
+                                            }))
+                                            .child(t(lang, "Close", "Закрыть")),
+                                    ),
+                            ),
+                    ),
+            );
         }
 
         root

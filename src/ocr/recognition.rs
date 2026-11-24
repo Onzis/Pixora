@@ -1,12 +1,22 @@
 use image::RgbaImage;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct OcrWord {
+    pub text: String,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct OcrRecognizedLine {
     pub text: String,
     pub x: f32,
     pub y: f32,
     pub width: f32,
     pub height: f32,
+    pub words: Vec<OcrWord>,
 }
 
 #[derive(Clone, Debug)]
@@ -153,22 +163,29 @@ fn parse_single_ocr_result(res: &windows::Media::Ocr::OcrResult) -> Result<OcrOu
                 let mut w = 0.0;
                 let mut h = 0.0;
 
+                let mut line_words = Vec::new();
                 if let Ok(words) = line.Words() {
                     let word_count = words.Size().unwrap_or(0);
-                    if word_count > 0 {
-                        if let Ok(first_word) = words.GetAt(0) {
-                            if let Ok(rect) = first_word.BoundingRect() {
-                                x = rect.X;
-                                y = rect.Y;
-                                h = rect.Height;
-                            }
-                        }
-                        if let Ok(last_word) = words.GetAt(word_count - 1) {
-                            if let Ok(rect) = last_word.BoundingRect() {
+                    for j in 0..word_count {
+                        if let Ok(w_item) = words.GetAt(j) {
+                            let w_text = w_item.Text().map(|t| t.to_string()).unwrap_or_default();
+                            if let Ok(rect) = w_item.BoundingRect() {
+                                if j == 0 {
+                                    x = rect.X;
+                                    y = rect.Y;
+                                    h = rect.Height;
+                                }
                                 w = (rect.X + rect.Width) - x;
                                 if rect.Height > h {
                                     h = rect.Height;
                                 }
+                                line_words.push(OcrWord {
+                                    text: w_text,
+                                    x: rect.X,
+                                    y: rect.Y,
+                                    width: rect.Width,
+                                    height: rect.Height,
+                                });
                             }
                         }
                     }
@@ -181,6 +198,7 @@ fn parse_single_ocr_result(res: &windows::Media::Ocr::OcrResult) -> Result<OcrOu
                     y,
                     width: w,
                     height: h,
+                    words: line_words,
                 });
             }
         }
@@ -252,6 +270,7 @@ fn merge_dual_engine_ocr(
         for i in 0..ru_lines.Size().unwrap_or(0) {
             if let Ok(line) = ru_lines.GetAt(i) {
                 let mut tokens = Vec::new();
+                let mut line_words = Vec::new();
                 let mut line_x = 0.0f32;
                 let mut line_y = 0.0f32;
                 let mut line_w = 0.0f32;
@@ -263,7 +282,17 @@ fn merge_dual_engine_ocr(
                     for j in 0..word_count {
                         if let Ok(w) = words.GetAt(j) {
                             let mut text = w.Text().map(|t| t.to_string()).unwrap_or_default();
+                            let mut word_x = 0.0;
+                            let mut word_y = 0.0;
+                            let mut word_w = 0.0;
+                            let mut word_h = 0.0;
+
                             if let Ok(r) = w.BoundingRect() {
+                                word_x = r.X;
+                                word_y = r.Y;
+                                word_w = r.Width;
+                                word_h = r.Height;
+
                                 if j == 0 {
                                     line_x = r.X;
                                     line_y = r.Y;
@@ -316,6 +345,13 @@ fn merge_dual_engine_ocr(
                                     }
                                 }
                             }
+                            line_words.push(OcrWord {
+                                text: text.clone(),
+                                x: word_x,
+                                y: word_y,
+                                width: word_w,
+                                height: word_h,
+                            });
                             tokens.push(text);
                         }
                     }
@@ -329,6 +365,13 @@ fn merge_dual_engine_ocr(
                             && ew.x < last_right + 120.0
                         {
                             if ew.text.chars().all(|c| c.is_ascii()) && !tokens.contains(&ew.text) {
+                                line_words.push(OcrWord {
+                                    text: ew.text.clone(),
+                                    x: ew.x,
+                                    y: ew.y,
+                                    width: ew.w,
+                                    height: ew.h,
+                                });
                                 tokens.push(ew.text.clone());
                                 last_right = ew.x + ew.w;
                                 line_w = last_right - line_x;
@@ -346,6 +389,7 @@ fn merge_dual_engine_ocr(
                         y: line_y,
                         width: line_w,
                         height: line_h,
+                        words: line_words,
                     });
                 }
             }
@@ -365,4 +409,189 @@ pub fn recognize_text_from_image(
     _preferred_lang: Option<&str>,
 ) -> Result<OcrOutput, String> {
     Err("OCR only supported on Windows".to_string())
+}
+
+/// Merges multi-line text into a single line, stripping hyphenation at line breaks
+/// (e.g. "распознава-\nние" -> "распознавание") and normalizing spaces.
+pub fn format_as_single_line(text: &str) -> String {
+    let raw_lines: Vec<&str> = text
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    if raw_lines.is_empty() {
+        return String::new();
+    }
+
+    let mut result = String::new();
+    for (i, line) in raw_lines.iter().enumerate() {
+        if i == 0 {
+            result.push_str(line);
+            continue;
+        }
+
+        // Check if previous line ended with hyphenation
+        if let Some(stripped) = result
+            .strip_suffix('-')
+            .or_else(|| result.strip_suffix('\u{00AD}'))
+        {
+            let last_char = stripped.chars().last();
+            let first_char = line.chars().next();
+            if let (Some(lc), Some(fc)) = (last_char, first_char) {
+                if (lc.is_alphabetic() || lc.is_numeric()) && (fc.is_alphabetic() || fc.is_numeric()) {
+                    // Hyphenated word wrap: stitch together without space
+                    result = format!("{}{}", stripped, line);
+                    continue;
+                }
+            }
+        }
+
+        // Otherwise join with space
+        if !result.is_empty() && !result.ends_with(' ') {
+            result.push(' ');
+        }
+        result.push_str(line);
+    }
+
+    // Collapse multiple consecutive spaces
+    let mut collapsed = String::with_capacity(result.len());
+    let mut prev_space = false;
+    for ch in result.chars() {
+        if ch.is_whitespace() {
+            if !prev_space {
+                collapsed.push(' ');
+                prev_space = true;
+            }
+        } else {
+            collapsed.push(ch);
+            prev_space = false;
+        }
+    }
+    collapsed.trim().to_string()
+}
+
+/// Formats recognized OCR lines for code or tables:
+/// - Preserves code indentation spaces based on spatial X-coordinate offsets.
+/// - Separates table columns with tabs (`\t`) when horizontal gap between words exceeds threshold.
+pub fn format_as_code_or_table(lines: &[OcrRecognizedLine]) -> String {
+    let valid_lines: Vec<&OcrRecognizedLine> = lines
+        .iter()
+        .filter(|l| !l.text.trim().is_empty())
+        .collect();
+    if valid_lines.is_empty() {
+        return String::new();
+    }
+
+    // Find leftmost X coordinate
+    let min_x = valid_lines
+        .iter()
+        .map(|l| l.x)
+        .fold(f32::INFINITY, f32::min);
+
+    // Estimate average character width from lines with sufficient text
+    let mut estimates: Vec<f32> = valid_lines
+        .iter()
+        .filter_map(|l| {
+            let count = l.text.chars().count();
+            if count >= 3 && l.width > 0.0 {
+                Some(l.width / count as f32)
+            } else {
+                None
+            }
+        })
+        .collect();
+    estimates.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    let char_w = if !estimates.is_empty() {
+        estimates[estimates.len() / 2].clamp(4.0, 30.0)
+    } else {
+        let avg_h = valid_lines.iter().map(|l| l.height).sum::<f32>() / valid_lines.len() as f32;
+        (avg_h * 0.55).clamp(6.0, 16.0)
+    };
+
+    let mut result_lines = Vec::new();
+    for line in valid_lines {
+        let line_content = if line.words.len() > 1 {
+            let mut s = String::new();
+            for (idx, w) in line.words.iter().enumerate() {
+                if idx == 0 {
+                    s.push_str(&w.text);
+                } else {
+                    let prev = &line.words[idx - 1];
+                    let gap = w.x - (prev.x + prev.width);
+                    let tab_threshold = (char_w * 2.0).max(14.0);
+                    if gap >= tab_threshold {
+                        s.push('\t');
+                    } else {
+                        s.push(' ');
+                    }
+                    s.push_str(&w.text);
+                }
+            }
+            s
+        } else if line.words.len() == 1 {
+            line.words[0].text.clone()
+        } else {
+            // Fallback for lines without word boxes: convert runs of 2+ spaces to tab
+            let mut s = String::new();
+            let mut space_run = 0;
+            for ch in line.text.chars() {
+                if ch == ' ' {
+                    space_run += 1;
+                } else {
+                    if space_run >= 2 {
+                        s.push('\t');
+                    } else if space_run == 1 {
+                        s.push(' ');
+                    }
+                    space_run = 0;
+                    s.push(ch);
+                }
+            }
+            if space_run >= 2 {
+                s.push('\t');
+            } else if space_run == 1 {
+                s.push(' ');
+            }
+            s
+        };
+
+        // Indentation calculation for code
+        let indent_px = (line.x - min_x).max(0.0);
+        let num_spaces = ((indent_px / char_w).round() as usize).min(60);
+        let indent = " ".repeat(num_spaces);
+
+        result_lines.push(format!("{}{}", indent, line_content.trim()));
+    }
+
+    result_lines.join("\n")
+}
+
+/// Fallback table formatter that replaces multi-space gaps with tabs.
+pub fn format_text_as_table_tabs(text: &str) -> String {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let mut s = String::new();
+        let mut space_run = 0;
+        for ch in line.chars() {
+            if ch == ' ' {
+                space_run += 1;
+            } else {
+                if space_run >= 2 {
+                    s.push('\t');
+                } else if space_run == 1 {
+                    s.push(' ');
+                }
+                space_run = 0;
+                s.push(ch);
+            }
+        }
+        if space_run >= 2 {
+            s.push('\t');
+        } else if space_run == 1 {
+            s.push(' ');
+        }
+        out.push(s);
+    }
+    out.join("\n")
 }
