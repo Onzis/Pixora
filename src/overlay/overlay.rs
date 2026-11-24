@@ -2302,6 +2302,11 @@ impl Render for ScreenOverlayView {
         let text_input_height = self.text_input_height;
         let text_input_buffer = self.text_input_buffer.clone();
         let tool_font_size = self.tool_props.font_size;
+        let hovered_win_bounds = if !selection.is_active && matches!(self.drag_mode, SelectionDragMode::None) {
+            self.hovered_window.as_ref().map(|w| w.bounds)
+        } else {
+            None
+        };
 
         // Determine cursor style
         let is_over_floating_panel = self.current_toolbar_bounds.map_or(false, |b| b.contains(&self.cursor_pos))
@@ -2479,6 +2484,55 @@ impl Render for ScreenOverlayView {
                             Bounds { origin: pt, size: handle_size },
                             theme.accent,
                             BorderStyle::Solid,
+                        ));
+                    }
+                } else if let Some(win_b) = hovered_win_bounds {
+                    // CleanShot X / macOS window highlight:
+                    // The rest of the screen is dimmed, while the hovered window is carved out and 100% bright!
+                    let mask_bg = theme.mask_overlay;
+                    let win_top = win_b.origin.y.max(px(0.0));
+                    let win_bottom = (win_b.origin.y + win_b.size.height).min(bounds.size.height);
+                    let win_left = win_b.origin.x.max(px(0.0));
+                    let win_right = (win_b.origin.x + win_b.size.width).min(bounds.size.width);
+
+                    // Top mask
+                    if win_top > px(0.0) {
+                        window.paint_quad(fill(
+                            Bounds {
+                                origin: point(px(0.0), px(0.0)),
+                                size: size(bounds.size.width, win_top),
+                            },
+                            mask_bg,
+                        ));
+                    }
+                    // Bottom mask
+                    if win_bottom < bounds.size.height {
+                        window.paint_quad(fill(
+                            Bounds {
+                                origin: point(px(0.0), win_bottom),
+                                size: size(bounds.size.width, bounds.size.height - win_bottom),
+                            },
+                            mask_bg,
+                        ));
+                    }
+                    // Left mask
+                    if win_left > px(0.0) && win_bottom > win_top {
+                        window.paint_quad(fill(
+                            Bounds {
+                                origin: point(px(0.0), win_top),
+                                size: size(win_left, win_bottom - win_top),
+                            },
+                            mask_bg,
+                        ));
+                    }
+                    // Right mask
+                    if win_right < bounds.size.width && win_bottom > win_top {
+                        window.paint_quad(fill(
+                            Bounds {
+                                origin: point(win_right, win_top),
+                                size: size(bounds.size.width - win_right, win_bottom - win_top),
+                            },
+                            mask_bg,
                         ));
                     }
                 } else {
@@ -3117,10 +3171,10 @@ impl Render for ScreenOverlayView {
                     .px_2()
                     .py_0p5()
                     .rounded_md()
-                    .bg(rgb(0x151519))
+                    .bg(rgba(0x141418F4))
                     .border_1()
-                    .border_color(rgb(0x282832))
-                    .shadow_md()
+                    .border_color(rgba(0xFFFFFF20))
+                    .shadow_lg()
                     .text_xs()
                     .font_weight(gpui::FontWeight::MEDIUM)
                     .text_color(rgb(0xF2F2F5))
@@ -3149,76 +3203,89 @@ impl Render for ScreenOverlayView {
 
             if let Some(win) = &self.hovered_window {
                 let wb = win.bounds;
-                // 1. Semi-transparent accent tint & highlight border over the detected window
-                root = root.child(
-                    div()
-                        .absolute()
-                        .left(wb.origin.x)
-                        .top(wb.origin.y)
-                        .w(wb.size.width)
-                        .h(wb.size.height)
-                        .bg(rgba(0x8174FF16))
-                        .border_2()
-                        .border_color(rgba(0x8174FFCC))
-                        .rounded_lg(),
+                let is_maximized = f32::from(wb.origin.x) <= 2.0 && f32::from(wb.origin.y) <= 2.0;
+
+                // 1. Crisp precision highlight border over detected window / UI element (zero murky tint!)
+                let mut highlight_box = div()
+                    .absolute()
+                    .left(wb.origin.x)
+                    .top(wb.origin.y)
+                    .w(wb.size.width)
+                    .h(wb.size.height)
+                    .border_2()
+                    .border_color(theme.accent);
+
+                if !win.is_child_element && !is_maximized {
+                    highlight_box = highlight_box.rounded_md();
+                }
+                root = root.child(highlight_box);
+
+                // 2. Premium Apple/Raycast glassmorphic HUD badge
+                let win_cx = f32::from(wb.origin.x) + f32::from(wb.size.width) / 2.0;
+                let container_w = 640.0f32;
+                let container_x = (win_cx - container_w / 2.0).clamp(12.0, (scr_w - container_w - 12.0).max(12.0));
+
+                let win_top = f32::from(wb.origin.y);
+                let win_bottom = win_top + f32::from(wb.size.height);
+                let badge_h = 36.0f32;
+
+                // Position badge cleanly outside the window when space permits, so it never obscures title or tabs
+                let badge_y = if win_top >= badge_h + 12.0 {
+                    win_top - badge_h - 8.0
+                } else if win_bottom + badge_h + 12.0 <= scr_h {
+                    win_bottom + 8.0
+                } else {
+                    (win_top + 14.0).clamp(12.0, (scr_h - badge_h - 12.0).max(12.0))
+                };
+
+                let icon_path = if win.is_child_element {
+                    "icons/rectangle.svg"
+                } else {
+                    "icons/window.svg"
+                };
+
+                let title_str = win.title.trim();
+                let display_title = if !title_str.is_empty() {
+                    let mut s = title_str.to_string();
+                    if s.chars().count() > 28 {
+                        s = s.chars().take(26).collect::<String>() + "…";
+                    }
+                    s
+                } else if win.is_child_element {
+                    t(lang, "Element", "Элемент").to_string()
+                } else {
+                    t(lang, "Window", "Окно").to_string()
+                };
+
+                let dim_text = format!(
+                    "{} × {}",
+                    f32::from(wb.size.width).round() as u32,
+                    f32::from(wb.size.height).round() as u32
                 );
 
-                // 2. Window info pill badge (Window name + Dimensions + Click to snap hint)
-                let badge_w = 520.0;
-                let win_cx = f32::from(wb.origin.x) + f32::from(wb.size.width) / 2.0;
-                let badge_x = (win_cx - badge_w / 2.0).clamp(16.0, (scr_w - badge_w - 16.0).max(16.0));
-                let badge_y = if win.is_child_element && f32::from(wb.size.height) < 70.0 {
-                    let above = f32::from(wb.origin.y) - 38.0;
-                    if above >= 16.0 {
-                        above
-                    } else {
-                        (f32::from(wb.origin.y) + f32::from(wb.size.height) + 8.0).min(scr_h - 48.0)
-                    }
+                let action_hint = if win.is_child_element {
+                    t(lang, "Select element", "Выбрать элемент")
                 } else {
-                    (f32::from(wb.origin.y) + 16.0).clamp(16.0, (scr_h - 48.0).max(16.0))
+                    t(lang, "Select window", "Выбрать окно")
                 };
-
-                let win_title = if !win.title.trim().is_empty() {
-                    let mut s = win.title.trim().to_string();
-                    if s.chars().count() > 24 {
-                        s = s.chars().take(22).collect::<String>() + "…";
-                    }
-                    format!("{} • ", s)
-                } else {
-                    String::new()
-                };
-
-                let dim_text = format!("{} × {}", f32::from(wb.size.width) as u32, f32::from(wb.size.height) as u32);
-                let hint_text = if win.is_child_element {
-                    t(
-                        lang,
-                        "Click to select element",
-                        "Клик — выбрать элемент",
-                    )
-                } else {
-                    t(
-                        lang,
-                        "Click to select window",
-                        "Клик — выбрать окно",
-                    )
-                };
+                let click_badge = t(lang, "CLICK", "КЛИК");
 
                 root = root.child(
                     div()
                         .absolute()
                         .top(px(badge_y))
-                        .left(px(badge_x))
-                        .w(px(badge_w))
+                        .left(px(container_x))
+                        .w(px(container_w))
                         .flex()
                         .justify_center()
                         .child(
                             div()
                                 .py_1p5()
-                                .px_4()
+                                .px_3p5()
                                 .rounded_full()
-                                .bg(rgba(0x131317FA))
+                                .bg(rgba(0x141418F4))
                                 .border_1()
-                                .border_color(rgba(0x8174FFA0))
+                                .border_color(rgba(0xFFFFFF20))
                                 .shadow_2xl()
                                 .flex()
                                 .items_center()
@@ -3226,45 +3293,65 @@ impl Render for ScreenOverlayView {
                                 .flex_shrink_0()
                                 .child(
                                     svg()
-                                        .path("icons/window.svg")
+                                        .path(icon_path)
                                         .size_3p5()
-                                        .text_color(rgb(0x8174FF))
+                                        .text_color(rgb(0xA79BFF))
+                                        .flex_shrink_0(),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(rgb(0xF6F6FA))
+                                        .flex_shrink_0()
+                                        .child(display_title),
+                                )
+                                .child(
+                                    div()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_md()
+                                        .bg(rgba(0xFFFFFF14))
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(rgb(0xDCDCE8))
+                                        .flex_shrink_0()
+                                        .child(dim_text),
+                                )
+                                .child(
+                                    div()
+                                        .w(px(1.0))
+                                        .h(px(12.0))
+                                        .bg(rgba(0xFFFFFF20))
                                         .flex_shrink_0(),
                                 )
                                 .child(
                                     div()
                                         .flex()
                                         .items_center()
-                                        .gap_1()
+                                        .gap_1p5()
                                         .flex_shrink_0()
                                         .child(
                                             div()
-                                                .text_xs()
-                                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                .text_color(rgb(0xF2F2F5))
-                                                .child(win_title),
+                                                .px_1p5()
+                                                .py_0p5()
+                                                .rounded_sm()
+                                                .bg(rgba(0x8174FF30))
+                                                .border_1()
+                                                .border_color(rgba(0x8174FF60))
+                                                .text_size(px(10.0))
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_color(rgb(0xC8BFFF))
+                                                .flex_shrink_0()
+                                                .child(click_badge),
                                         )
                                         .child(
                                             div()
                                                 .text_xs()
-                                                .font_weight(gpui::FontWeight::MEDIUM)
-                                                .text_color(rgb(0x9D8CFF))
-                                                .child(dim_text),
+                                                .text_color(rgb(0x9E9EB0))
+                                                .flex_shrink_0()
+                                                .child(action_hint),
                                         ),
-                                )
-                                .child(
-                                    div()
-                                        .w(px(1.0))
-                                        .h(px(12.0))
-                                        .bg(rgba(0xFFFFFF30))
-                                        .flex_shrink_0(),
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(rgb(0xA2A2B0))
-                                        .flex_shrink_0()
-                                        .child(hint_text),
                                 ),
                         ),
                 );
@@ -3272,17 +3359,17 @@ impl Render for ScreenOverlayView {
                 root = root.child(
                     div()
                         .absolute()
-                        .top(px((scr_h - 44.0) / 2.0))
+                        .top(px(scr_h - 54.0))
                         .left(px(0.0))
                         .w(screen_bounds.size.width)
                         .flex()
                         .justify_center()
                         .child(
                             div()
-                                .py_2()
-                                .px_5()
+                                .py_1p5()
+                                .px_4()
                                 .rounded_full()
-                                .bg(rgba(0x151519F0))
+                                .bg(rgba(0x141418F0))
                                 .border_1()
                                 .border_color(rgba(0xFFFFFF20))
                                 .shadow_2xl()
