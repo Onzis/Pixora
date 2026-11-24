@@ -98,6 +98,8 @@ pub struct OcrModalState {
     pub cursor_char_idx: usize,
     pub selection_range: Option<(usize, usize)>,
     pub selection_anchor: Option<usize>,
+    pub mouse_down_pos: Option<(f32, f32)>,
+    pub is_dragging: bool,
 }
 
 impl OcrModalState {
@@ -278,6 +280,8 @@ impl OcrModalState {
     pub fn clear_selection(&mut self) {
         self.selection_range = None;
         self.selection_anchor = None;
+        self.mouse_down_pos = None;
+        self.is_dragging = false;
     }
 
     pub fn select_all(&mut self) {
@@ -342,6 +346,8 @@ impl OcrModalState {
                 self.is_copied = false;
                 self.selection_range = None;
                 self.selection_anchor = None;
+                self.mouse_down_pos = None;
+                self.is_dragging = false;
                 return true;
             }
         }
@@ -1380,6 +1386,8 @@ impl ScreenOverlayView {
                             cursor_char_idx: full_chars_count,
                             selection_range: None,
                             selection_anchor: None,
+                            mouse_down_pos: None,
+                            is_dragging: false,
                         });
                     }
                 }
@@ -1480,6 +1488,7 @@ impl ScreenOverlayView {
         &mut self,
         vl: &VisualLine,
         mouse_x: f32,
+        mouse_y: f32,
         screen_w: f32,
         click_count: usize,
         cx: &mut Context<Self>,
@@ -1489,6 +1498,8 @@ impl ScreenOverlayView {
             let total_chars = modal.edited_text.chars().count();
             let target_char = char_idx.min(total_chars);
             modal.cursor_char_idx = target_char;
+            modal.mouse_down_pos = Some((mouse_x, mouse_y));
+            modal.is_dragging = false;
 
             if click_count == 2 {
                 modal.select_word_at_cursor();
@@ -1508,12 +1519,39 @@ impl ScreenOverlayView {
         &mut self,
         vl: &VisualLine,
         mouse_x: f32,
+        mouse_y: f32,
         screen_w: f32,
         cx: &mut Context<Self>,
     ) {
+        let is_left_down = unsafe {
+            #[cfg(windows)]
+            {
+                (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as i16) < 0
+            }
+            #[cfg(not(windows))]
+            {
+                true
+            }
+        };
+
+        if !is_left_down {
+            self.finish_ocr_selection_drag(cx);
+            return;
+        }
+
         let current = self.get_char_idx_for_visual_line(vl, mouse_x, screen_w);
         if let Some(modal) = &mut self.ocr_modal {
             if let Some(anchor) = modal.selection_anchor {
+                if !modal.is_dragging {
+                    if let Some((down_x, down_y)) = modal.mouse_down_pos {
+                        let dist_sq = (mouse_x - down_x) * (mouse_x - down_x) + (mouse_y - down_y) * (mouse_y - down_y);
+                        if dist_sq < 16.0 && current == anchor {
+                            return;
+                        }
+                    }
+                    modal.is_dragging = true;
+                }
+
                 modal.cursor_char_idx = current;
                 if current != anchor {
                     let start = anchor.min(current);
@@ -1529,8 +1567,13 @@ impl ScreenOverlayView {
 
     pub fn finish_ocr_selection_drag(&mut self, cx: &mut Context<Self>) {
         if let Some(modal) = &mut self.ocr_modal {
+            let had_anchor = modal.selection_anchor.is_some() || modal.is_dragging;
             modal.selection_anchor = None;
-            cx.notify();
+            modal.mouse_down_pos = None;
+            modal.is_dragging = false;
+            if had_anchor {
+                cx.notify();
+            }
         }
     }
 
@@ -2207,6 +2250,27 @@ impl ScreenOverlayView {
         let px_f = f32::from(p.x);
         let py_f = f32::from(p.y);
 
+        if let Some(modal) = &mut self.ocr_modal {
+            if modal.selection_anchor.is_some() || modal.is_dragging {
+                let is_left_down = unsafe {
+                    #[cfg(windows)]
+                    {
+                        (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as i16) < 0
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        true
+                    }
+                };
+                if !is_left_down {
+                    modal.selection_anchor = None;
+                    modal.mouse_down_pos = None;
+                    modal.is_dragging = false;
+                    cx.notify();
+                }
+            }
+        }
+
         if self.palette_drag_mode == PaletteDragMode::SaturationValue {
             if let Some(gb) = self.gradient_field_bounds {
                 let rel_x = (px_f - f32::from(gb.origin.x)).clamp(0.0, f32::from(gb.size.width));
@@ -2431,6 +2495,12 @@ impl ScreenOverlayView {
         cx: &mut Context<Self>,
     ) {
         let p = ev.position;
+
+        if let Some(modal) = &mut self.ocr_modal {
+            modal.selection_anchor = None;
+            modal.mouse_down_pos = None;
+            modal.is_dragging = false;
+        }
         if self.palette_drag_mode != PaletteDragMode::None {
             self.palette_drag_mode = PaletteDragMode::None;
             self.sync_and_save_tool_props();
@@ -6348,6 +6418,21 @@ impl Render for ScreenOverlayView {
                 .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
                     this.finish_ocr_selection_drag(cx);
                 }))
+                .on_mouse_move(cx.listener(|this, _, _, cx| {
+                    let is_left_down = unsafe {
+                        #[cfg(windows)]
+                        {
+                            (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as i16) < 0
+                        }
+                        #[cfg(not(windows))]
+                        {
+                            true
+                        }
+                    };
+                    if !is_left_down {
+                        this.finish_ocr_selection_drag(cx);
+                    }
+                }))
                 .flex()
                 .flex_col()
                 .gap_1p5();
@@ -6400,21 +6485,36 @@ impl Render for ScreenOverlayView {
                                 .font_family("Consolas")
                                 .text_color(theme.text_primary);
 
+                            let col_cursor = cursor_idx.saturating_sub(vl.start_char);
+
+                            // Segment before selection (with cursor if cursor is here)
                             if !before_sel.is_empty() {
-                                body = body.child(div().whitespace_nowrap().child(before_sel));
+                                if is_cursor_here && col_cursor < col_start {
+                                    let b_chars: Vec<char> = before_sel.chars().collect();
+                                    let split = col_cursor.min(b_chars.len());
+                                    let b_pre: String = b_chars[..split].iter().collect();
+                                    let b_post: String = b_chars[split..].iter().collect();
+                                    if !b_pre.is_empty() {
+                                        body = body.child(div().whitespace_nowrap().child(b_pre));
+                                    }
+                                    body = body.child(
+                                        div()
+                                            .w(px(2.0))
+                                            .h(px(14.0))
+                                            .bg(theme.accent)
+                                            .rounded_xs()
+                                            .mx(px(0.5)),
+                                    );
+                                    if !b_post.is_empty() {
+                                        body = body.child(div().whitespace_nowrap().child(b_post));
+                                    }
+                                } else {
+                                    body = body.child(div().whitespace_nowrap().child(before_sel));
+                                }
                             }
 
-                            body = body.child(
-                                div()
-                                    .whitespace_nowrap()
-                                    .bg(rgba(0x8174FF60))
-                                    .text_color(rgb(0xFFFFFF))
-                                    .rounded_xs()
-                                    .px(px(1.0))
-                                    .child(selected),
-                            );
-
-                            if is_cursor_here {
+                            // Caret right at start of selection
+                            if is_cursor_here && col_cursor == col_start {
                                 body = body.child(
                                     div()
                                         .w(px(2.0))
@@ -6425,11 +6525,75 @@ impl Render for ScreenOverlayView {
                                 );
                             }
 
+                            // Selected segment
+                            body = body.child(
+                                div()
+                                    .whitespace_nowrap()
+                                    .bg(rgba(0x8174FF60))
+                                    .text_color(rgb(0xFFFFFF))
+                                    .rounded_xs()
+                                    .px(px(1.0))
+                                    .child(selected),
+                            );
+
+                            // Caret right at end of selection
+                            if is_cursor_here && col_cursor == col_end {
+                                body = body.child(
+                                    div()
+                                        .w(px(2.0))
+                                        .h(px(14.0))
+                                        .bg(theme.accent)
+                                        .rounded_xs()
+                                        .mx(px(0.5)),
+                                );
+                            }
+
+                            // Segment after selection (with cursor if cursor is here)
                             if !after_sel.is_empty() {
-                                body = body.child(div().whitespace_nowrap().child(after_sel));
+                                if is_cursor_here && col_cursor > col_end {
+                                    let a_chars: Vec<char> = after_sel.chars().collect();
+                                    let offset = col_cursor.saturating_sub(col_end);
+                                    let split = offset.min(a_chars.len());
+                                    let a_pre: String = a_chars[..split].iter().collect();
+                                    let a_post: String = a_chars[split..].iter().collect();
+                                    if !a_pre.is_empty() {
+                                        body = body.child(div().whitespace_nowrap().child(a_pre));
+                                    }
+                                    body = body.child(
+                                        div()
+                                            .w(px(2.0))
+                                            .h(px(14.0))
+                                            .bg(theme.accent)
+                                            .rounded_xs()
+                                            .mx(px(0.5)),
+                                    );
+                                    if !a_post.is_empty() {
+                                        body = body.child(div().whitespace_nowrap().child(a_post));
+                                    }
+                                } else {
+                                    body = body.child(div().whitespace_nowrap().child(after_sel));
+                                }
                             }
 
                             body
+                        } else if is_cursor_here {
+                            let col = cursor_idx.saturating_sub(vl.start_char);
+                            let vl_chars: Vec<char> = vl.text.chars().collect();
+                            let split_idx = col.min(vl_chars.len());
+                            let before: String = vl_chars[..split_idx].iter().collect();
+                            let after: String = vl_chars[split_idx..].iter().collect();
+
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .flex()
+                                .items_center()
+                                .text_xs()
+                                .font_family("Consolas")
+                                .text_color(theme.text_primary)
+                                .child(div().whitespace_nowrap().child(before))
+                                .child(div().w(px(2.0)).h(px(14.0)).bg(theme.accent).rounded_xs().mx(px(0.5)))
+                                .child(div().whitespace_nowrap().child(after))
                         } else {
                             let display = if vl.text.is_empty() { " " } else { vl.text.as_str() };
                             div()
@@ -6504,11 +6668,25 @@ impl Render for ScreenOverlayView {
                             .cursor(CursorStyle::IBeam)
                             .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                                 this.focus_handle.focus(window);
-                                this.set_ocr_cursor_to_visual_line(&vl_clone, f32::from(ev.position.x), screen_w, ev.click_count, cx);
+                                this.set_ocr_cursor_to_visual_line(&vl_clone, f32::from(ev.position.x), f32::from(ev.position.y), screen_w, ev.click_count, cx);
                                 cx.stop_propagation();
                             }))
                             .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, _, cx| {
-                                this.update_ocr_selection_drag(&vl_clone_move, f32::from(ev.position.x), screen_w, cx);
+                                let is_left_down = unsafe {
+                                    #[cfg(windows)]
+                                    {
+                                        (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as i16) < 0
+                                    }
+                                    #[cfg(not(windows))]
+                                    {
+                                        true
+                                    }
+                                };
+                                if !is_left_down {
+                                    this.finish_ocr_selection_drag(cx);
+                                    return;
+                                }
+                                this.update_ocr_selection_drag(&vl_clone_move, f32::from(ev.position.x), f32::from(ev.position.y), screen_w, cx);
                             }))
                             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
                                 this.finish_ocr_selection_drag(cx);
@@ -6548,6 +6726,9 @@ impl Render for ScreenOverlayView {
                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
                         this.close_ocr_modal(cx);
                     }))
+                    .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                        this.finish_ocr_selection_drag(cx);
+                    }))
                     .child(
                         div()
                             .w(px(880.0))
@@ -6563,6 +6744,9 @@ impl Render for ScreenOverlayView {
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
                                 this.focus_handle.focus(window);
                                 cx.stop_propagation();
+                            }))
+                            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                this.finish_ocr_selection_drag(cx);
                             }))
                             // Header
                             .child(

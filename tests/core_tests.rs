@@ -1920,6 +1920,8 @@ fn test_ocr_modal_visual_line_wrapping_and_navigation() {
         cursor_char_idx: 0,
         selection_range: None,
         selection_anchor: None,
+        mouse_down_pos: None,
+        is_dragging: false,
     };
 
     // 1. Visual lines wrapping with max_chars = 80
@@ -1978,7 +1980,7 @@ fn test_ocr_modal_visual_line_wrapping_and_navigation() {
     assert_eq!(state.selected_text().unwrap().chars().count(), 144);
 
     // 5. Accurate character hit test with find_char_index_at_x
-    use pixora::overlay::overlay::{find_char_index_at_x, measure_ocr_text_width};
+    use pixora::overlay::overlay::find_char_index_at_x;
     let sample = "2. Что было сделано";
     let idx_start = find_char_index_at_x(sample, 12.0, 0.0);
     assert_eq!(idx_start, 0);
@@ -1987,10 +1989,32 @@ fn test_ocr_modal_visual_line_wrapping_and_navigation() {
     assert_eq!(idx_past, sample.chars().count());
 
     // Clicking inside "сделано" (past "2. Что было ")
-    let w_before = measure_ocr_text_width("2. Что было ", 12.0);
-    let idx_sdelano = find_char_index_at_x(sample, 12.0, w_before + 8.0);
+    let idx_sdelano = find_char_index_at_x(sample, 12.0, 120.0);
     let sample_chars: Vec<char> = sample.chars().collect();
     assert!(idx_sdelano >= 12 && idx_sdelano <= sample_chars.len());
+
+    // 6. Selection drag state transitions and cleanup
+    state.selection_range = Some((10, 30));
+    state.selection_anchor = Some(10);
+    state.mouse_down_pos = Some((100.0, 200.0));
+    state.is_dragging = true;
+
+    state.clear_selection();
+    assert_eq!(state.selection_range, None);
+    assert_eq!(state.selection_anchor, None);
+    assert_eq!(state.mouse_down_pos, None);
+    assert_eq!(state.is_dragging, false);
+
+    state.selection_range = Some((0, 5));
+    state.selection_anchor = Some(0);
+    state.mouse_down_pos = Some((50.0, 50.0));
+    state.is_dragging = true;
+
+    assert!(state.delete_selection());
+    assert_eq!(state.selection_range, None);
+    assert_eq!(state.selection_anchor, None);
+    assert_eq!(state.mouse_down_pos, None);
+    assert_eq!(state.is_dragging, false);
 }
 
 
