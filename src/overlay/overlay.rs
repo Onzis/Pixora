@@ -23,7 +23,9 @@ use crate::editor::history::EditHistory;
 use crate::editor::properties::ToolProperties;
 use crate::editor::tools::ToolKind;
 use crate::i18n::t;
-use crate::image::clipboard::{copy_image_to_clipboard, copy_text_to_clipboard};
+use crate::image::clipboard::{
+    copy_image_to_clipboard, copy_text_to_clipboard, get_text_from_clipboard,
+};
 use crate::image::export::auto_save_screenshot;
 use crate::ocr::qr_actions::{open_url_in_browser, parse_qr_action, QrActionKind};
 use crate::ocr::qrcode::{decode_qr_from_image, QrScanResult};
@@ -72,6 +74,84 @@ pub struct OcrModalState {
     pub edited_text: String,
     pub mode: OcrFormatMode,
     pub is_copied: bool,
+    pub cursor_char_idx: usize,
+}
+
+impl OcrModalState {
+    pub fn line_char_ranges(&self) -> Vec<(usize, usize, String)> {
+        let mut ranges = Vec::new();
+        let mut offset = 0;
+        let lines: Vec<&str> = self.edited_text.split('\n').collect();
+        for line in lines {
+            let len = line.chars().count();
+            ranges.push((offset, offset + len, line.to_string()));
+            offset += len + 1; // +1 for '\n'
+        }
+        ranges
+    }
+
+    pub fn set_cursor_to_line(&mut self, target_line_idx: usize) {
+        let ranges = self.line_char_ranges();
+        if target_line_idx < ranges.len() {
+            self.cursor_char_idx = ranges[target_line_idx].1;
+        }
+    }
+
+    pub fn move_cursor_up(&mut self) {
+        let ranges = self.line_char_ranges();
+        for (i, (start, end, _)) in ranges.iter().enumerate() {
+            if self.cursor_char_idx >= *start && self.cursor_char_idx <= *end {
+                if i > 0 {
+                    let col = self.cursor_char_idx - *start;
+                    let prev_start = ranges[i - 1].0;
+                    let prev_len = ranges[i - 1].1 - prev_start;
+                    self.cursor_char_idx = prev_start + col.min(prev_len);
+                } else {
+                    self.cursor_char_idx = 0;
+                }
+                return;
+            }
+        }
+    }
+
+    pub fn move_cursor_down(&mut self) {
+        let ranges = self.line_char_ranges();
+        for (i, (start, end, _)) in ranges.iter().enumerate() {
+            if self.cursor_char_idx >= *start && self.cursor_char_idx <= *end {
+                if i + 1 < ranges.len() {
+                    let col = self.cursor_char_idx - *start;
+                    let next_start = ranges[i + 1].0;
+                    let next_len = ranges[i + 1].1 - next_start;
+                    self.cursor_char_idx = next_start + col.min(next_len);
+                } else {
+                    self.cursor_char_idx = *end;
+                }
+                return;
+            }
+        }
+    }
+
+    pub fn move_cursor_home(&mut self) {
+        let ranges = self.line_char_ranges();
+        for (start, end, _) in ranges {
+            if self.cursor_char_idx >= start && self.cursor_char_idx <= end {
+                self.cursor_char_idx = start;
+                return;
+            }
+        }
+        self.cursor_char_idx = 0;
+    }
+
+    pub fn move_cursor_end(&mut self) {
+        let ranges = self.line_char_ranges();
+        for (start, end, _) in ranges {
+            if self.cursor_char_idx >= start && self.cursor_char_idx <= end {
+                self.cursor_char_idx = end;
+                return;
+            }
+        }
+        self.cursor_char_idx = self.edited_text.chars().count();
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1003,6 +1083,7 @@ impl ScreenOverlayView {
                         }
                         let single_line = format_as_single_line(&output.full_text);
                         let code_table = format_as_code_or_table(&output.lines);
+                        let full_chars_count = output.full_text.chars().count();
                         self.ocr_modal = Some(OcrModalState {
                             original_text: output.full_text.clone(),
                             single_line_text: single_line,
@@ -1010,6 +1091,7 @@ impl ScreenOverlayView {
                             edited_text: output.full_text,
                             mode: OcrFormatMode::Original,
                             is_copied: true,
+                            cursor_char_idx: full_chars_count,
                         });
                     }
                 }
@@ -1076,7 +1158,15 @@ impl ScreenOverlayView {
                 OcrFormatMode::SingleLine => modal.single_line_text.clone(),
                 OcrFormatMode::CodeTable => modal.code_table_text.clone(),
             };
+            modal.cursor_char_idx = modal.edited_text.chars().count();
             modal.is_copied = false;
+            cx.notify();
+        }
+    }
+
+    pub fn set_ocr_cursor_to_line(&mut self, line_idx: usize, cx: &mut Context<Self>) {
+        if let Some(modal) = &mut self.ocr_modal {
+            modal.set_cursor_to_line(line_idx);
             cx.notify();
         }
     }
@@ -2156,44 +2246,117 @@ impl ScreenOverlayView {
             if key == "escape" {
                 self.close_ocr_modal(cx);
                 return;
-            } else if key == "c" && ev.keystroke.modifiers.control {
+            } else if (key == "c" || key == "C" || key == "с" || key == "С") && ev.keystroke.modifiers.control {
                 self.copy_ocr_modal_text(cx);
+                return;
+            } else if (key == "v" || key == "V" || key == "м" || key == "М") && ev.keystroke.modifiers.control {
+                if let Some(clip) = get_text_from_clipboard() {
+                    let mut chars: Vec<char> = modal.edited_text.chars().collect();
+                    let ins_idx = modal.cursor_char_idx.min(chars.len());
+                    for (i, ch) in clip.chars().enumerate() {
+                        chars.insert(ins_idx + i, ch);
+                    }
+                    modal.cursor_char_idx = ins_idx + clip.chars().count();
+                    modal.edited_text = chars.into_iter().collect();
+                    modal.is_copied = false;
+                    cx.notify();
+                }
                 return;
             } else if key == "enter" {
                 if ev.keystroke.modifiers.control {
                     self.copy_ocr_modal_text(cx);
                     self.close_ocr_modal(cx);
                 } else {
-                    modal.edited_text.push('\n');
+                    let mut chars: Vec<char> = modal.edited_text.chars().collect();
+                    let ins_idx = modal.cursor_char_idx.min(chars.len());
+                    chars.insert(ins_idx, '\n');
+                    modal.cursor_char_idx = ins_idx + 1;
+                    modal.edited_text = chars.into_iter().collect();
                     modal.is_copied = false;
                     cx.notify();
                 }
                 return;
             } else if key == "backspace" {
-                modal.edited_text.pop();
-                modal.is_copied = false;
+                let mut chars: Vec<char> = modal.edited_text.chars().collect();
+                if modal.cursor_char_idx > 0 && modal.cursor_char_idx <= chars.len() {
+                    modal.cursor_char_idx -= 1;
+                    chars.remove(modal.cursor_char_idx);
+                    modal.edited_text = chars.into_iter().collect();
+                    modal.is_copied = false;
+                    cx.notify();
+                }
+                return;
+            } else if key == "delete" {
+                let mut chars: Vec<char> = modal.edited_text.chars().collect();
+                if modal.cursor_char_idx < chars.len() {
+                    chars.remove(modal.cursor_char_idx);
+                    modal.edited_text = chars.into_iter().collect();
+                    modal.is_copied = false;
+                    cx.notify();
+                }
+                return;
+            } else if key == "left" {
+                modal.cursor_char_idx = modal.cursor_char_idx.saturating_sub(1);
+                cx.notify();
+                return;
+            } else if key == "right" {
+                let total = modal.edited_text.chars().count();
+                modal.cursor_char_idx = (modal.cursor_char_idx + 1).min(total);
+                cx.notify();
+                return;
+            } else if key == "up" {
+                modal.move_cursor_up();
+                cx.notify();
+                return;
+            } else if key == "down" {
+                modal.move_cursor_down();
+                cx.notify();
+                return;
+            } else if key == "home" {
+                modal.move_cursor_home();
+                cx.notify();
+                return;
+            } else if key == "end" {
+                modal.move_cursor_end();
                 cx.notify();
                 return;
             } else if key == "space" {
-                modal.edited_text.push(' ');
+                let mut chars: Vec<char> = modal.edited_text.chars().collect();
+                let ins_idx = modal.cursor_char_idx.min(chars.len());
+                chars.insert(ins_idx, ' ');
+                modal.cursor_char_idx = ins_idx + 1;
+                modal.edited_text = chars.into_iter().collect();
                 modal.is_copied = false;
                 cx.notify();
                 return;
-            } else if let Some(key_char) = &ev.keystroke.key_char {
-                if !ev.keystroke.modifiers.control && !ev.keystroke.modifiers.alt {
-                    modal.edited_text.push_str(key_char);
+            } else {
+                let text_to_insert = if let Some(kc) = &ev.keystroke.key_char {
+                    if !ev.keystroke.modifiers.control && !ev.keystroke.modifiers.alt {
+                        Some(kc.as_str())
+                    } else {
+                        None
+                    }
+                } else if ev.keystroke.key.chars().count() == 1
+                    && !ev.keystroke.modifiers.control
+                    && !ev.keystroke.modifiers.alt
+                {
+                    Some(ev.keystroke.key.as_str())
+                } else {
+                    None
+                };
+
+                if let Some(s) = text_to_insert {
+                    let mut chars: Vec<char> = modal.edited_text.chars().collect();
+                    let ins_idx = modal.cursor_char_idx.min(chars.len());
+                    for (i, ch) in s.chars().enumerate() {
+                        chars.insert(ins_idx + i, ch);
+                    }
+                    modal.cursor_char_idx = ins_idx + s.chars().count();
+                    modal.edited_text = chars.into_iter().collect();
                     modal.is_copied = false;
                     cx.notify();
                     return;
                 }
-            } else if ev.keystroke.key.chars().count() == 1
-                && !ev.keystroke.modifiers.control
-                && !ev.keystroke.modifiers.alt
-            {
-                modal.edited_text.push_str(&ev.keystroke.key);
-                modal.is_copied = false;
-                cx.notify();
-                return;
             }
             return;
         }
@@ -5735,60 +5898,124 @@ impl Render for ScreenOverlayView {
 
         // Interactive OCR Modal Dialog
         if let Some(ocr) = &self.ocr_modal {
+            if !self.focus_handle.is_focused(window) {
+                self.focus_handle.focus(window);
+            }
+
             let mode = ocr.mode;
             let is_copied = ocr.is_copied;
             let text_to_display = ocr.edited_text.clone();
             let char_count = text_to_display.chars().count();
             let line_count = text_to_display.lines().count().max(1);
             let word_count = text_to_display.split_whitespace().count();
+            let cursor_idx = ocr.cursor_char_idx;
+            let line_ranges = ocr.line_char_ranges();
 
             let lines_view = div()
                 .id("ocr-text-lines")
                 .p_3()
-                .min_h(px(140.0))
-                .max_h(px(280.0))
+                .min_h(px(160.0))
+                .max_h(px(320.0))
                 .overflow_y_scroll()
                 .rounded_xl()
                 .bg(rgba(0x00000045))
                 .border_1()
-                .border_color(rgba(0xFFFFFF15))
+                .border_color(theme.accent)
+                .cursor(CursorStyle::IBeam)
+                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                    this.focus_handle.focus(window);
+                    cx.stop_propagation();
+                }))
                 .flex()
                 .flex_col()
-                .gap_1();
+                .gap_1p5();
 
             let mut lines_col = lines_view;
             if text_to_display.is_empty() {
                 lines_col = lines_col.child(
                     div()
-                        .text_xs()
-                        .text_color(theme.text_secondary)
-                        .child(t(lang, "(Empty text)", "(Пустой текст)")),
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .w(px(2.0))
+                                .h(px(14.0))
+                                .bg(theme.accent)
+                                .rounded_xs(),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.text_secondary)
+                                .child(t(lang, "Type here...", "Введите текст...")),
+                        ),
                 );
             } else {
-                for (idx, line) in text_to_display.lines().enumerate() {
-                    let display_str = if line.is_empty() { " " } else { line };
+                for (line_idx, (start_char, end_char, line_str)) in line_ranges.iter().enumerate() {
+                    let is_cursor_on_line = cursor_idx >= *start_char && cursor_idx <= *end_char;
+
+                    let line_body = if is_cursor_on_line {
+                        let col = cursor_idx - *start_char;
+                        let line_chars: Vec<char> = line_str.chars().collect();
+                        let before: String = line_chars[..col.min(line_chars.len())].iter().collect();
+                        let after: String = line_chars[col.min(line_chars.len())..].iter().collect();
+
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .w_full()
+                            .whitespace_normal()
+                            .text_xs()
+                            .font_family("Consolas, monospace")
+                            .text_color(theme.text_primary)
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .child(div().child(before))
+                            .child(
+                                div()
+                                    .w(px(2.0))
+                                    .h(px(14.0))
+                                    .bg(theme.accent)
+                                    .rounded_xs(),
+                            )
+                            .child(div().child(after))
+                    } else {
+                        let display = if line_str.is_empty() { " " } else { line_str.as_str() };
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .w_full()
+                            .whitespace_normal()
+                            .text_xs()
+                            .font_family("Consolas, monospace")
+                            .text_color(theme.text_primary)
+                            .child(display.to_string())
+                    };
+
                     lines_col = lines_col.child(
                         div()
-                            .id(("ocr-line", idx))
+                            .id(("ocr-line", line_idx))
                             .flex()
                             .items_start()
                             .gap_2()
+                            .w_full()
+                            .cursor(CursorStyle::IBeam)
+                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                                this.focus_handle.focus(window);
+                                this.set_ocr_cursor_to_line(line_idx, cx);
+                                cx.stop_propagation();
+                            }))
                             .child(
                                 div()
                                     .w(px(24.0))
                                     .text_xs()
                                     .text_color(rgba(0xFFFFFF30))
                                     .font_family("Consolas, monospace")
-                                    .child((idx + 1).to_string()),
+                                    .child((line_idx + 1).to_string()),
                             )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .text_xs()
-                                    .text_color(theme.text_primary)
-                                    .font_family("Consolas, monospace")
-                                    .child(display_str.to_string()),
-                            ),
+                            .child(line_body),
                     );
                 }
             }
@@ -5817,8 +6044,8 @@ impl Render for ScreenOverlayView {
                     }))
                     .child(
                         div()
-                            .w(px(600.0))
-                            .max_w(px((f32::from(screen_size.width) - 48.0).min(640.0)))
+                            .w(px(640.0))
+                            .max_w(px((f32::from(screen_size.width) - 48.0).min(680.0)))
                             .rounded_2xl()
                             .bg(theme.bg_surface)
                             .border_1()
@@ -5827,9 +6054,10 @@ impl Render for ScreenOverlayView {
                             .flex()
                             .flex_col()
                             .overflow_hidden()
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                                this.focus_handle.focus(window);
                                 cx.stop_propagation();
-                            })
+                            }))
                             // Header
                             .child(
                                 div()
@@ -5909,7 +6137,8 @@ impl Render for ScreenOverlayView {
                                             .text_color(orig_btn_fg)
                                             .cursor_pointer()
                                             .hover(|s| s.opacity(0.9))
-                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                                                this.focus_handle.focus(window);
                                                 this.set_ocr_mode(OcrFormatMode::Original, cx);
                                             }))
                                             .child(t(lang, "Original", "Исходный")),
@@ -5926,7 +6155,8 @@ impl Render for ScreenOverlayView {
                                             .text_color(single_btn_fg)
                                             .cursor_pointer()
                                             .hover(|s| s.opacity(0.9))
-                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                                                this.focus_handle.focus(window);
                                                 this.set_ocr_mode(OcrFormatMode::SingleLine, cx);
                                             }))
                                             .child(t(lang, "Single Line", "В одну строку")),
@@ -5943,7 +6173,8 @@ impl Render for ScreenOverlayView {
                                             .text_color(code_btn_fg)
                                             .cursor_pointer()
                                             .hover(|s| s.opacity(0.9))
-                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                                                this.focus_handle.focus(window);
                                                 this.set_ocr_mode(OcrFormatMode::CodeTable, cx);
                                             }))
                                             .child(t(lang, "Code / Table", "Код / Таблица")),
@@ -5963,7 +6194,7 @@ impl Render for ScreenOverlayView {
                                             .px_1()
                                             .text_xs()
                                             .text_color(theme.text_secondary)
-                                            .child(t(lang, "Edit directly with keyboard • Enter for new line • Ctrl+Enter to copy", "Редактируйте текст с клавиатуры • Enter для новой строки • Ctrl+Enter для копирования")),
+                                            .child(t(lang, "Click to move cursor • Type to edit • Arrows to navigate • Ctrl+V to paste", "Кликните по строке для курсора • Вводите текст • Стрелки для навигации • Ctrl+V для вставки")),
                                     ),
                             )
                             // Bottom Action Bar

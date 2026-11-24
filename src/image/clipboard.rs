@@ -212,6 +212,45 @@ pub fn copy_text_to_clipboard(text: &str) -> Result<(), String> {
     }
 }
 
+#[cfg(windows)]
+pub fn get_text_from_clipboard() -> Option<String> {
+    use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
+    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return None;
+        }
+        const CF_UNICODETEXT: u32 = 13;
+        let handle = match GetClipboardData(CF_UNICODETEXT) {
+            Ok(h) if !h.0.is_null() => h,
+            _ => {
+                let _ = CloseClipboard();
+                return None;
+            }
+        };
+        let ptr = GlobalLock(windows::Win32::Foundation::HGLOBAL(handle.0)) as *const u16;
+        if ptr.is_null() {
+            let _ = CloseClipboard();
+            return None;
+        }
+        let mut len = 0;
+        while *ptr.add(len) != 0 {
+            len += 1;
+        }
+        let slice = std::slice::from_raw_parts(ptr, len);
+        let text = String::from_utf16_lossy(slice);
+        let _ = GlobalUnlock(windows::Win32::Foundation::HGLOBAL(handle.0));
+        let _ = CloseClipboard();
+        Some(text)
+    }
+}
+
+#[cfg(not(windows))]
+pub fn get_text_from_clipboard() -> Option<String> {
+    None
+}
+
 #[cfg(not(windows))]
 pub fn copy_image_to_clipboard(_image: &RgbaImage) -> Result<(), String> {
     Err("Clipboard only implemented on Windows".to_string())
