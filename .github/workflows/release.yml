@@ -41,7 +41,7 @@ jobs:
       - name: Package Windows Archive
         shell: pwsh
         run: |
-          $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "v0.22.0" }
+          $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "v0.22.1" }
           $distDir = "dist/Pixora-$tag-x86_64-windows"
           New-Item -ItemType Directory -Force -Path $distDir
           Copy-Item "target/x86_64-pc-windows-msvc/release/Pixora.exe" -Destination "$distDir/Pixora.exe"
@@ -115,7 +115,7 @@ jobs:
 
       - name: Package Linux Archive
         run: |
-          TAG="${GITHUB_REF_NAME:-v0.22.0}"
+          TAG="${GITHUB_REF_NAME:-v0.22.1}"
           DIST_DIR="dist/Pixora-${TAG}-x86_64-linux"
           mkdir -p "${DIST_DIR}"
           cp target/x86_64-unknown-linux-gnu/release/Pixora "${DIST_DIR}/pixora"
