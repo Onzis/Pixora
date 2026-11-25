@@ -466,32 +466,107 @@ pub fn enumerate_visible_windows() -> Vec<DetectedWindow> {
 #[cfg(target_os = "linux")]
 fn enumerate_linux_windows() -> Option<Vec<DetectedWindow>> {
     use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, Window};
+    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, MapState, Window};
 
     let (conn, screen_num) = x11rb::connect(None).ok()?;
     let screen = conn.setup().roots.get(screen_num)?;
     let root = screen.root;
+    let current_pid = std::process::id();
 
+    let stacking_atom = conn.intern_atom(false, b"_NET_CLIENT_LIST_STACKING").ok()?.reply().ok()?.atom;
     let client_list_atom = conn.intern_atom(false, b"_NET_CLIENT_LIST").ok()?.reply().ok()?.atom;
     let net_wm_name_atom = conn.intern_atom(false, b"_NET_WM_NAME").ok()?.reply().ok()?.atom;
     let utf8_string_atom = conn.intern_atom(false, b"UTF8_STRING").ok()?.reply().ok()?.atom;
+    let net_wm_pid_atom = conn.intern_atom(false, b"_NET_WM_PID").ok()?.reply().ok()?.atom;
+    let net_wm_state_atom = conn.intern_atom(false, b"_NET_WM_STATE").ok()?.reply().ok()?.atom;
+    let state_hidden_atom = conn.intern_atom(false, b"_NET_WM_STATE_HIDDEN").ok()?.reply().ok()?.atom;
+    let net_wm_type_atom = conn.intern_atom(false, b"_NET_WM_WINDOW_TYPE").ok()?.reply().ok()?.atom;
+    let type_desktop_atom = conn.intern_atom(false, b"_NET_WM_WINDOW_TYPE_DESKTOP").ok()?.reply().ok()?.atom;
+    let type_dock_atom = conn.intern_atom(false, b"_NET_WM_WINDOW_TYPE_DOCK").ok()?.reply().ok()?.atom;
+    let frame_extents_atom = conn.intern_atom(false, b"_NET_FRAME_EXTENTS").ok()?.reply().ok()?.atom;
 
-    let prop = conn.get_property(
-        false,
-        root,
-        client_list_atom,
-        AtomEnum::WINDOW,
-        0,
-        1024,
-    ).ok()?.reply().ok()?;
+    let stacking_prop = conn
+        .get_property(false, root, stacking_atom, AtomEnum::WINDOW, 0, 1024)
+        .ok()
+        .and_then(|c| c.reply().ok());
+
+    let mut win_ids: Vec<Window> = if let Some(ref sp) = stacking_prop {
+        if !sp.value.is_empty() {
+            // _NET_CLIENT_LIST_STACKING is bottom-to-top; reverse so index 0 is topmost
+            sp.value
+                .chunks_exact(4)
+                .rev()
+                .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]) as Window)
+                .collect()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    if win_ids.is_empty() {
+        let prop = conn
+            .get_property(false, root, client_list_atom, AtomEnum::WINDOW, 0, 1024)
+            .ok()?
+            .reply()
+            .ok()?;
+        win_ids = prop
+            .value
+            .chunks_exact(4)
+            .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]) as Window)
+            .collect();
+    }
 
     let mut result = Vec::new();
     let mut z_order = 0;
 
-    for chunk in prop.value.chunks_exact(4) {
-        let win_id = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as Window;
+    for win_id in win_ids {
         if win_id == 0 || win_id == root {
             continue;
+        }
+
+        if let Ok(attr) = conn.get_window_attributes(win_id).and_then(|c| Ok(c.reply())) {
+            if let Ok(a) = attr {
+                if a.map_state != MapState::VIEWABLE {
+                    continue;
+                }
+            }
+        }
+
+        if let Ok(pid_reply) = conn.get_property(false, win_id, net_wm_pid_atom, AtomEnum::CARDINAL, 0, 1).and_then(|c| Ok(c.reply())) {
+            if let Ok(pr) = pid_reply {
+                if pr.value.len() >= 4 {
+                    let pid = u32::from_ne_bytes([pr.value[0], pr.value[1], pr.value[2], pr.value[3]]);
+                    if pid == current_pid {
+                        continue;
+                    }
+                }
+            }
+        }
+
+        if let Ok(state_reply) = conn.get_property(false, win_id, net_wm_state_atom, AtomEnum::ATOM, 0, 32).and_then(|c| Ok(c.reply())) {
+            if let Ok(sr) = state_reply {
+                let is_hidden = sr
+                    .value
+                    .chunks_exact(4)
+                    .any(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]) == state_hidden_atom);
+                if is_hidden {
+                    continue;
+                }
+            }
+        }
+
+        if let Ok(type_reply) = conn.get_property(false, win_id, net_wm_type_atom, AtomEnum::ATOM, 0, 16).and_then(|c| Ok(c.reply())) {
+            if let Ok(tr) = type_reply {
+                let is_desktop_or_dock = tr.value.chunks_exact(4).any(|c| {
+                    let a = u32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
+                    a == type_desktop_atom || a == type_dock_atom
+                });
+                if is_desktop_or_dock {
+                    continue;
+                }
+            }
         }
 
         let geom = match conn.get_geometry(win_id).ok().and_then(|c| c.reply().ok()) {
@@ -504,9 +579,9 @@ fn enumerate_linux_windows() -> Option<Vec<DetectedWindow>> {
             None => continue,
         };
 
-        let w = geom.width as u32;
-        let h = geom.height as u32;
-        if w < 30 || h < 30 {
+        let cl_w = geom.width as u32;
+        let cl_h = geom.height as u32;
+        if cl_w < 30 || cl_h < 30 {
             continue;
         }
 
@@ -528,24 +603,227 @@ fn enumerate_linux_windows() -> Option<Vec<DetectedWindow>> {
             }
         }
 
+        let mut ext_left = 0i32;
+        let mut ext_right = 0i32;
+        let mut ext_top = 0i32;
+        let mut ext_bottom = 0i32;
+        if let Ok(ext_reply) = conn.get_property(false, win_id, frame_extents_atom, AtomEnum::CARDINAL, 0, 4).and_then(|c| Ok(c.reply())) {
+            if let Ok(er) = ext_reply {
+                if er.value.len() >= 16 {
+                    ext_left = u32::from_ne_bytes([er.value[0], er.value[1], er.value[2], er.value[3]]) as i32;
+                    ext_right = u32::from_ne_bytes([er.value[4], er.value[5], er.value[6], er.value[7]]) as i32;
+                    ext_top = u32::from_ne_bytes([er.value[8], er.value[9], er.value[10], er.value[11]]) as i32;
+                    ext_bottom = u32::from_ne_bytes([er.value[12], er.value[13], er.value[14], er.value[15]]) as i32;
+                }
+            }
+        }
+
+        let full_x = coords.dst_x as i32 - ext_left;
+        let full_y = coords.dst_y as i32 - ext_top;
+        let full_w = (cl_w as i32 + ext_left + ext_right).max(30) as u32;
+        let full_h = (cl_h as i32 + ext_top + ext_bottom).max(30) as u32;
+
+        // 1. Full outer window bounds (including WM title bar/borders)
         result.push(DetectedWindow {
             hwnd: win_id as isize,
             top_level_hwnd: win_id as isize,
             z_order,
             bounds: PhysicalRect {
-                x: coords.dst_x as i32,
-                y: coords.dst_y as i32,
-                width: w,
-                height: h,
+                x: full_x,
+                y: full_y,
+                width: full_w,
+                height: full_h,
             },
-            title,
+            title: title.clone(),
             class_name: "X11Window".to_string(),
             is_child_element: false,
         });
+
+        // 2. Inner client area if window has WM decorations
+        if ext_left > 0 || ext_top > 0 || ext_right > 0 || ext_bottom > 0 {
+            result.push(DetectedWindow {
+                hwnd: win_id as isize,
+                top_level_hwnd: win_id as isize,
+                z_order,
+                bounds: PhysicalRect {
+                    x: coords.dst_x as i32,
+                    y: coords.dst_y as i32,
+                    width: cl_w,
+                    height: cl_h,
+                },
+                title,
+                class_name: "X11Client".to_string(),
+                is_child_element: true,
+            });
+        }
+
         z_order += 1;
     }
 
     Some(result)
+}
+
+#[cfg(target_os = "linux")]
+pub fn get_linux_cursor_pos() -> Option<(i32, i32)> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt;
+
+    let (conn, screen_num) = x11rb::connect(None).ok()?;
+    let root = conn.setup().roots.get(screen_num)?.root;
+    let pointer = conn.query_pointer(root).ok()?.reply().ok()?;
+    Some((pointer.root_x as i32, pointer.root_y as i32))
+}
+
+#[cfg(target_os = "linux")]
+pub fn extract_x11_window_id(window: &gpui::Window) -> Option<u32> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let handle = HasWindowHandle::window_handle(window).ok()?;
+    match handle.as_raw() {
+        RawWindowHandle::Xcb(xcb) => Some(xcb.window.get()),
+        RawWindowHandle::Xlib(xlib) if xlib.window != 0 => Some(xlib.window as u32),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn set_linux_x11_window_flags(win_id: u32, skip_taskbar: bool, borderless: bool, bounds: Option<PhysicalRect>) {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{
+        AtomEnum, CLIENT_MESSAGE_EVENT, ClientMessageData, ClientMessageEvent, ConfigureWindowAux,
+        ConnectionExt, EventMask, PropMode,
+    };
+
+    let Ok((conn, screen_num)) = x11rb::connect(None) else {
+        return;
+    };
+    let Some(screen) = conn.setup().roots.get(screen_num) else {
+        return;
+    };
+    let root = screen.root;
+
+    if borderless {
+        if let Ok(motif_cookie) = conn.intern_atom(false, b"_MOTIF_WM_HINTS") {
+            if let Ok(motif_reply) = motif_cookie.reply() {
+                // MWM_HINTS_DECORATIONS (1 << 1) = 2, decorations = 0 (borderless)
+                let hints: [u32; 5] = [2, 0, 0, 0, 0];
+                let mut bytes = Vec::with_capacity(20);
+                for h in hints {
+                    bytes.extend_from_slice(&h.to_ne_bytes());
+                }
+                let _ = conn.change_property(
+                    PropMode::REPLACE,
+                    win_id,
+                    motif_reply.atom,
+                    motif_reply.atom,
+                    32,
+                    5,
+                    &bytes,
+                );
+            }
+        }
+    }
+
+    if let (Ok(wm_state), Ok(above), Ok(skip_tb), Ok(skip_pg), Ok(sticky)) = (
+        conn.intern_atom(false, b"_NET_WM_STATE").and_then(|c| Ok(c.reply())),
+        conn.intern_atom(false, b"_NET_WM_STATE_ABOVE").and_then(|c| Ok(c.reply())),
+        conn.intern_atom(false, b"_NET_WM_STATE_SKIP_TASKBAR").and_then(|c| Ok(c.reply())),
+        conn.intern_atom(false, b"_NET_WM_STATE_SKIP_PAGER").and_then(|c| Ok(c.reply())),
+        conn.intern_atom(false, b"_NET_WM_STATE_STICKY").and_then(|c| Ok(c.reply())),
+    ) {
+        if let (Ok(wm_state), Ok(above), Ok(skip_tb), Ok(skip_pg), Ok(sticky)) =
+            (wm_state, above, skip_tb, skip_pg, sticky)
+        {
+            let mut atoms = vec![above.atom, sticky.atom];
+            if skip_taskbar {
+                atoms.push(skip_tb.atom);
+                atoms.push(skip_pg.atom);
+            }
+            let mut atom_bytes = Vec::with_capacity(atoms.len() * 4);
+            for a in &atoms {
+                atom_bytes.extend_from_slice(&a.to_ne_bytes());
+            }
+            let _ = conn.change_property(
+                PropMode::REPLACE,
+                win_id,
+                wm_state.atom,
+                AtomEnum::ATOM,
+                32,
+                atoms.len() as u32,
+                &atom_bytes,
+            );
+
+            // Also notify running EWMH window manager via _NET_WM_STATE ClientMessage (1 = ADD)
+            let msg1 = ClientMessageEvent {
+                response_type: CLIENT_MESSAGE_EVENT,
+                format: 32,
+                sequence: 0,
+                window: win_id,
+                type_: wm_state.atom,
+                data: ClientMessageData::from([
+                    1,
+                    above.atom,
+                    if skip_taskbar { skip_tb.atom } else { 0 },
+                    1,
+                    0,
+                ]),
+            };
+            let _ = conn.send_event(
+                false,
+                root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                msg1,
+            );
+        }
+    }
+
+    if let Some(b) = bounds {
+        let _ = conn.configure_window(
+            win_id,
+            &ConfigureWindowAux::new()
+                .x(b.x)
+                .y(b.y)
+                .width(b.width.max(1))
+                .height(b.height.max(1)),
+        );
+    }
+
+    let _ = conn.flush();
+}
+
+#[cfg(target_os = "linux")]
+pub fn raise_linux_x11_window(win_id: u32) {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{
+        CLIENT_MESSAGE_EVENT, ClientMessageData, ClientMessageEvent, ConnectionExt, EventMask,
+    };
+
+    let Ok((conn, screen_num)) = x11rb::connect(None) else {
+        return;
+    };
+    let Some(screen) = conn.setup().roots.get(screen_num) else {
+        return;
+    };
+    let root = screen.root;
+
+    if let Ok(active_atom) = conn.intern_atom(false, b"_NET_ACTIVE_WINDOW").and_then(|c| Ok(c.reply())) {
+        if let Ok(active) = active_atom {
+            let ev = ClientMessageEvent {
+                response_type: CLIENT_MESSAGE_EVENT,
+                format: 32,
+                sequence: 0,
+                window: win_id,
+                type_: active.atom,
+                data: ClientMessageData::from([1, 0, 0, 0, 0]),
+            };
+            let _ = conn.send_event(
+                false,
+                root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                ev,
+            );
+            let _ = conn.flush();
+        }
+    }
 }
 
 #[cfg(all(not(windows), not(target_os = "linux")))]

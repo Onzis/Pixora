@@ -395,8 +395,16 @@ impl SettingsWindowView {
                                             .text_color(theme.text_secondary)
                                             .child(t(
                                                 lang,
-                                                "Choose program language or follow Windows locale",
-                                                "Язык программы или язык Windows автоматически",
+                                                if cfg!(windows) {
+                                                    "Choose program language or follow Windows locale"
+                                                } else {
+                                                    "Choose program language or follow system locale"
+                                                },
+                                                if cfg!(windows) {
+                                                    "Язык программы или язык Windows автоматически"
+                                                } else {
+                                                    "Язык программы или язык системы автоматически"
+                                                },
                                             )),
                                     ),
                             )
@@ -457,7 +465,11 @@ impl SettingsWindowView {
                             .overflow_hidden()
                             // Row 1: Startup
                             .child(render_setting_row(
-                                t(lang, "Run at Windows startup", "Автозапуск при старте Windows"),
+                                t(
+                                    lang,
+                                    if cfg!(windows) { "Run at Windows startup" } else { "Run at system startup" },
+                                    if cfg!(windows) { "Автозапуск при старте Windows" } else { "Автозапуск при входе в систему" },
+                                ),
                                 t(
                                     lang,
                                     "Launch Pixora automatically in background when logging in",
@@ -794,8 +806,16 @@ impl SettingsWindowView {
                                             .text_color(theme.text_secondary)
                                             .child(t(
                                                 lang,
-                                                "Windows OCR model for text extraction (supports hybrid mode)",
-                                                "Модель Windows OCR (поддерживает гибридный режим RU+EN)",
+                                                if cfg!(windows) {
+                                                    "Windows OCR model for text extraction (supports hybrid mode)"
+                                                } else {
+                                                    "Tesseract OCR model for text extraction (supports hybrid mode)"
+                                                },
+                                                if cfg!(windows) {
+                                                    "Модель Windows OCR (поддерживает гибридный режим RU+EN)"
+                                                } else {
+                                                    "Модель Tesseract OCR (поддерживает гибридный режим RU+EN)"
+                                                },
                                             )),
                                     ),
                             )
@@ -1169,8 +1189,16 @@ impl SettingsWindowView {
                                     .text_color(theme.text_secondary)
                                     .child(t(
                                         lang,
-                                        "GPU-Accelerated Screen Capture & Annotation Studio for Windows 10 & 11",
-                                        "GPU-ускоренная студия создания скриншотов и аннотаций для Windows 10 и 11",
+                                        if cfg!(windows) {
+                                            "GPU-Accelerated Screen Capture & Annotation Studio for Windows 10 & 11"
+                                        } else {
+                                            "GPU-Accelerated Screen Capture & Annotation Studio for Linux (Wayland & X11)"
+                                        },
+                                        if cfg!(windows) {
+                                            "GPU-ускоренная студия создания скриншотов и аннотаций для Windows 10 и 11"
+                                        } else {
+                                            "GPU-ускоренная студия создания скриншотов и аннотаций для Linux (Wayland и X11)"
+                                        },
                                     )),
                             )
                             .child(
@@ -1179,8 +1207,16 @@ impl SettingsWindowView {
                                     .text_color(theme.text_muted)
                                     .child(t(
                                         lang,
-                                        "Built with pure Rust & GPUI (DirectX) • Author: Onzi • 2026",
-                                        "Разработано на чистом Rust и GPUI (DirectX) • Автор: Onzi • 2026",
+                                        if cfg!(windows) {
+                                            "Built with pure Rust & GPUI (DirectX) • Author: Onzi • 2026"
+                                        } else {
+                                            "Built with pure Rust & GPUI (Vulkan) • Author: Onzi • 2026"
+                                        },
+                                        if cfg!(windows) {
+                                            "Разработано на чистом Rust и GPUI (DirectX) • Автор: Onzi • 2026"
+                                        } else {
+                                            "Разработано на чистом Rust и GPUI (Vulkan) • Автор: Onzi • 2026"
+                                        },
                                     )),
                             ),
                     ),

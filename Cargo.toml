@@ -63,8 +63,11 @@ features = [
 ]
 
 [target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.12", default-features = false, features = ["async-std"] }
+futures-lite = "2"
 x11-clipboard = "0.9"
 x11rb = { version = "0.13", features = ["allow-unsafe-code", "shm", "randr"] }
+zbus = "5"
 
 [patch.crates-io]
 xattr = { path = "patches/xattr" }

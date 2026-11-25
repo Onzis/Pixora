@@ -67,7 +67,9 @@ impl PinnedScreenshotView {
     }
 
     #[cfg(not(windows))]
-    pub fn start_native_drag(&self, _window: &mut Window) {}
+    pub fn start_native_drag(&self, window: &mut Window) {
+        window.start_window_move();
+    }
 
     #[cfg(windows)]
     pub fn get_max_pinned_dimensions(&self, window: &mut Window) -> (f32, f32) {
@@ -98,7 +100,13 @@ impl PinnedScreenshotView {
     }
 
     #[cfg(not(windows))]
-    pub fn get_max_pinned_dimensions(&self, _window: &mut Window) -> (f32, f32) {
+    pub fn get_max_pinned_dimensions(&self, window: &mut Window, cx: &gpui::App) -> (f32, f32) {
+        if let Some(disp) = window.display(cx) {
+            let sz = disp.bounds().size;
+            let max_w = (f32::from(sz.width) - 16.0).max(100.0);
+            let max_h = (f32::from(sz.height) - 16.0).max(100.0);
+            return (max_w, max_h);
+        }
         (1800.0, 1000.0)
     }
 
@@ -213,7 +221,16 @@ impl Render for PinnedScreenshotView {
                     }
                     cx.notify();
                 } else {
-                    let (max_w, max_h) = this.get_max_pinned_dimensions(window);
+                    let (max_w, max_h) = {
+                        #[cfg(windows)]
+                        {
+                            this.get_max_pinned_dimensions(window)
+                        }
+                        #[cfg(not(windows))]
+                        {
+                            this.get_max_pinned_dimensions(window, cx)
+                        }
+                    };
                     let orig_w = this.image.width() as f32;
                     let orig_h = this.image.height() as f32;
 
@@ -232,33 +249,40 @@ impl Render for PinnedScreenshotView {
                         let _cur_h = orig_h * this.zoom;
                         let _scale = window.scale_factor();
 
+                        #[cfg(not(windows))]
+                        {
+                            window.resize(size(px(_cur_w.max(48.0)), px(_cur_h.max(48.0))));
+                            cx.notify();
+                        }
+
                         #[cfg(windows)]
-                        let hwnd_raw = {
-                            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-                            window.window_handle().ok().and_then(|handle| {
-                                if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
-                                    Some(win32_handle.hwnd.get() as isize)
-                                } else {
-                                    None
+                        {
+                            let hwnd_raw = {
+                                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                                window.window_handle().ok().and_then(|handle| {
+                                    if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
+                                        Some(win32_handle.hwnd.get() as isize)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            };
+
+                            cx.spawn(move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                                let cx = cx.clone();
+                                async move {
+                                    if let Some(hwnd) = hwnd_raw {
+                                        Self::perform_native_resize(hwnd, _scale, _cur_w, _cur_h);
+                                    }
+                                    let _ = cx.update(|app| {
+                                        let _ = this.update(app, |_view, cx| {
+                                            cx.notify();
+                                        });
+                                    });
                                 }
                             })
-                        };
-
-                        cx.spawn(move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                            let cx = cx.clone();
-                            async move {
-                                #[cfg(windows)]
-                                if let Some(hwnd) = hwnd_raw {
-                                    Self::perform_native_resize(hwnd, _scale, _cur_w, _cur_h);
-                                }
-                                let _ = cx.update(|app| {
-                                    let _ = this.update(app, |_view, cx| {
-                                        cx.notify();
-                                    });
-                                });
-                            }
-                        })
-                        .detach();
+                            .detach();
+                        }
                     }
                 }
             }))
@@ -435,6 +459,15 @@ pub fn open_pinned_screenshot(cx: &mut gpui::App, image: RgbaImage, initial_orig
                     }
                 }
             }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(win_id) = crate::system::windows::extract_x11_window_id(window) {
+                crate::system::windows::set_linux_x11_window_flags(win_id, true, true, None);
+                crate::system::windows::raise_linux_x11_window(win_id);
+            }
+            window.activate_window();
         }
 
         let view = cx.new(|cx| PinnedScreenshotView::new(image, window, cx));

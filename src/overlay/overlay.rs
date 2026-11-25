@@ -603,6 +603,21 @@ impl ScreenOverlayView {
                 ));
             }
         }
+        #[cfg(target_os = "linux")]
+        {
+            if let Some((cx_pos, cy_pos)) = crate::system::windows::get_linux_cursor_pos() {
+                let rx = (cx_pos - capture.bounds.x).max(0) as u32;
+                let ry = (cy_pos - capture.bounds.y).max(0) as u32;
+                initial_cursor = point(px(rx as f32), px(ry as f32));
+                initial_magnifier = Some(MagnifierInfo::from_image(
+                    &capture.image,
+                    cx_pos,
+                    cy_pos,
+                    rx,
+                    ry,
+                ));
+            }
+        }
 
         let initial_stroke_color = parse_hex_color(&config.default_color_hex).unwrap_or(rgb(0xFF453A));
         let tool_props = ToolProperties {
@@ -2256,7 +2271,7 @@ impl ScreenOverlayView {
                     (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as i16) < 0
                 };
                 #[cfg(not(windows))]
-                let is_left_down = true;
+                let is_left_down = ev.pressed_button == Some(MouseButton::Left);
                 if !is_left_down {
                     modal.selection_anchor = None;
                     modal.mouse_down_pos = None;
@@ -6413,13 +6428,13 @@ impl Render for ScreenOverlayView {
                 .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
                     this.finish_ocr_selection_drag(cx);
                 }))
-                .on_mouse_move(cx.listener(|this, _, _, cx| {
+                .on_mouse_move(cx.listener(|this, _ev: &MouseMoveEvent, _, cx| {
                     #[cfg(windows)]
                     let is_left_down = unsafe {
                         (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as i16) < 0
                     };
                     #[cfg(not(windows))]
-                    let is_left_down = true;
+                    let is_left_down = _ev.pressed_button == Some(MouseButton::Left);
                     if !is_left_down {
                         this.finish_ocr_selection_drag(cx);
                     }
@@ -6668,7 +6683,7 @@ impl Render for ScreenOverlayView {
                                     (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as i16) < 0
                                 };
                                 #[cfg(not(windows))]
-                                let is_left_down = true;
+                                let is_left_down = ev.pressed_button == Some(MouseButton::Left);
                                 if !is_left_down {
                                     this.finish_ocr_selection_drag(cx);
                                     return;

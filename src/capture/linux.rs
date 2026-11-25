@@ -4,10 +4,14 @@ use image::RgbaImage;
 use std::process::Command;
 
 pub fn capture_virtual_screen_linux() -> Result<ScreenCapture, String> {
-    // 1. If Wayland is active, try Wayland capture tools first
+    // 1. If Wayland is active, try native Wayland capture tools and XDG Desktop Portal
     if std::env::var("WAYLAND_DISPLAY").is_ok() {
         if let Ok(cap) = capture_via_grim() {
             crate::logging::log_info("capture", "Screen captured successfully via grim (Wayland)");
+            return Ok(cap);
+        }
+        if let Ok(cap) = capture_via_xdg_portal() {
+            crate::logging::log_info("capture", "Screen captured successfully via XDG Desktop Portal");
             return Ok(cap);
         }
         if let Ok(cap) = capture_via_gnome_screenshot() {
@@ -31,7 +35,7 @@ pub fn capture_virtual_screen_linux() -> Result<ScreenCapture, String> {
         }
     }
 
-    // 3. Fallback to CLI screenshot utilities (scrot, maim, import, xwd)
+    // 3. Fallback to CLI screenshot utilities and XDG Portal
     if let Ok(cap) = capture_via_scrot() {
         crate::logging::log_info("capture", "Screen captured successfully via scrot");
         return Ok(cap);
@@ -44,11 +48,56 @@ pub fn capture_virtual_screen_linux() -> Result<ScreenCapture, String> {
         crate::logging::log_info("capture", "Screen captured successfully via ImageMagick import");
         return Ok(cap);
     }
+    if let Ok(cap) = capture_via_xdg_portal() {
+        crate::logging::log_info("capture", "Screen captured successfully via XDG Desktop Portal fallback");
+        return Ok(cap);
+    }
 
     Err(
         "Linux screen capture failed. Ensure an X11/Wayland display server is running, or install 'grim' (Wayland) / 'scrot' (X11)."
             .to_string(),
     )
+}
+
+/// Freedesktop XDG Desktop Portal Screenshot API (works on GNOME Wayland, KDE, Flatpak)
+fn capture_via_xdg_portal() -> Result<ScreenCapture, String> {
+    use ashpd::desktop::screenshot::Screenshot;
+
+    let uri = zbus::block_on(async {
+        let request = Screenshot::request()
+            .interactive(false)
+            .modal(false)
+            .send()
+            .await
+            .map_err(|e| format!("Portal screenshot send failed: {}", e))?;
+        let response = request
+            .response()
+            .map_err(|e| format!("Portal screenshot response failed: {}", e))?;
+        Ok::<_, String>(response.uri().clone())
+    })?;
+
+    let file_path = uri
+        .to_file_path()
+        .map_err(|_| format!("Unsupported portal screenshot URI: {}", uri))?;
+    let bytes = std::fs::read(&file_path)
+        .map_err(|e| format!("Failed to read portal screenshot file: {}", e))?;
+    let _ = std::fs::remove_file(&file_path);
+
+    let dyn_img = image::load_from_memory(&bytes)
+        .map_err(|e| format!("Failed to decode portal screenshot PNG: {}", e))?;
+    let image = dyn_img.to_rgba8();
+    let width = image.width();
+    let height = image.height();
+
+    Ok(ScreenCapture {
+        image,
+        bounds: PhysicalRect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        },
+    })
 }
 
 /// Pure Rust root window capture on X11 using x11rb

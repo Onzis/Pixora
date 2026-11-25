@@ -4,9 +4,20 @@ pub const EMBEDDED_SCREENFX_MP3: &[u8] = include_bytes!("../../assets/sounds/Scr
 
 pub fn get_or_extract_sound_path() -> Option<PathBuf> {
     // 1. Check custom path from user / config
-    let user_path = PathBuf::from(r"C:\Users\Admin\Music\ScreenFX.mp3");
-    if user_path.exists() {
-        return Some(user_path);
+    #[cfg(windows)]
+    {
+        let user_path = PathBuf::from(r"C:\Users\Admin\Music\ScreenFX.mp3");
+        if user_path.exists() {
+            return Some(user_path);
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(config_sound) = dirs::config_dir().map(|p| p.join("Pixora").join("ScreenFX.mp3")) {
+            if config_sound.exists() {
+                return Some(config_sound);
+            }
+        }
     }
 
     // 2. Check next to executable or in assets/sounds

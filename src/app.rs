@@ -40,6 +40,7 @@ pub enum AppEvent {
 
 pub struct PixoraApp {
     pub config: AppConfig,
+    pub initial_event: Option<AppEvent>,
 }
 
 struct DaemonBackgroundView;
@@ -54,6 +55,14 @@ impl PixoraApp {
     pub fn new() -> Self {
         Self {
             config: AppConfig::load(),
+            initial_event: None,
+        }
+    }
+
+    pub fn with_initial_event(initial_event: Option<AppEvent>) -> Self {
+        Self {
+            config: AppConfig::load(),
+            initial_event,
         }
     }
 
@@ -97,9 +106,16 @@ impl PixoraApp {
                     HotkeyAction::CaptureActiveWindow => {
                         let _ = hotkey_tx.send(AppEvent::TriggerActiveWindowCapture);
                     }
+                    HotkeyAction::OpenSettings => {
+                        let _ = hotkey_tx.send(AppEvent::OpenSettings);
+                    }
                 }
             }
         });
+
+        if let Some(ev) = self.initial_event {
+            let _ = tx.send(ev);
+        }
 
         // 2. Start System Tray
         let tray_tx = tx.clone();
@@ -239,7 +255,7 @@ impl PixoraApp {
             ..Default::default()
         };
 
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         let cap_bounds = capture.bounds;
         let _ = cx.open_window(window_options, |window, cx| {
             #[allow(unused_mut)]
@@ -288,6 +304,20 @@ impl PixoraApp {
                         }
                     }
                 }
+            }
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(win_id) = crate::system::windows::extract_x11_window_id(window) {
+                    overlay_hwnd = Some(win_id as isize);
+                    crate::system::windows::set_linux_x11_window_flags(
+                        win_id,
+                        true,
+                        true,
+                        Some(cap_bounds),
+                    );
+                    crate::system::windows::raise_linux_x11_window(win_id);
+                }
+                window.activate_window();
             }
 
             let view = cx.new(|cx| ScreenOverlayView::new(capture, config, overlay_hwnd, cx));
@@ -359,6 +389,14 @@ impl PixoraApp {
                     }
                 }
 
+                #[cfg(target_os = "linux")]
+                {
+                    if let Some(win_id) = crate::system::windows::extract_x11_window_id(window) {
+                        crate::system::windows::raise_linux_x11_window(win_id);
+                    }
+                    window.activate_window();
+                }
+
                 cx.notify();
             });
 
@@ -408,6 +446,14 @@ impl PixoraApp {
                         }
                     }
                 }
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(win_id) = crate::system::windows::extract_x11_window_id(window) {
+                    crate::system::windows::raise_linux_x11_window(win_id);
+                }
+                window.activate_window();
             }
 
             window.on_window_should_close(cx, |_, _| {

@@ -247,6 +247,21 @@ pub fn get_text_from_clipboard() -> Option<String> {
 }
 
 #[cfg(target_os = "linux")]
+fn with_x11_clipboard<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&x11_clipboard::Clipboard) -> Option<R>,
+{
+    use std::sync::Mutex;
+    static X11_CLIPBOARD: Mutex<Option<x11_clipboard::Clipboard>> = Mutex::new(None);
+
+    let mut guard = X11_CLIPBOARD.lock().ok()?;
+    if guard.is_none() {
+        *guard = x11_clipboard::Clipboard::new().ok();
+    }
+    guard.as_ref().and_then(f)
+}
+
+#[cfg(target_os = "linux")]
 pub fn copy_image_to_clipboard(image: &RgbaImage) -> Result<(), String> {
     use std::io::Write;
     use std::process::{Command, Stdio};
@@ -275,7 +290,26 @@ pub fn copy_image_to_clipboard(image: &RgbaImage) -> Result<(), String> {
         }
     }
 
-    // 2. Try X11 xclip
+    // 2. Try persistent pure-Rust X11 clipboard (zero external CLI dependency, keeps ownership alive)
+    if with_x11_clipboard(|cb| {
+        use x11rb::protocol::xproto::ConnectionExt;
+        let png_atom = cb
+            .setter
+            .connection
+            .intern_atom(false, b"image/png")
+            .ok()?
+            .reply()
+            .ok()?
+            .atom;
+        cb.store(cb.setter.atoms.clipboard, png_atom, png_bytes.clone())
+            .ok()
+    })
+    .is_some()
+    {
+        return Ok(());
+    }
+
+    // 3. Fallback to X11 xclip
     if let Ok(mut child) = Command::new("xclip")
         .args(["-selection", "clipboard", "-t", "image/png"])
         .stdin(Stdio::piped())
@@ -291,7 +325,7 @@ pub fn copy_image_to_clipboard(image: &RgbaImage) -> Result<(), String> {
         }
     }
 
-    // 3. Fallback to wl-copy even without WAYLAND_DISPLAY variable
+    // 4. Fallback to wl-copy even without WAYLAND_DISPLAY variable
     if let Ok(mut child) = Command::new("wl-copy")
         .args(["-t", "image/png"])
         .stdin(Stdio::piped())
@@ -329,18 +363,19 @@ pub fn copy_text_to_clipboard(text: &str) -> Result<(), String> {
         }
     }
 
-    // 2. Try native X11 clipboard via x11-clipboard crate
-    if let Ok(clipboard) = x11_clipboard::Clipboard::new() {
-        if clipboard
+    // 2. Try persistent native X11 clipboard via x11-clipboard crate
+    if with_x11_clipboard(|clipboard| {
+        clipboard
             .store(
                 clipboard.getter.atoms.clipboard,
                 clipboard.getter.atoms.utf8_string,
                 text.as_bytes(),
             )
-            .is_ok()
-        {
-            return Ok(());
-        }
+            .ok()
+    })
+    .is_some()
+    {
+        return Ok(());
     }
 
     // 3. Fallback to xclip
@@ -387,19 +422,20 @@ pub fn get_text_from_clipboard() -> Option<String> {
         }
     }
 
-    // 2. Try native X11 clipboard via x11-clipboard crate
-    if let Ok(clipboard) = x11_clipboard::Clipboard::new() {
-        if let Ok(bytes) = clipboard.load(
-            clipboard.getter.atoms.clipboard,
-            clipboard.getter.atoms.utf8_string,
-            clipboard.getter.atoms.property,
-            std::time::Duration::from_millis(150),
-        ) {
-            let s = String::from_utf8_lossy(&bytes).to_string();
-            if !s.is_empty() {
-                return Some(s);
-            }
-        }
+    // 2. Try native X11 clipboard via persistent x11-clipboard
+    if let Some(s) = with_x11_clipboard(|clipboard| {
+        let bytes = clipboard
+            .load(
+                clipboard.getter.atoms.clipboard,
+                clipboard.getter.atoms.utf8_string,
+                clipboard.getter.atoms.property,
+                std::time::Duration::from_millis(150),
+            )
+            .ok()?;
+        let s = String::from_utf8_lossy(&bytes).to_string();
+        if s.is_empty() { None } else { Some(s) }
+    }) {
+        return Some(s);
     }
 
     // 3. Fallback to xclip
