@@ -603,21 +603,6 @@ impl ScreenOverlayView {
                 ));
             }
         }
-        #[cfg(target_os = "linux")]
-        {
-            if let Some((cx_pos, cy_pos)) = crate::system::windows::get_linux_cursor_pos() {
-                let rx = (cx_pos - capture.bounds.x).max(0) as u32;
-                let ry = (cy_pos - capture.bounds.y).max(0) as u32;
-                initial_cursor = point(px(rx as f32), px(ry as f32));
-                initial_magnifier = Some(MagnifierInfo::from_image(
-                    &capture.image,
-                    cx_pos,
-                    cy_pos,
-                    rx,
-                    ry,
-                ));
-            }
-        }
 
         let initial_stroke_color = parse_hex_color(&config.default_color_hex).unwrap_or(rgb(0xFF453A));
         let tool_props = ToolProperties {
@@ -3758,8 +3743,8 @@ impl Render for ScreenOverlayView {
                     if let Some(drawing) = &current_drawing {
                         match drawing {
                             Annotation::Blur { bounds, .. } => {
-                                window.paint_quad(fill(*bounds, rgba(0x8174FF22)));
-                                window.paint_quad(outline(*bounds, rgba(0x8174FF88), BorderStyle::Dashed));
+                                window.paint_quad(fill(*bounds, rgba(0xDDD7CA22)));
+                                window.paint_quad(outline(*bounds, rgba(0xDDD7CA88), BorderStyle::Dashed));
                             }
                             Annotation::Pixelate { bounds, .. } => {
                                 window.paint_quad(fill(*bounds, rgba(0x30D15822)));
@@ -3767,11 +3752,11 @@ impl Render for ScreenOverlayView {
                             }
                             Annotation::Spotlight { bounds, color, width, .. } => {
                                 let norm_bounds = normalize_bounds(*bounds);
-                                window.paint_quad(fill(norm_bounds, rgba(0x8174FF22)));
+                                window.paint_quad(fill(norm_bounds, rgba(0xDDD7CA22)));
                                 if *width > 0.0 {
                                     window.paint_quad(outline(norm_bounds, *color, BorderStyle::Solid));
                                 } else {
-                                    window.paint_quad(outline(norm_bounds, rgba(0x8174FFAA), BorderStyle::Dashed));
+                                    window.paint_quad(outline(norm_bounds, rgba(0xDDD7CAAA), BorderStyle::Dashed));
                                 }
                             }
                             _ => {}
@@ -3789,7 +3774,7 @@ impl Render for ScreenOverlayView {
                                     origin: point(px(min_x), px(min_y)),
                                     size: size(px(w), px(h)),
                                 };
-                                window.paint_quad(outline(preview_b, rgba(0x8174FFAA), BorderStyle::Dashed));
+                                window.paint_quad(outline(preview_b, rgba(0xDDD7CAAA), BorderStyle::Dashed));
                             }
                         }
                     }
@@ -3804,7 +3789,7 @@ impl Render for ScreenOverlayView {
                             origin: text_input_pos,
                             size: size(px(frame_w), px(frame_h)),
                         };
-                        window.paint_quad(outline(b, rgba(0x8174FFAA), BorderStyle::Dashed));
+                        window.paint_quad(outline(b, rgba(0xDDD7CAAA), BorderStyle::Dashed));
                         let x = b.origin.x;
                         let y = b.origin.y;
                         let w = b.size.width;
@@ -3822,7 +3807,7 @@ impl Render for ScreenOverlayView {
                                 size: size(px(8.0), px(8.0)),
                             };
                             window.paint_quad(fill(h_bounds, rgb(0xFFFFFF)));
-                            window.paint_quad(outline(h_bounds, rgb(0x8174FF), BorderStyle::Solid));
+                            window.paint_quad(outline(h_bounds, rgb(0xDDD7CA), BorderStyle::Solid));
                         }
                     }
 
@@ -3837,7 +3822,7 @@ impl Render for ScreenOverlayView {
                                             size: size(px(10.0), px(10.0)),
                                         };
                                         window.paint_quad(fill(h_bounds, rgb(0xFFFFFF)));
-                                        window.paint_quad(outline(h_bounds, rgb(0x8174FF), BorderStyle::Solid));
+                                        window.paint_quad(outline(h_bounds, rgb(0xDDD7CA), BorderStyle::Solid));
                                     }
                                     if let Some(cp) = control {
                                         let h_bounds = Bounds {
@@ -3845,7 +3830,7 @@ impl Render for ScreenOverlayView {
                                             size: size(px(11.0), px(11.0)),
                                         };
                                         window.paint_quad(fill(h_bounds, rgb(0xFFCC00)));
-                                        window.paint_quad(outline(h_bounds, rgb(0x8174FF), BorderStyle::Solid));
+                                        window.paint_quad(outline(h_bounds, rgb(0xDDD7CA), BorderStyle::Solid));
                                     }
                                 }
                                 Annotation::Line { from, to, .. } => {
@@ -3855,12 +3840,12 @@ impl Render for ScreenOverlayView {
                                             size: size(px(10.0), px(10.0)),
                                         };
                                         window.paint_quad(fill(h_bounds, rgb(0xFFFFFF)));
-                                        window.paint_quad(outline(h_bounds, rgb(0x8174FF), BorderStyle::Solid));
+                                        window.paint_quad(outline(h_bounds, rgb(0xDDD7CA), BorderStyle::Solid));
                                     }
                                 }
                                 _ => {
                                     let b = ann.bounds();
-                                    window.paint_quad(outline(b, rgba(0x8174FFAA), BorderStyle::Dashed));
+                                    window.paint_quad(outline(b, rgba(0xDDD7CAAA), BorderStyle::Dashed));
                                     let x = b.origin.x;
                                     let y = b.origin.y;
                                     let w = b.size.width;
@@ -3878,7 +3863,7 @@ impl Render for ScreenOverlayView {
                                             size: size(px(8.0), px(8.0)),
                                         };
                                         window.paint_quad(fill(h_bounds, rgb(0xFFFFFF)));
-                                        window.paint_quad(outline(h_bounds, rgb(0x8174FF), BorderStyle::Solid));
+                                        window.paint_quad(outline(h_bounds, rgb(0xDDD7CA), BorderStyle::Solid));
                                     }
                                 }
                             }
@@ -4004,8 +3989,8 @@ impl Render for ScreenOverlayView {
                     .top(px(badge_y))
                     .px_2()
                     .py_0p5()
-                    .rounded_md()
-                    .bg(rgba(0x141418F4))
+                    
+                    .bg(rgba(0x0A0A0BF4))
                     .border_1()
                     .border_color(rgba(0xFFFFFF20))
                     .shadow_lg()
@@ -4104,8 +4089,8 @@ impl Render for ScreenOverlayView {
                             div()
                                 .py_1p5()
                                 .px_3p5()
-                                .rounded_full()
-                                .bg(rgba(0x141418F4))
+                                
+                                .bg(rgba(0x0A0A0BF4))
                                 .border_1()
                                 .border_color(rgba(0xFFFFFF20))
                                 .shadow_2xl()
@@ -4117,7 +4102,7 @@ impl Render for ScreenOverlayView {
                                     svg()
                                         .path(icon_path)
                                         .size_3p5()
-                                        .text_color(rgb(0xA79BFF))
+                                        .text_color(rgb(0xDDD7CA))
                                         .flex_shrink_0(),
                                 )
                                 .child(
@@ -4132,7 +4117,7 @@ impl Render for ScreenOverlayView {
                                     div()
                                         .px_2()
                                         .py_0p5()
-                                        .rounded_md()
+                                        
                                         .bg(rgba(0xFFFFFF14))
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::MEDIUM)
@@ -4157,13 +4142,13 @@ impl Render for ScreenOverlayView {
                                             div()
                                                 .px_1p5()
                                                 .py_0p5()
-                                                .rounded_sm()
-                                                .bg(rgba(0x8174FF30))
+                                                
+                                                .bg(rgba(0xDDD7CA26))
                                                 .border_1()
-                                                .border_color(rgba(0x8174FF60))
+                                                .border_color(rgba(0xDDD7CA55))
                                                 .text_size(px(10.0))
                                                 .font_weight(gpui::FontWeight::BOLD)
-                                                .text_color(rgb(0xC8BFFF))
+                                                .text_color(rgb(0xDDD7CA))
                                                 .flex_shrink_0()
                                                 .child(click_badge),
                                         )
@@ -4190,8 +4175,8 @@ impl Render for ScreenOverlayView {
                             div()
                                 .py_1p5()
                                 .px_4()
-                                .rounded_full()
-                                .bg(rgba(0x141418F0))
+                                
+                                .bg(rgba(0x0A0A0BF0))
                                 .border_1()
                                 .border_color(rgba(0xFFFFFF20))
                                 .shadow_2xl()
@@ -4298,7 +4283,7 @@ impl Render for ScreenOverlayView {
                     .gap_1()
                     .px_2()
                     .py_1p5()
-                    .rounded_xl()
+                    
                     .bg(theme.bg_surface)
                     .border_1()
                     .border_color(theme.border_subtle)
@@ -4572,7 +4557,7 @@ impl Render for ScreenOverlayView {
                             .items_center()
                             .justify_center()
                             .size(px(32.0))
-                            .rounded_lg()
+                            
                             .bg(theme.bg_secondary)
                             .border_1()
                             .border_color(theme.border_subtle)
@@ -4602,7 +4587,7 @@ impl Render for ScreenOverlayView {
                         .gap_2()
                         .px_3()
                         .py_1p5()
-                        .rounded_xl()
+                        
                         .bg(theme.bg_surface)
                         .border_1()
                         .border_color(theme.border_subtle)
@@ -4633,7 +4618,7 @@ impl Render for ScreenOverlayView {
                                         .items_center()
                                         .justify_center()
                                         .size(px(22.0))
-                                        .rounded_md()
+                                        
                                         .bg(theme.bg_secondary)
                                         .border_1()
                                         .border_color(theme.border_subtle)
@@ -4655,9 +4640,9 @@ impl Render for ScreenOverlayView {
                                         .flex()
                                         .items_center()
                                         .justify_center()
-                                        .rounded_md()
+                                        
                                         .bg(if self.numeric_input_mode == Some(NumericInputTarget::BlurRadius) {
-                                            rgba(0x8174FF33)
+                                            rgba(0xDDD7CA26)
                                         } else {
                                             theme.bg_secondary
                                         })
@@ -4693,7 +4678,7 @@ impl Render for ScreenOverlayView {
                                         .items_center()
                                         .justify_center()
                                         .size(px(22.0))
-                                        .rounded_md()
+                                        
                                         .bg(theme.bg_secondary)
                                         .border_1()
                                         .border_color(theme.border_subtle)
@@ -4716,7 +4701,7 @@ impl Render for ScreenOverlayView {
                         .gap_2()
                         .px_3()
                         .py_1p5()
-                        .rounded_xl()
+                        
                         .bg(theme.bg_surface)
                         .border_1()
                         .border_color(theme.border_subtle)
@@ -4747,7 +4732,7 @@ impl Render for ScreenOverlayView {
                                         .items_center()
                                         .justify_center()
                                         .size(px(22.0))
-                                        .rounded_md()
+                                        
                                         .bg(theme.bg_secondary)
                                         .border_1()
                                         .border_color(theme.border_subtle)
@@ -4769,9 +4754,9 @@ impl Render for ScreenOverlayView {
                                         .flex()
                                         .items_center()
                                         .justify_center()
-                                        .rounded_md()
+                                        
                                         .bg(if self.numeric_input_mode == Some(NumericInputTarget::PixelateBlock) {
-                                            rgba(0x8174FF33)
+                                            rgba(0xDDD7CA26)
                                         } else {
                                             theme.bg_secondary
                                         })
@@ -4807,7 +4792,7 @@ impl Render for ScreenOverlayView {
                                         .items_center()
                                         .justify_center()
                                         .size(px(22.0))
-                                        .rounded_md()
+                                        
                                         .bg(theme.bg_secondary)
                                         .border_1()
                                         .border_color(theme.border_subtle)
@@ -4831,7 +4816,7 @@ impl Render for ScreenOverlayView {
                         .gap_2()
                         .px_3()
                         .py_1p5()
-                        .rounded_xl()
+                        
                         .bg(theme.bg_surface)
                         .border_1()
                         .border_color(theme.border_subtle)
@@ -4862,7 +4847,7 @@ impl Render for ScreenOverlayView {
                                         .items_center()
                                         .justify_center()
                                         .size(px(22.0))
-                                        .rounded_md()
+                                        
                                         .bg(theme.bg_secondary)
                                         .border_1()
                                         .border_color(theme.border_subtle)
@@ -4885,9 +4870,9 @@ impl Render for ScreenOverlayView {
                                         .flex()
                                         .items_center()
                                         .justify_center()
-                                        .rounded_md()
+                                        
                                         .bg(if self.numeric_input_mode == Some(NumericInputTarget::SpotlightDim) {
-                                            rgba(0x8174FF33)
+                                            rgba(0xDDD7CA26)
                                         } else {
                                             theme.bg_secondary
                                         })
@@ -4923,7 +4908,7 @@ impl Render for ScreenOverlayView {
                                         .items_center()
                                         .justify_center()
                                         .size(px(22.0))
-                                        .rounded_md()
+                                        
                                         .bg(theme.bg_secondary)
                                         .border_1()
                                         .border_color(theme.border_subtle)
@@ -4947,7 +4932,7 @@ impl Render for ScreenOverlayView {
                         .gap_1p5()
                         .px_2p5()
                         .py_1p5()
-                        .rounded_xl()
+                        
                         .bg(theme.bg_surface)
                         .border_1()
                         .border_color(theme.border_subtle)
@@ -4991,9 +4976,9 @@ impl Render for ScreenOverlayView {
                                 .items_center()
                                 .justify_center()
                                 .size(px(24.0))
-                                .rounded_full()
+                                
                                 .bg(if self.show_color_palette {
-                                    rgba(0x8174FF33)
+                                    rgba(0xDDD7CA26)
                                 } else {
                                     theme.bg_secondary
                                 })
@@ -5038,7 +5023,7 @@ impl Render for ScreenOverlayView {
                                         .items_center()
                                         .justify_center()
                                         .size(px(22.0))
-                                        .rounded_md()
+                                        
                                         .bg(theme.bg_secondary)
                                         .border_1()
                                         .border_color(theme.border_subtle)
@@ -5066,9 +5051,9 @@ impl Render for ScreenOverlayView {
                                         .flex()
                                         .items_center()
                                         .justify_center()
-                                        .rounded_md()
+                                        
                                         .bg(if self.numeric_input_mode == Some(NumericInputTarget::StrokeWidth) {
-                                            rgba(0x8174FF33)
+                                            rgba(0xDDD7CA26)
                                         } else {
                                             theme.bg_secondary
                                         })
@@ -5104,7 +5089,7 @@ impl Render for ScreenOverlayView {
                                         .items_center()
                                         .justify_center()
                                         .size(px(22.0))
-                                        .rounded_md()
+                                        
                                         .bg(theme.bg_secondary)
                                         .border_1()
                                         .border_color(theme.border_subtle)
@@ -5141,9 +5126,9 @@ impl Render for ScreenOverlayView {
                                     .id("toggle-fill")
                                     .px_2()
                                     .py_0p5()
-                                    .rounded_md()
+                                    
                                     .bg(if self.tool_props.is_filled {
-                                        rgba(0x8174FF33)
+                                        rgba(0xDDD7CA26)
                                     } else {
                                         theme.bg_secondary
                                     })
@@ -5186,7 +5171,7 @@ impl Render for ScreenOverlayView {
                                             .items_center()
                                             .justify_center()
                                             .size(px(22.0))
-                                            .rounded_md()
+                                            
                                             .bg(theme.bg_secondary)
                                             .border_1()
                                             .border_color(theme.border_subtle)
@@ -5208,9 +5193,9 @@ impl Render for ScreenOverlayView {
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .rounded_md()
+                                            
                                             .bg(if self.numeric_input_mode == Some(NumericInputTarget::FontSize) {
-                                                rgba(0x8174FF33)
+                                                rgba(0xDDD7CA26)
                                             } else {
                                                 theme.bg_secondary
                                             })
@@ -5246,7 +5231,7 @@ impl Render for ScreenOverlayView {
                                             .items_center()
                                             .justify_center()
                                             .size(px(22.0))
-                                            .rounded_md()
+                                            
                                             .bg(theme.bg_secondary)
                                             .border_1()
                                             .border_color(theme.border_subtle)
@@ -5269,9 +5254,9 @@ impl Render for ScreenOverlayView {
                                         .id("toggle-arrow-curved")
                                         .px_2()
                                         .py_0p5()
-                                        .rounded_md()
+                                        
                                         .bg(if self.tool_props.arrow_curved {
-                                            rgba(0x8174FF33)
+                                            rgba(0xDDD7CA26)
                                         } else {
                                             theme.bg_secondary
                                         })
@@ -5304,9 +5289,9 @@ impl Render for ScreenOverlayView {
                                         .id("toggle-arrow-double")
                                         .px_2()
                                         .py_0p5()
-                                        .rounded_md()
+                                        
                                         .bg(if self.tool_props.arrow_two_headed {
-                                            rgba(0x8174FF33)
+                                            rgba(0xDDD7CA26)
                                         } else {
                                             theme.bg_secondary
                                         })
@@ -5343,9 +5328,9 @@ impl Render for ScreenOverlayView {
                                         .id("toggle-badge-shape")
                                         .px_2()
                                         .py_0p5()
-                                        .rounded_md()
+                                        
                                         .bg(if self.tool_props.badge_shape == BadgeShape::RoundedRect {
-                                            rgba(0x8174FF33)
+                                            rgba(0xDDD7CA26)
                                         } else {
                                             theme.bg_secondary
                                         })
@@ -5381,9 +5366,9 @@ impl Render for ScreenOverlayView {
                                         .id("toggle-badge-mode")
                                         .px_2()
                                         .py_0p5()
-                                        .rounded_md()
+                                        
                                         .bg(if self.tool_props.badge_mode == BadgeMode::Alphabet {
-                                            rgba(0x8174FF33)
+                                            rgba(0xDDD7CA26)
                                         } else {
                                             theme.bg_secondary
                                         })
@@ -5419,9 +5404,9 @@ impl Render for ScreenOverlayView {
                                         .id("toggle-badge-fill")
                                         .px_2()
                                         .py_0p5()
-                                        .rounded_md()
+                                        
                                         .bg(if self.tool_props.badge_filled {
-                                            rgba(0x8174FF33)
+                                            rgba(0xDDD7CA26)
                                         } else {
                                             theme.bg_secondary
                                         })
@@ -5454,7 +5439,7 @@ impl Render for ScreenOverlayView {
                                         .id("btn-reset-badge-counter")
                                         .px_2()
                                         .py_0p5()
-                                        .rounded_md()
+                                        
                                         .bg(theme.bg_secondary)
                                         .border_1()
                                         .border_color(theme.border_subtle)
@@ -5519,10 +5504,10 @@ impl Render for ScreenOverlayView {
                         .top(px(tip_y))
                         .px_2p5()
                         .py_1()
-                        .rounded_md()
-                        .bg(rgb(0x18181E))
+                        
+                        .bg(rgb(0x101012))
                         .border_1()
-                        .border_color(rgb(0x323242))
+                        .border_color(rgb(0x4A4740))
                         .shadow_2xl()
                         .text_xs()
                         .font_weight(gpui::FontWeight::MEDIUM)
@@ -5597,7 +5582,7 @@ impl Render for ScreenOverlayView {
                         .flex_1()
                         .px_2()
                         .py_1p5()
-                        .rounded_md()
+                        
                         .bg(theme.bg_secondary)
                         .border_1()
                         .border_color(theme.border_subtle)
@@ -5634,7 +5619,7 @@ impl Render for ScreenOverlayView {
                         .top(px(palette_top))
                         .w(px(palette_w))
                         .p_4()
-                        .rounded_xl()
+                        
                         .bg(theme.bg_surface)
                         .border_1()
                         .border_color(theme.border_subtle)
@@ -5673,7 +5658,7 @@ impl Render for ScreenOverlayView {
                                         .flex()
                                         .items_center()
                                         .justify_center()
-                                        .rounded_md()
+                                        
                                         .bg(theme.bg_secondary)
                                         .border_1()
                                         .border_color(theme.border_subtle)
@@ -5698,7 +5683,7 @@ impl Render for ScreenOverlayView {
                             div()
                                 .flex()
                                 .h(px(top_section_h))
-                                .rounded_lg()
+                                
                                 .border_1()
                                 .border_color(theme.border_subtle)
                                 .overflow_hidden()
@@ -5800,7 +5785,7 @@ impl Render for ScreenOverlayView {
                                 .child(
                                     canvas(|_, _, _| (), move |bounds, _, window, _cx| {
                                         if let Some(img) = &hue_img {
-                                            let _ = window.paint_image(bounds, Corners::all(px(5.0)), img.clone(), 0, false);
+                                            let _ = window.paint_image(bounds, Corners::default(), img.clone(), 0, false);
                                         }
                                         let center_x = bounds.origin.x + px((hue / 360.0) * f32::from(bounds.size.width));
                                         let center_y = bounds.origin.y + bounds.size.height / 2.0;
@@ -5826,7 +5811,7 @@ impl Render for ScreenOverlayView {
                                 .justify_between()
                                 .px_3()
                                 .py_1p5()
-                                .rounded_md()
+                                
                                 .bg(theme.bg_secondary)
                                 .border_1()
                                 .border_color(if self.hex_input_mode {
@@ -5869,7 +5854,7 @@ impl Render for ScreenOverlayView {
                                     div()
                                         .id("btn-copy-hex-google")
                                         .p_1p5()
-                                        .rounded_md()
+                                        
                                         .bg(theme.bg_surface)
                                         .border_1()
                                         .border_color(theme.border_subtle)
@@ -5955,7 +5940,7 @@ impl Render for ScreenOverlayView {
                     .top(px(shapes_top))
                     .w(px(shapes_w))
                     .p_2()
-                    .rounded_xl()
+                    
                     .bg(theme.bg_surface)
                     .border_1()
                     .border_color(theme.border_subtle)
@@ -5992,7 +5977,7 @@ impl Render for ScreenOverlayView {
                                 div()
                                     .id("btn-close-shapes")
                                     .p_1()
-                                    .rounded_md()
+                                    
                                     .cursor_pointer()
                                     .hover(|s| s.bg(theme.bg_hover))
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -6022,10 +6007,10 @@ impl Render for ScreenOverlayView {
                             .justify_between()
                             .px_2p5()
                             .py_1p5()
-                            .rounded_lg()
+                            
                             .cursor_pointer()
                             .bg(if is_selected {
-                                rgba(0x8174FF22)
+                                rgba(0xDDD7CA22)
                             } else {
                                 rgba(0x00000000)
                             })
@@ -6124,7 +6109,7 @@ impl Render for ScreenOverlayView {
                     .top(px(b_top))
                     .w(px(b_w))
                     .p_3()
-                    .rounded_xl()
+                    
                     .bg(theme.bg_surface)
                     .border_1()
                     .border_color(theme.border_subtle)
@@ -6177,7 +6162,7 @@ impl Render for ScreenOverlayView {
                                             .id("toggle-beautify-switch")
                                             .px_2p5()
                                             .py_0p5()
-                                            .rounded_full()
+                                            
                                             .cursor_pointer()
                                             .bg(if is_active {
                                                 theme.accent
@@ -6199,7 +6184,7 @@ impl Render for ScreenOverlayView {
                                                     .text_xs()
                                                     .font_weight(gpui::FontWeight::BOLD)
                                                     .text_color(if is_active {
-                                                        rgb(0xFFFFFF)
+                                                        theme.text_on_accent
                                                     } else {
                                                         theme.text_secondary
                                                     })
@@ -6214,7 +6199,7 @@ impl Render for ScreenOverlayView {
                                         div()
                                             .id("btn-close-beautify")
                                             .p_1()
-                                            .rounded_md()
+                                            
                                             .cursor_pointer()
                                             .hover(|s| s.bg(theme.bg_hover))
                                             .on_click(cx.listener(|this, _, _, cx| {
@@ -6264,7 +6249,7 @@ impl Render for ScreenOverlayView {
                                     .relative()
                                     .w(px(98.0))
                                     .h(px(58.0))
-                                    .rounded_lg()
+                                    
                                     .overflow_hidden()
                                     .border_2()
                                     .border_color(if is_selected {
@@ -6301,7 +6286,7 @@ impl Render for ScreenOverlayView {
                                                 .top(px(3.0))
                                                 .right(px(3.0))
                                                 .size(px(16.0))
-                                                .rounded_full()
+                                                
                                                 .bg(theme.accent)
                                                 .flex()
                                                 .items_center()
@@ -6310,7 +6295,7 @@ impl Render for ScreenOverlayView {
                                                     svg()
                                                         .path("icons/check.svg")
                                                         .size(px(10.0))
-                                                        .text_color(rgb(0xFFFFFF)),
+                                                        .text_color(theme.text_on_accent),
                                                 )
                                         } else {
                                             div()
@@ -6360,7 +6345,7 @@ impl Render for ScreenOverlayView {
                                 .max_w(px((f32::from(screen_size.width) - 64.0).min(760.0)))
                                 .py_2p5()
                                 .px_5()
-                                .rounded_xl()
+                                
                                 .bg(theme.bg_surface)
                                 .border_1()
                                 .border_color(accent_color)
@@ -6411,7 +6396,7 @@ impl Render for ScreenOverlayView {
                 .min_h(px(260.0))
                 .max_h(px(480.0))
                 .overflow_y_scroll()
-                .rounded_xl()
+                
                 .bg(rgba(0x00000045))
                 .border_1()
                 .border_color(theme.accent)
@@ -6455,7 +6440,7 @@ impl Render for ScreenOverlayView {
                                 .w(px(2.0))
                                 .h(px(14.0))
                                 .bg(theme.accent)
-                                .rounded_xs(),
+                                ,
                         )
                         .child(
                             div()
@@ -6508,7 +6493,7 @@ impl Render for ScreenOverlayView {
                                             .w(px(2.0))
                                             .h(px(14.0))
                                             .bg(theme.accent)
-                                            .rounded_xs()
+                                            
                                             .mx(px(0.5)),
                                     );
                                     if !b_post.is_empty() {
@@ -6526,7 +6511,7 @@ impl Render for ScreenOverlayView {
                                         .w(px(2.0))
                                         .h(px(14.0))
                                         .bg(theme.accent)
-                                        .rounded_xs()
+                                        
                                         .mx(px(0.5)),
                                 );
                             }
@@ -6535,9 +6520,9 @@ impl Render for ScreenOverlayView {
                             body = body.child(
                                 div()
                                     .whitespace_nowrap()
-                                    .bg(rgba(0x8174FF60))
+                                    .bg(rgba(0xDDD7CA55))
                                     .text_color(rgb(0xFFFFFF))
-                                    .rounded_xs()
+                                    
                                     .px(px(1.0))
                                     .child(selected),
                             );
@@ -6549,7 +6534,7 @@ impl Render for ScreenOverlayView {
                                         .w(px(2.0))
                                         .h(px(14.0))
                                         .bg(theme.accent)
-                                        .rounded_xs()
+                                        
                                         .mx(px(0.5)),
                                 );
                             }
@@ -6570,7 +6555,7 @@ impl Render for ScreenOverlayView {
                                             .w(px(2.0))
                                             .h(px(14.0))
                                             .bg(theme.accent)
-                                            .rounded_xs()
+                                            
                                             .mx(px(0.5)),
                                     );
                                     if !a_post.is_empty() {
@@ -6598,7 +6583,7 @@ impl Render for ScreenOverlayView {
                                 .font_family("Consolas")
                                 .text_color(theme.text_primary)
                                 .child(div().whitespace_nowrap().child(before))
-                                .child(div().w(px(2.0)).h(px(14.0)).bg(theme.accent).rounded_xs().mx(px(0.5)))
+                                .child(div().w(px(2.0)).h(px(14.0)).bg(theme.accent).mx(px(0.5)))
                                 .child(div().whitespace_nowrap().child(after))
                         } else {
                             let display = if vl.text.is_empty() { " " } else { vl.text.as_str() };
@@ -6636,7 +6621,7 @@ impl Render for ScreenOverlayView {
                                     .w(px(2.0))
                                     .h(px(14.0))
                                     .bg(theme.accent)
-                                    .rounded_xs()
+                                    
                                     .mx(px(0.5))
                             )
                             .child(
@@ -6707,13 +6692,13 @@ impl Render for ScreenOverlayView {
             }
 
             let orig_btn_bg = if mode == OcrFormatMode::Original { theme.accent } else { rgba(0xFFFFFF0D) };
-            let orig_btn_fg = if mode == OcrFormatMode::Original { rgb(0xFFFFFF) } else { theme.text_secondary };
+            let orig_btn_fg = if mode == OcrFormatMode::Original { theme.text_on_accent } else { theme.text_secondary };
 
             let single_btn_bg = if mode == OcrFormatMode::SingleLine { theme.accent } else { rgba(0xFFFFFF0D) };
-            let single_btn_fg = if mode == OcrFormatMode::SingleLine { rgb(0xFFFFFF) } else { theme.text_secondary };
+            let single_btn_fg = if mode == OcrFormatMode::SingleLine { theme.text_on_accent } else { theme.text_secondary };
 
             let code_btn_bg = if mode == OcrFormatMode::CodeTable { theme.accent } else { rgba(0xFFFFFF0D) };
-            let code_btn_fg = if mode == OcrFormatMode::CodeTable { rgb(0xFFFFFF) } else { theme.text_secondary };
+            let code_btn_fg = if mode == OcrFormatMode::CodeTable { theme.text_on_accent } else { theme.text_secondary };
 
             root = root.child(
                 div()
@@ -6735,7 +6720,7 @@ impl Render for ScreenOverlayView {
                         div()
                             .w(px(880.0))
                             .max_w(px((f32::from(screen_size.width) - 48.0).min(920.0)))
-                            .rounded_2xl()
+                            
                             .bg(theme.bg_surface)
                             .border_1()
                             .border_color(rgba(0xFFFFFF25))
@@ -6783,7 +6768,7 @@ impl Render for ScreenOverlayView {
                                                 div()
                                                     .px_2()
                                                     .py_0p5()
-                                                    .rounded_md()
+                                                    
                                                     .bg(rgba(0xFFFFFF12))
                                                     .text_xs()
                                                     .text_color(theme.text_secondary)
@@ -6794,7 +6779,7 @@ impl Render for ScreenOverlayView {
                                         div()
                                             .id("btn-ocr-close-x")
                                             .p_1p5()
-                                            .rounded_md()
+                                            
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgba(0xFFFFFF15)))
                                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
@@ -6822,7 +6807,7 @@ impl Render for ScreenOverlayView {
                                             .id("btn-ocr-mode-orig")
                                             .px_3()
                                             .py_1p5()
-                                            .rounded_lg()
+                                            
                                             .bg(orig_btn_bg)
                                             .text_xs()
                                             .font_weight(gpui::FontWeight::MEDIUM)
@@ -6840,7 +6825,7 @@ impl Render for ScreenOverlayView {
                                             .id("btn-ocr-mode-single")
                                             .px_3()
                                             .py_1p5()
-                                            .rounded_lg()
+                                            
                                             .bg(single_btn_bg)
                                             .text_xs()
                                             .font_weight(gpui::FontWeight::MEDIUM)
@@ -6858,7 +6843,7 @@ impl Render for ScreenOverlayView {
                                             .id("btn-ocr-mode-code")
                                             .px_3()
                                             .py_1p5()
-                                            .rounded_lg()
+                                            
                                             .bg(code_btn_bg)
                                             .text_xs()
                                             .font_weight(gpui::FontWeight::MEDIUM)
@@ -6930,7 +6915,7 @@ impl Render for ScreenOverlayView {
                                                     .id("btn-ocr-cancel")
                                                     .px_3p5()
                                                     .py_1p5()
-                                                    .rounded_lg()
+                                                    
                                                     .bg(rgba(0xFFFFFF10))
                                                     .hover(|s| s.bg(rgba(0xFFFFFF20)))
                                                     .text_xs()
@@ -6946,12 +6931,12 @@ impl Render for ScreenOverlayView {
                                                     .id("btn-ocr-copy")
                                                     .px_4()
                                                     .py_1p5()
-                                                    .rounded_lg()
+                                                    
                                                     .bg(theme.accent)
                                                     .hover(|s| s.opacity(0.9))
                                                     .text_xs()
                                                     .font_weight(gpui::FontWeight::MEDIUM)
-                                                    .text_color(rgb(0xFFFFFF))
+                                                    .text_color(theme.text_on_accent)
                                                     .cursor_pointer()
                                                     .flex()
                                                     .items_center()
@@ -6963,7 +6948,7 @@ impl Render for ScreenOverlayView {
                                                         svg()
                                                             .path("icons/copy.svg")
                                                             .size(px(13.0))
-                                                            .text_color(rgb(0xFFFFFF)),
+                                                            .text_color(theme.text_on_accent),
                                                     )
                                                     .child(t(lang, "Copy", "Скопировать")),
                                             ),
@@ -6999,7 +6984,7 @@ impl Render for ScreenOverlayView {
                         .child(
                             div()
                                 .p_3()
-                                .rounded_xl()
+                                
                                 .bg(rgba(0x00000045))
                                 .border_1()
                                 .border_color(rgba(0xFFFFFF15))
@@ -7019,7 +7004,7 @@ impl Render for ScreenOverlayView {
                                         .id("btn-qr-copy-url")
                                         .px_3p5()
                                         .py_1p5()
-                                        .rounded_lg()
+                                        
                                         .bg(rgba(0xFFFFFF10))
                                         .hover(|s| s.bg(rgba(0xFFFFFF20)))
                                         .text_xs()
@@ -7035,12 +7020,12 @@ impl Render for ScreenOverlayView {
                                         .id("btn-qr-open-browser")
                                         .px_4()
                                         .py_1p5()
-                                        .rounded_lg()
+                                        
                                         .bg(theme.accent)
                                         .hover(|s| s.opacity(0.9))
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(rgb(0xFFFFFF))
+                                        .text_color(theme.text_on_accent)
                                         .cursor_pointer()
                                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
                                             open_url_in_browser(&url_for_browser);
@@ -7062,7 +7047,7 @@ impl Render for ScreenOverlayView {
                         .child(
                             div()
                                 .p_2p5()
-                                .rounded_xl()
+                                
                                 .bg(rgba(0x00000045))
                                 .border_1()
                                 .border_color(rgba(0xFFFFFF15))
@@ -7081,7 +7066,7 @@ impl Render for ScreenOverlayView {
                                         .id("btn-copy-ssid")
                                         .px_2p5()
                                         .py_1()
-                                        .rounded_md()
+                                        
                                         .bg(rgba(0xFFFFFF10))
                                         .hover(|s| s.bg(rgba(0xFFFFFF20)))
                                         .text_xs()
@@ -7096,7 +7081,7 @@ impl Render for ScreenOverlayView {
                         .child(
                             div()
                                 .p_2p5()
-                                .rounded_xl()
+                                
                                 .bg(rgba(0x00000045))
                                 .border_1()
                                 .border_color(rgba(0xFFFFFF15))
@@ -7115,12 +7100,12 @@ impl Render for ScreenOverlayView {
                                         .id("btn-copy-wifi-pwd")
                                         .px_3()
                                         .py_1p5()
-                                        .rounded_md()
+                                        
                                         .bg(theme.accent)
                                         .hover(|s| s.opacity(0.9))
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(rgb(0xFFFFFF))
+                                        .text_color(theme.text_on_accent)
                                         .cursor_pointer()
                                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                                             this.copy_qr_content(&pwd_for_copy, t(lang, "Password copied!", "Пароль скопирован!"), cx);
@@ -7138,7 +7123,7 @@ impl Render for ScreenOverlayView {
                                         .id("btn-copy-wifi-raw")
                                         .px_3()
                                         .py_1()
-                                        .rounded_lg()
+                                        
                                         .bg(rgba(0xFFFFFF0A))
                                         .hover(|s| s.bg(rgba(0xFFFFFF18)))
                                         .text_xs()
@@ -7161,7 +7146,7 @@ impl Render for ScreenOverlayView {
                         .child(
                             div()
                                 .p_3()
-                                .rounded_xl()
+                                
                                 .bg(rgba(0x00000045))
                                 .border_1()
                                 .border_color(rgba(0xFFFFFF15))
@@ -7187,7 +7172,7 @@ impl Render for ScreenOverlayView {
                                         .id("btn-copy-barcode-code")
                                         .px_3p5()
                                         .py_1p5()
-                                        .rounded_lg()
+                                        
                                         .bg(rgba(0xFFFFFF10))
                                         .hover(|s| s.bg(rgba(0xFFFFFF20)))
                                         .text_xs()
@@ -7203,12 +7188,12 @@ impl Render for ScreenOverlayView {
                                         .id("btn-search-barcode")
                                         .px_4()
                                         .py_1p5()
-                                        .rounded_lg()
+                                        
                                         .bg(theme.accent)
                                         .hover(|s| s.opacity(0.9))
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(rgb(0xFFFFFF))
+                                        .text_color(theme.text_on_accent)
                                         .cursor_pointer()
                                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
                                             open_url_in_browser(&url_for_browser);
@@ -7232,7 +7217,7 @@ impl Render for ScreenOverlayView {
                                 .min_h(px(80.0))
                                 .max_h(px(200.0))
                                 .overflow_y_scroll()
-                                .rounded_xl()
+                                
                                 .bg(rgba(0x00000045))
                                 .border_1()
                                 .border_color(rgba(0xFFFFFF15))
@@ -7250,12 +7235,12 @@ impl Render for ScreenOverlayView {
                                         .id("btn-copy-raw-text")
                                         .px_4()
                                         .py_1p5()
-                                        .rounded_lg()
+                                        
                                         .bg(theme.accent)
                                         .hover(|s| s.opacity(0.9))
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(rgb(0xFFFFFF))
+                                        .text_color(theme.text_on_accent)
                                         .cursor_pointer()
                                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                                             this.copy_qr_content(&text_for_copy, t(lang, "Text copied!", "Текст скопирован!"), cx);
@@ -7283,7 +7268,7 @@ impl Render for ScreenOverlayView {
                         div()
                             .w(px(520.0))
                             .max_w(px((f32::from(screen_size.width) - 48.0).min(560.0)))
-                            .rounded_2xl()
+                            
                             .bg(theme.bg_surface)
                             .border_1()
                             .border_color(rgba(0xFFFFFF25))
@@ -7321,7 +7306,7 @@ impl Render for ScreenOverlayView {
                                                 div()
                                                     .px_2()
                                                     .py_0p5()
-                                                    .rounded_md()
+                                                    
                                                     .bg(rgba(0xFFFFFF12))
                                                     .text_xs()
                                                     .text_color(theme.text_secondary)
@@ -7332,7 +7317,7 @@ impl Render for ScreenOverlayView {
                                         div()
                                             .id("btn-qr-close-x")
                                             .p_1p5()
-                                            .rounded_md()
+                                            
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgba(0xFFFFFF15)))
                                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
@@ -7394,7 +7379,7 @@ impl Render for ScreenOverlayView {
                                             .id("btn-qr-close-bottom")
                                             .px_3p5()
                                             .py_1p5()
-                                            .rounded_lg()
+                                            
                                             .bg(rgba(0xFFFFFF10))
                                             .hover(|s| s.bg(rgba(0xFFFFFF20)))
                                             .text_xs()

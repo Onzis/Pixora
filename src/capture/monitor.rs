@@ -60,65 +60,7 @@ pub fn get_all_monitors() -> Vec<MonitorInfo> {
     MONITORS.lock().unwrap().clone()
 }
 
-#[cfg(target_os = "linux")]
-pub fn get_all_monitors() -> Vec<MonitorInfo> {
-    if let Some(monitors) = get_linux_monitors() {
-        if !monitors.is_empty() {
-            return monitors;
-        }
-    }
-    Vec::new()
-}
-
-#[cfg(target_os = "linux")]
-fn get_linux_monitors() -> Option<Vec<MonitorInfo>> {
-    use x11rb::connection::Connection;
-    use x11rb::protocol::randr::ConnectionExt as RandrExt;
-
-    let (conn, screen_num) = x11rb::connect(None).ok()?;
-    let screen = conn.setup().roots.get(screen_num)?;
-    let root = screen.root;
-
-    let reply = conn.randr_get_monitors(root, true).ok()?.reply().ok()?;
-    let mut monitors = Vec::new();
-
-    for mon in reply.monitors {
-        let width = mon.width as u32;
-        let height = mon.height as u32;
-        if width > 0 && height > 0 {
-            monitors.push(MonitorInfo {
-                rect: PhysicalRect {
-                    x: mon.x as i32,
-                    y: mon.y as i32,
-                    width,
-                    height,
-                },
-                is_primary: mon.primary,
-            });
-        }
-    }
-
-    if monitors.is_empty() {
-        // Fallback to root screen geometry
-        let width = screen.width_in_pixels as u32;
-        let height = screen.height_in_pixels as u32;
-        if width > 0 && height > 0 {
-            monitors.push(MonitorInfo {
-                rect: PhysicalRect {
-                    x: 0,
-                    y: 0,
-                    width,
-                    height,
-                },
-                is_primary: true,
-            });
-        }
-    }
-
-    Some(monitors)
-}
-
-#[cfg(all(not(windows), not(target_os = "linux")))]
+#[cfg(not(windows))]
 pub fn get_all_monitors() -> Vec<MonitorInfo> {
     vec![]
 }

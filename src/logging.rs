@@ -19,36 +19,11 @@ pub fn get_log_dir() -> PathBuf {
             return dir.clone();
         }
     }
-    #[cfg(target_os = "linux")]
-    {
-        if let Some(exe_dir) = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        {
-            let adj_log = exe_dir.join("log");
-            if adj_log.exists()
-                && std::fs::metadata(&adj_log)
-                    .map(|m| !m.permissions().readonly())
-                    .unwrap_or(false)
-            {
-                return adj_log;
-            }
-        }
-        return dirs::state_dir()
-            .or_else(dirs::data_local_dir)
-            .or_else(dirs::config_dir)
-            .map(|p| p.join("Pixora").join("log"))
-            .unwrap_or_else(|| PathBuf::from("log"));
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| PathBuf::from("."));
-        exe_dir.join("log")
-    }
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+    exe_dir.join("log")
 }
 
 pub fn get_log_file_path() -> PathBuf {

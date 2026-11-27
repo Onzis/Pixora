@@ -52,45 +52,15 @@ pub fn set_run_at_startup(enabled: bool) -> Result<(), String> {
     }
 }
 
-#[cfg(target_os = "linux")]
-pub fn set_run_at_startup(enabled: bool) -> Result<(), String> {
-    let autostart_dir = dirs::config_dir()
-        .map(|p| p.join("autostart"))
-        .ok_or_else(|| "Could not locate autostart directory".to_string())?;
-    let _ = std::fs::create_dir_all(&autostart_dir);
-    let desktop_file = autostart_dir.join("pixora.desktop");
-
-    if enabled {
-        let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
-        let content = format!(
-            "[Desktop Entry]\nType=Application\nName=Pixora\nExec=\"{}\"\nIcon=pixora\nComment=Screen Capture & Annotation\nTerminal=false\nCategories=Utility;Graphics;\n",
-            exe_path.display()
-        );
-        std::fs::write(&desktop_file, content).map_err(|e| e.to_string())?;
-    } else if desktop_file.exists() {
-        let _ = std::fs::remove_file(&desktop_file);
-    }
-    Ok(())
-}
-
-#[cfg(all(not(windows), not(target_os = "linux")))]
+#[cfg(not(windows))]
 pub fn set_run_at_startup(_enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
 pub fn open_folder_in_explorer(path: &Path) {
-    #[cfg(windows)]
-    {
-        let _ = std::process::Command::new("explorer.exe")
-            .arg(path)
-            .spawn();
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = std::process::Command::new("xdg-open")
-            .arg(path)
-            .spawn();
-    }
+    let _ = std::process::Command::new("explorer.exe")
+        .arg(path)
+        .spawn();
 }
 
 pub fn choose_folder_dialog(initial_dir: &Path) -> Option<std::path::PathBuf> {
@@ -115,43 +85,7 @@ pub fn choose_folder_dialog(initial_dir: &Path) -> Option<std::path::PathBuf> {
             }
         }
     }
-    #[cfg(target_os = "linux")]
-    {
-        use std::process::Command;
-        // 1. Try zenity (GNOME / GTK standard)
-        if let Ok(output) = Command::new("zenity")
-            .args(["--file-selection", "--directory", "--title=Select Screenshot Folder"])
-            .arg(format!("--filename={}", initial_dir.display()))
-            .output()
-        {
-            if output.status.success() {
-                let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path_str.is_empty() {
-                    let p = std::path::PathBuf::from(path_str);
-                    if p.is_dir() {
-                        return Some(p);
-                    }
-                }
-            }
-        }
-
-        // 2. Try kdialog (KDE standard)
-        if let Ok(output) = Command::new("kdialog")
-            .args(["--getexistingdirectory", &initial_dir.to_string_lossy()])
-            .output()
-        {
-            if output.status.success() {
-                let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path_str.is_empty() {
-                    let p = std::path::PathBuf::from(path_str);
-                    if p.is_dir() {
-                        return Some(p);
-                    }
-                }
-            }
-        }
-    }
-    #[cfg(all(not(windows), not(target_os = "linux")))]
+    #[cfg(not(windows))]
     {
         let _ = initial_dir;
     }

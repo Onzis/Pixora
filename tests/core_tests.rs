@@ -987,10 +987,7 @@ fn test_dual_format_clipboard_support() {
     // Draw semi-transparent pixel to verify alpha support
     img.put_pixel(0, 0, image::Rgba([255, 0, 0, 128]));
     let res = copy_image_to_clipboard(&img);
-    #[cfg(windows)]
     assert!(res.is_ok(), "copy_image_to_clipboard failed: {:?}", res.err());
-    #[cfg(not(windows))]
-    let _ = res;
 }
 
 #[test]
@@ -2032,20 +2029,13 @@ fn test_wgc_support_and_capture_fallback() {
     // 2. GDI fallback capture check (may fail in headless/background sessions, but should not panic)
     let _ = capture_virtual_screen_gdi();
 
-    // 3. Main capture_virtual_screen succeeds on Windows via WGC (or GDI fallback)
-    #[cfg(windows)]
-    {
-        let main_res = capture_virtual_screen();
-        assert!(main_res.is_ok(), "capture_virtual_screen must succeed");
-        let main_cap = main_res.unwrap();
-        assert!(main_cap.bounds.width > 0 && main_cap.bounds.height > 0);
-        assert_eq!(main_cap.image.width(), main_cap.bounds.width);
-        assert_eq!(main_cap.image.height(), main_cap.bounds.height);
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = capture_virtual_screen();
-    }
+    // 3. Main capture_virtual_screen succeeds via WGC (or GDI fallback)
+    let main_res = capture_virtual_screen();
+    assert!(main_res.is_ok(), "capture_virtual_screen must succeed");
+    let main_cap = main_res.unwrap();
+    assert!(main_cap.bounds.width > 0 && main_cap.bounds.height > 0);
+    assert_eq!(main_cap.image.width(), main_cap.bounds.width);
+    assert_eq!(main_cap.image.height(), main_cap.bounds.height);
 }
 
 

@@ -4,20 +4,9 @@ pub const EMBEDDED_SCREENFX_MP3: &[u8] = include_bytes!("../../assets/sounds/Scr
 
 pub fn get_or_extract_sound_path() -> Option<PathBuf> {
     // 1. Check custom path from user / config
-    #[cfg(windows)]
-    {
-        let user_path = PathBuf::from(r"C:\Users\Admin\Music\ScreenFX.mp3");
-        if user_path.exists() {
-            return Some(user_path);
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        if let Some(config_sound) = dirs::config_dir().map(|p| p.join("Pixora").join("ScreenFX.mp3")) {
-            if config_sound.exists() {
-                return Some(config_sound);
-            }
-        }
+    let user_path = PathBuf::from(r"C:\Users\Admin\Music\ScreenFX.mp3");
+    if user_path.exists() {
+        return Some(user_path);
     }
 
     // 2. Check next to executable or in assets/sounds
@@ -93,40 +82,11 @@ mod win_audio {
     }
 }
 
-#[cfg(target_os = "linux")]
-mod linux_audio {
-    use std::path::Path;
-    use std::process::Command;
-
-    pub fn play_file(path: &Path) {
-        let players = [
-            ("pw-play", vec![]),
-            ("paplay", vec![]),
-            ("canberra-gtk-play", vec!["-f"]),
-            ("ffplay", vec!["-nodisp", "-autoexit", "-loglevel", "quiet"]),
-            ("mpv", vec!["--no-video", "--really-quiet"]),
-            ("play", vec!["-q"]),
-            ("aplay", vec![]),
-        ];
-
-        for (player, args) in players {
-            let mut cmd = Command::new(player);
-            cmd.args(&args).arg(path);
-            if let Ok(mut child) = cmd.spawn() {
-                let _ = child.wait();
-                return;
-            }
-        }
-    }
-}
-
 pub fn play_capture_sound() {
     std::thread::spawn(|| {
         if let Some(sound_path) = get_or_extract_sound_path() {
             #[cfg(windows)]
             win_audio::play_file(&sound_path);
-            #[cfg(target_os = "linux")]
-            linux_audio::play_file(&sound_path);
         }
     });
 }

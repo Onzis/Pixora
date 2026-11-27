@@ -1,13 +1,15 @@
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
 use crate::config::AppConfig;
 use crate::i18n::{detect_system_language, t, AppLanguage, LanguageChoice};
 use crate::settings::storage::{choose_folder_dialog, open_folder_in_explorer, set_run_at_startup};
 use crate::shortcuts::hotkeys::{format_keystroke, update_global_hotkeys};
 use crate::system::updater::{open_url, UpdateStatus, GITHUB_REPO_URL};
-use crate::theme::PixoraTheme;
+use crate::theme::{generate_dithered_bust_animated, BustDitherMode, PixoraTheme};
 use gpui::{
-    App, ClickEvent, Context, FocusHandle, IntoElement, KeyDownEvent, Render, ScrollHandle,
-    Window, div, img, prelude::*, px, rgb, rgba, svg,
+    canvas, div, prelude::*, px, rgba, svg, App, ClickEvent, Context, Corners, FocusHandle,
+    IntoElement, KeyDownEvent, Render, RenderImage, ScrollHandle, Window,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +37,8 @@ pub struct SettingsWindowView {
     pub focus_handle: FocusHandle,
     pub update_status: UpdateStatus,
     pub last_checked_time: Option<String>,
+    pub bust_image: Option<Arc<RenderImage>>,
+    pub bust_started_at: Instant,
 }
 
 impl SettingsWindowView {
@@ -44,6 +48,8 @@ impl SettingsWindowView {
 
     pub fn with_tab(config: AppConfig, tab: SettingsTab, cx: &mut Context<Self>) -> Self {
         let global_status = crate::system::updater::get_global_update_status();
+        let bust_image = generate_dithered_bust_animated(BustDitherMode::Bayer8x8, 2, 260, 28);
+
         let mut view = Self {
             config,
             theme: PixoraTheme::default(),
@@ -54,10 +60,35 @@ impl SettingsWindowView {
             focus_handle: cx.focus_handle(),
             update_status: global_status,
             last_checked_time: None,
+            bust_image,
+            bust_started_at: Instant::now(),
         };
         if tab == SettingsTab::About && view.update_status == UpdateStatus::Idle {
             view.check_for_updates(cx);
         }
+
+        // Smooth ~20 FPS animation ticker for the dithered bust panel; stops when window closes.
+        cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                loop {
+                    cx.background_executor().timer(Duration::from_millis(50)).await;
+                    let mut keep_running = false;
+                    let _ = cx.update(|app| {
+                        keep_running = this
+                            .update(app, |_view, cx| {
+                                cx.notify();
+                            })
+                            .is_ok();
+                    });
+                    if !keep_running {
+                        break;
+                    }
+                }
+            }
+        })
+        .detach();
+
         view
     }
 
@@ -113,23 +144,41 @@ impl Render for SettingsWindowView {
         let theme = self.theme;
         let tab = self.current_tab;
         let lang = self.config.language.resolve();
+        let hero_bust = self.bust_image.clone();
+        let elapsed = self.bust_started_at.elapsed().as_secs_f32();
 
         let (tab_title, tab_subtitle) = match tab {
             SettingsTab::General => (
                 t(lang, "General Settings", "Основные настройки"),
-                t(lang, "Language, startup behavior, sounds and screenshot storage", "Язык интерфейса, автозапуск, системные звуки и путь сохранения"),
+                t(
+                    lang,
+                    "Language, startup behavior, sounds and screenshot storage",
+                    "Язык интерфейса, автозапуск, системные звуки и путь сохранения",
+                ),
             ),
             SettingsTab::Capture => (
                 t(lang, "Capture Parameters", "Параметры захвата"),
-                t(lang, "Overlay tools, dimensions badge, pixel loupe and OCR text recognition", "Инструменты оверлея, размеры, пиксельная лупа и распознавание текста (OCR)"),
+                t(
+                    lang,
+                    "Overlay tools, dimensions badge, pixel loupe and OCR text recognition",
+                    "Инструменты оверлея, размеры, пиксельная лупа и распознавание текста (OCR)",
+                ),
             ),
             SettingsTab::Shortcuts => (
                 t(lang, "Keyboard Shortcuts", "Горячие клавиши"),
-                t(lang, "Configurable global hotkeys and editor keybindings reference", "Глобальные сочетания клавиш и справочник горячих клавиш оверлея"),
+                t(
+                    lang,
+                    "Configurable global hotkeys and editor keybindings reference",
+                    "Глобальные сочетания клавиш и справочник горячих клавиш оверлея",
+                ),
             ),
             SettingsTab::About => (
                 t(lang, "About Pixora", "О программе Pixora"),
-                t(lang, "Version details, updates and open source repository", "Информация о сборке, авторские права и проверка обновлений"),
+                t(
+                    lang,
+                    "Version details, updates and open source repository",
+                    "Информация о сборке, авторские права и проверка обновлений",
+                ),
             ),
         };
 
@@ -138,6 +187,7 @@ impl Render for SettingsWindowView {
             .size_full()
             .bg(theme.bg_dark)
             .text_color(theme.text_primary)
+            .font_family("Cascadia Mono")
             .flex()
             .flex_row()
             .overflow_hidden()
@@ -147,7 +197,14 @@ impl Render for SettingsWindowView {
                     let cur_lang = this.config.language.resolve();
                     if ev.keystroke.key == "escape" {
                         this.rebinding_target = None;
-                        this.status_message = Some(t(cur_lang, "Shortcut reassignment cancelled", "Переназначение клавиш отменено").to_string());
+                        this.status_message = Some(
+                            t(
+                                cur_lang,
+                                "Shortcut reassignment cancelled",
+                                "Переназначение клавиш отменено",
+                            )
+                            .to_string(),
+                        );
                         cx.notify();
                         return;
                     }
@@ -165,66 +222,68 @@ impl Render for SettingsWindowView {
                             }
                         }
                         this.rebinding_target = None;
-                        this.status_message = Some(format!("{}: {}", t(cur_lang, "Assigned", "Назначено"), hotkey_str));
+                        this.status_message = Some(format!(
+                            "{}: {}",
+                            t(cur_lang, "Assigned", "Назначено"),
+                            hotkey_str
+                        ));
                         this.save_settings(cx);
                         cx.notify();
                     }
                 }
             }))
-            // Left Navigation Sidebar (190px)
+            // Left Navigation Sidebar (200px)
             .child(
                 div()
-                    .w(px(190.0))
+                    .w(px(200.0))
                     .flex_shrink_0()
                     .bg(theme.bg_surface)
                     .border_r_1()
                     .border_color(theme.border_subtle)
                     .flex()
                     .flex_col()
-                    .justify_start()
+                    .justify_between()
                     .p_3p5()
                     .child(
                         div()
                             .flex()
                             .flex_col()
-                            .gap_3p5()
-                            // Brand header
+                            .gap_4()
+                            // Brand header (Editorial Serif)
                             .child(
                                 div()
+                                    .pb_3()
+                                    .border_b_1()
+                                    .border_color(theme.border_subtle)
                                     .flex()
-                                    .items_center()
-                                    .gap_2p5()
-                                    .px_1p5()
-                                    .py_1()
+                                    .flex_col()
+                                    .gap_0p5()
                                     .child(
                                         div()
-                                            .size(px(28.0))
-                                            .flex_shrink_0()
-                                            .rounded_lg()
-                                            .overflow_hidden()
+                                            .flex()
+                                            .items_baseline()
+                                            .gap_2()
                                             .child(
-                                                img("icons/app-icon.png")
-                                                    .size(px(28.0)),
+                                                div()
+                                                    .font_family("Georgia")
+                                                    .text_xl()
+                                                    .text_color(theme.text_primary)
+                                                    .child("Λ  Pixora"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(10.0))
+                                                    .text_color(theme.text_muted)
+                                                    .child(concat!("v", env!("CARGO_PKG_VERSION"))),
                                             ),
                                     )
                                     .child(
                                         div()
-                                            .flex()
-                                            .flex_col()
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .font_weight(gpui::FontWeight::BOLD)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Pixora"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(theme.accent)
-                                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                                    .child(concat!("v", env!("CARGO_PKG_VERSION"))),
-                                            ),
+                                            .font_family("Georgia")
+                                            .italic()
+                                            .text_size(px(11.0))
+                                            .text_color(theme.text_secondary)
+                                            .child("φῶς καὶ τάξις"),
                                     ),
                             )
                             // Navigation list
@@ -238,6 +297,7 @@ impl Render for SettingsWindowView {
                                         "icons/settings.svg",
                                         t(lang, "General", "Основные"),
                                         tab == SettingsTab::General,
+                                        theme,
                                         cx.listener(|this, _, _, cx| {
                                             this.current_tab = SettingsTab::General;
                                             cx.notify();
@@ -248,6 +308,7 @@ impl Render for SettingsWindowView {
                                         "icons/camera.svg",
                                         t(lang, "Capture", "Захват"),
                                         tab == SettingsTab::Capture,
+                                        theme,
                                         cx.listener(|this, _, _, cx| {
                                             this.current_tab = SettingsTab::Capture;
                                             cx.notify();
@@ -258,6 +319,7 @@ impl Render for SettingsWindowView {
                                         "icons/keyboard.svg",
                                         t(lang, "Shortcuts", "Горячие клавиши"),
                                         tab == SettingsTab::Shortcuts,
+                                        theme,
                                         cx.listener(|this, _, _, cx| {
                                             this.current_tab = SettingsTab::Shortcuts;
                                             cx.notify();
@@ -268,6 +330,7 @@ impl Render for SettingsWindowView {
                                         "icons/info.svg",
                                         t(lang, "About", "О программе"),
                                         tab == SettingsTab::About,
+                                        theme,
                                         cx.listener(|this, _, _, cx| {
                                             this.current_tab = SettingsTab::About;
                                             cx.notify();
@@ -276,66 +339,152 @@ impl Render for SettingsWindowView {
                             ),
                     ),
             )
-            // Right Content Area
+            // Center Settings Content Area (with Hero Sculpt embedded naturally at top, as in v1)
             .child(
                 div()
+                    .id("settings-scroll-area")
                     .flex_1()
+                    .h_full()
                     .min_w(px(0.0))
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .px_6()
+                    .py_5()
+                    .pb_8()
                     .flex()
                     .flex_col()
-                    .overflow_hidden()
-                    // Content Header Bar
+                    .gap_4()
+                    // Hero Split Band: Editorial Title/Motto on left, Animated Bust on right
                     .child(
                         div()
-                            .flex_shrink_0()
+                            .w_full()
                             .flex()
+                            .flex_row()
                             .items_center()
                             .justify_between()
-                            .px_6()
-                            .py_3p5()
-                            .border_b_1()
-                            .border_color(theme.border_subtle)
-                            .bg(theme.bg_dark)
+                            .gap_6()
                             .child(
                                 div()
                                     .flex_1()
                                     .min_w(px(0.0))
                                     .flex()
                                     .flex_col()
-                                    .gap_0p5()
+                                    .gap_2()
                                     .child(
                                         div()
-                                            .text_base()
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .text_color(theme.text_primary)
-                                            .child(tab_title),
+                                            .text_size(px(10.0))
+                                            .text_color(theme.text_muted)
+                                            .child(concat!(
+                                                "Λ  PIXORA ",
+                                                env!("CARGO_PKG_VERSION"),
+                                                " · GPU CAPTURE STUDIO"
+                                            )),
                                     )
                                     .child(
                                         div()
-                                            .text_xs()
+                                            .font_family("Georgia")
+                                            .text_size(px(42.0))
+                                            .line_height(px(44.0))
+                                            .text_color(theme.text_primary)
+                                            .child("Pixora"),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_3()
+                                            .child(
+                                                div()
+                                                    .font_family("Georgia")
+                                                    .text_size(px(12.5))
+                                                    .text_color(theme.text_secondary)
+                                                    .child("φῶς καὶ τάξις"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .font_family("Georgia")
+                                                    .italic()
+                                                    .text_size(px(12.5))
+                                                    .text_color(theme.text_secondary)
+                                                    .child(t(
+                                                        lang,
+                                                        "for clarity and sovereign capture",
+                                                        "для точности и чистоты каждого кадра",
+                                                    )),
+                                            ),
+                                    ),
+                            )
+                            // Integrated Animated Classical Sculpt
+                            .child(
+                                div()
+                                    .w(px(210.0))
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .flex_col()
+                                    .items_end()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .size(px(204.0))
+                                            .bg(theme.bg_dark)
+                                            .when_some(hero_bust, |el, img_arc| {
+                                                let frame_count = img_arc.frame_count().max(1);
+                                                let frame_index =
+                                                    ((elapsed * 18.0) as usize) % frame_count;
+                                                el.child(
+                                                    canvas(
+                                                        |_, _, _| (),
+                                                        move |bounds, _, window, _cx| {
+                                                            let _ = window.paint_image(
+                                                                bounds,
+                                                                Corners::default(),
+                                                                img_arc.clone(),
+                                                                frame_index,
+                                                                false,
+                                                            );
+                                                        },
+                                                    )
+                                                    .size_full(),
+                                                )
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(9.5))
                                             .text_color(theme.text_muted)
-                                            .child(tab_subtitle),
+                                            .child("DITHER · BAYER 8x8 · 2x"),
                                     ),
                             ),
                     )
-                    // Scrollable content area
+                    .child(render_card_divider(theme))
+                    // Current Section Heading
                     .child(
                         div()
-                            .id("settings-scroll-area")
-                            .flex_1()
-                            .min_h(px(0.0))
-                            .overflow_y_scroll()
-                            .track_scroll(&self.scroll_handle)
-                            .px_6()
-                            .py_5()
-                            .pb_8()
-                            .child(match tab {
-                                SettingsTab::General => self.render_general_tab(cx),
-                                SettingsTab::Capture => self.render_capture_tab(cx),
-                                SettingsTab::Shortcuts => self.render_shortcuts_tab(cx),
-                                SettingsTab::About => self.render_about_tab(cx),
-                            }),
-                    ),
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .font_family("Georgia")
+                                    .text_lg()
+                                    .text_color(theme.text_primary)
+                                    .child(tab_title),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.text_muted)
+                                    .child(tab_subtitle),
+                            ),
+                    )
+                    // Active Tab Settings Body (full width)
+                    .child(match tab {
+                        SettingsTab::General => self.render_general_tab(cx),
+                        SettingsTab::Capture => self.render_capture_tab(cx),
+                        SettingsTab::Shortcuts => self.render_shortcuts_tab(cx),
+                        SettingsTab::About => self.render_about_tab(cx),
+                    }),
             )
     }
 }
@@ -362,10 +511,12 @@ impl SettingsWindowView {
                     .flex()
                     .flex_col()
                     .gap_1p5()
-                    .child(render_section_title(t(lang, "Interface Language", "Язык интерфейса")))
+                    .child(render_section_title(
+                        t(lang, "INTERFACE LANGUAGE", "ЯЗЫК ИНТЕРФЕЙСА"),
+                        theme,
+                    ))
                     .child(
                         div()
-                            .rounded_xl()
                             .bg(theme.bg_surface)
                             .border_1()
                             .border_color(theme.border_subtle)
@@ -384,8 +535,8 @@ impl SettingsWindowView {
                                     .gap_0p5()
                                     .child(
                                         div()
+                                            .font_family("Georgia")
                                             .text_sm()
-                                            .font_weight(gpui::FontWeight::MEDIUM)
                                             .text_color(theme.text_primary)
                                             .child(t(lang, "Display Language", "Язык отображения")),
                                     )
@@ -395,16 +546,8 @@ impl SettingsWindowView {
                                             .text_color(theme.text_secondary)
                                             .child(t(
                                                 lang,
-                                                if cfg!(windows) {
-                                                    "Choose program language or follow Windows locale"
-                                                } else {
-                                                    "Choose program language or follow system locale"
-                                                },
-                                                if cfg!(windows) {
-                                                    "Язык программы или язык Windows автоматически"
-                                                } else {
-                                                    "Язык программы или язык системы автоматически"
-                                                },
+                                                "Choose program language or follow Windows locale",
+                                                "Язык программы или язык Windows автоматически",
                                             )),
                                     ),
                             )
@@ -415,14 +558,14 @@ impl SettingsWindowView {
                                     .items_center()
                                     .gap_1()
                                     .p_1()
-                                    .rounded_lg()
-                                    .bg(theme.bg_secondary)
+                                    .bg(theme.bg_dark)
                                     .border_1()
                                     .border_color(theme.border_subtle)
                                     .child(render_segmented_chip(
                                         "lang-auto",
                                         auto_label,
                                         self.config.language == LanguageChoice::Auto,
+                                        theme,
                                         cx.listener(|this, _, _, cx| {
                                             this.config.language = LanguageChoice::Auto;
                                             this.save_settings(cx);
@@ -432,6 +575,7 @@ impl SettingsWindowView {
                                         "lang-ru",
                                         "Русский",
                                         self.config.language == LanguageChoice::Ru,
+                                        theme,
                                         cx.listener(|this, _, _, cx| {
                                             this.config.language = LanguageChoice::Ru;
                                             this.save_settings(cx);
@@ -441,6 +585,7 @@ impl SettingsWindowView {
                                         "lang-en",
                                         "English",
                                         self.config.language == LanguageChoice::En,
+                                        theme,
                                         cx.listener(|this, _, _, cx| {
                                             this.config.language = LanguageChoice::En;
                                             this.save_settings(cx);
@@ -455,29 +600,31 @@ impl SettingsWindowView {
                     .flex()
                     .flex_col()
                     .gap_1p5()
-                    .child(render_section_title(t(lang, "System & Behavior", "Система и поведение")))
+                    .child(render_section_title(
+                        t(lang, "SYSTEM & BEHAVIOR", "СИСТЕМА И ПОВЕДЕНИЕ"),
+                        theme,
+                    ))
                     .child(
                         div()
-                            .rounded_xl()
                             .bg(theme.bg_surface)
                             .border_1()
                             .border_color(theme.border_subtle)
-                            .overflow_hidden()
-                            // Row 1: Startup
                             .child(render_setting_row(
                                 t(
                                     lang,
-                                    if cfg!(windows) { "Run at Windows startup" } else { "Run at system startup" },
-                                    if cfg!(windows) { "Автозапуск при старте Windows" } else { "Автозапуск при входе в систему" },
+                                    "Run at Windows startup",
+                                    "Автозапуск при старте Windows",
                                 ),
                                 t(
                                     lang,
                                     "Launch Pixora automatically in background when logging in",
                                     "Автоматически запускать Pixora в фоне при входе в систему",
                                 ),
+                                theme,
                                 render_switch(
                                     "toggle-startup",
                                     self.config.run_at_startup,
+                                    theme,
                                     cx.listener(|this, _, _, cx| {
                                         this.config.run_at_startup = !this.config.run_at_startup;
                                         this.save_settings(cx);
@@ -485,7 +632,6 @@ impl SettingsWindowView {
                                 ),
                             ))
                             .child(render_card_divider(theme))
-                            // Row 2: Auto-copy
                             .child(render_setting_row(
                                 t(lang, "Auto-copy to clipboard", "Автокопирование в буфер"),
                                 t(
@@ -493,17 +639,19 @@ impl SettingsWindowView {
                                     "Copy screenshot immediately after selection or capture",
                                     "Копировать снимок в буфер сразу после выделения или захвата",
                                 ),
+                                theme,
                                 render_switch(
                                     "toggle-autocopy",
                                     self.config.auto_copy_to_clipboard,
+                                    theme,
                                     cx.listener(|this, _, _, cx| {
-                                        this.config.auto_copy_to_clipboard = !this.config.auto_copy_to_clipboard;
+                                        this.config.auto_copy_to_clipboard =
+                                            !this.config.auto_copy_to_clipboard;
                                         this.save_settings(cx);
                                     }),
                                 ),
                             ))
                             .child(render_card_divider(theme))
-                            // Row 3: Sound effects
                             .child(render_setting_row(
                                 t(lang, "Sound effects", "Звуковые эффекты"),
                                 t(
@@ -511,6 +659,7 @@ impl SettingsWindowView {
                                     "Play shutter sound upon capture (ScreenFX)",
                                     "Воспроизводить щелчок затвора при создании снимка",
                                 ),
+                                theme,
                                 div()
                                     .flex_shrink_0()
                                     .flex()
@@ -522,11 +671,13 @@ impl SettingsWindowView {
                                                 .id("btn-test-sound")
                                                 .px_2p5()
                                                 .py_1()
-                                                .rounded_md()
-                                                .bg(theme.bg_secondary)
+                                                .bg(theme.bg_dark)
                                                 .border_1()
                                                 .border_color(theme.border_subtle)
-                                                .hover(|s| s.bg(theme.bg_hover))
+                                                .hover(|s| {
+                                                    s.bg(theme.bg_hover)
+                                                        .border_color(theme.border_strong)
+                                                })
                                                 .cursor_pointer()
                                                 .on_click(cx.listener(|_, _, _, _| {
                                                     crate::system::sound::play_capture_sound();
@@ -534,7 +685,6 @@ impl SettingsWindowView {
                                                 .child(
                                                     div()
                                                         .text_xs()
-                                                        .font_weight(gpui::FontWeight::MEDIUM)
                                                         .text_color(theme.text_secondary)
                                                         .child(t(lang, "Test", "Прослушать")),
                                                 ),
@@ -543,6 +693,7 @@ impl SettingsWindowView {
                                     .child(render_switch(
                                         "toggle-sound",
                                         self.config.sound_effects,
+                                        theme,
                                         cx.listener(|this, _, _, cx| {
                                             this.config.sound_effects = !this.config.sound_effects;
                                             if this.config.sound_effects {
@@ -560,70 +711,85 @@ impl SettingsWindowView {
                     .flex()
                     .flex_col()
                     .gap_1p5()
-                    .child(render_section_title(t(lang, "Screenshots Storage", "Сохранение снимков")))
+                    .child(render_section_title(
+                        t(lang, "SCREENSHOTS STORAGE", "СОХРАНЕНИЕ СНИМКОВ"),
+                        theme,
+                    ))
                     .child(
                         div()
-                            .rounded_xl()
                             .bg(theme.bg_surface)
                             .border_1()
                             .border_color(theme.border_subtle)
-                            .overflow_hidden()
-                            // Folder row (compact single-row design)
                             .child(
                                 div()
                                     .px_4()
                                     .py_3()
                                     .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .gap_3()
+                                    .flex_col()
+                                    .gap_2()
                                     .child(
                                         div()
-                                            .flex_1()
-                                            .min_w(px(0.0))
-                                            .flex()
-                                            .flex_col()
-                                            .gap_1()
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child(t(lang, "Screenshots Directory", "Папка со снимками")),
-                                            )
-                                            .child(
-                                                div()
-                                                    .overflow_hidden()
-                                                    .px_2p5()
-                                                    .py_1()
-                                                    .rounded_md()
-                                                    .bg(theme.bg_secondary)
-                                                    .border_1()
-                                                    .border_color(theme.border_subtle)
-                                                    .text_xs()
-                                                    .text_color(theme.text_secondary)
-                                                    .child(save_dir),
-                                            ),
+                                            .font_family("Georgia")
+                                            .text_sm()
+                                            .text_color(theme.text_primary)
+                                            .child(t(
+                                                lang,
+                                                "Screenshots Directory",
+                                                "Папка со снимками",
+                                            )),
                                     )
                                     .child(
                                         div()
-                                            .flex_shrink_0()
+                                            .w_full()
                                             .flex()
+                                            .flex_row()
                                             .items_center()
                                             .gap_2()
                                             .child(
                                                 div()
-                                                    .id("btn-browse-folder")
-                                                    .px_3()
-                                                    .py_1p5()
-                                                    .rounded_md()
-                                                    .bg(theme.bg_secondary)
+                                                    .flex_1()
+                                                    .min_w(px(0.0))
+                                                    .h(px(32.0))
+                                                    .px_2p5()
+                                                    .bg(theme.bg_dark)
                                                     .border_1()
                                                     .border_color(theme.border_subtle)
-                                                    .hover(|s| s.bg(theme.bg_hover).border_color(theme.accent))
+                                                    .flex()
+                                                    .items_center()
+                                                    .overflow_hidden()
+                                                    .child(
+                                                        div()
+                                                            .w_full()
+                                                            .overflow_hidden()
+                                                            .whitespace_nowrap()
+                                                            .text_xs()
+                                                            .text_color(theme.text_secondary)
+                                                            .child(save_dir),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id("btn-browse-folder")
+                                                    .flex_shrink_0()
+                                                    .h(px(32.0))
+                                                    .px_3()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .bg(theme.bg_dark)
+                                                    .border_1()
+                                                    .border_color(theme.border_subtle)
+                                                    .hover(|s| {
+                                                        s.bg(theme.bg_hover)
+                                                            .border_color(theme.accent)
+                                                    })
                                                     .cursor_pointer()
                                                     .on_click(cx.listener(|this, _, _, cx| {
-                                                        if let Some(new_path) = choose_folder_dialog(&this.config.save_directory) {
+                                                        if let Some(new_path) =
+                                                            choose_folder_dialog(
+                                                                &this.config.save_directory,
+                                                            )
+                                                        {
                                                             this.config.save_directory = new_path;
                                                             this.save_settings(cx);
                                                         }
@@ -631,27 +797,36 @@ impl SettingsWindowView {
                                                     .child(
                                                         div()
                                                             .text_xs()
-                                                            .font_weight(gpui::FontWeight::MEDIUM)
                                                             .text_color(theme.text_primary)
-                                                            .child(t(lang, "Browse...", "Обзор...")),
+                                                            .child(t(
+                                                                lang,
+                                                                "Browse...",
+                                                                "Обзор...",
+                                                            )),
                                                     ),
                                             )
                                             .child(
                                                 div()
                                                     .id("btn-open-folder")
+                                                    .flex_shrink_0()
+                                                    .h(px(32.0))
+                                                    .px_3()
                                                     .flex()
                                                     .items_center()
+                                                    .justify_center()
                                                     .gap_1p5()
-                                                    .px_3()
-                                                    .py_1p5()
-                                                    .rounded_md()
-                                                    .bg(theme.bg_surface)
+                                                    .bg(theme.bg_dark)
                                                     .border_1()
                                                     .border_color(theme.border_subtle)
-                                                    .hover(|s| s.bg(theme.bg_hover))
+                                                    .hover(|s| {
+                                                        s.bg(theme.bg_hover)
+                                                            .border_color(theme.border_strong)
+                                                    })
                                                     .cursor_pointer()
                                                     .on_click(cx.listener(|this, _, _, _| {
-                                                        open_folder_in_explorer(&this.config.save_directory);
+                                                        open_folder_in_explorer(
+                                                            &this.config.save_directory,
+                                                        );
                                                     }))
                                                     .child(
                                                         svg()
@@ -663,13 +838,16 @@ impl SettingsWindowView {
                                                         div()
                                                             .text_xs()
                                                             .text_color(theme.text_primary)
-                                                            .child(t(lang, "Open Folder", "Открыть")),
+                                                            .child(t(
+                                                                lang,
+                                                                "Open Folder",
+                                                                "Открыть",
+                                                            )),
                                                     ),
                                             ),
                                     ),
                             )
                             .child(render_card_divider(theme))
-                            // Auto-save toggle
                             .child(render_setting_row(
                                 t(lang, "Auto-save screenshots to file", "Автосохранение файлов"),
                                 t(
@@ -677,9 +855,11 @@ impl SettingsWindowView {
                                     "Save capture automatically to disk without prompting for filename",
                                     "Автоматически сохранять файл на диск без запроса имени",
                                 ),
+                                theme,
                                 render_switch(
                                     "toggle-autosave",
                                     self.config.auto_save_file,
+                                    theme,
                                     cx.listener(|this, _, _, cx| {
                                         this.config.auto_save_file = !this.config.auto_save_file;
                                         this.save_settings(cx);
@@ -698,31 +878,40 @@ impl SettingsWindowView {
             .flex()
             .flex_col()
             .gap_4()
-            // Section 1: Overlay Tools & Snapping
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap_1p5()
-                    .child(render_section_title(t(lang, "Interactive Overlay & Snapping", "Интерактивный оверлей и привязка")))
+                    .child(render_section_title(
+                        t(
+                            lang,
+                            "INTERACTIVE OVERLAY & SNAPPING",
+                            "ИНТЕРАКТИВНЫЙ ОВЕРЛЕЙ И ПРИВЯЗКА",
+                        ),
+                        theme,
+                    ))
                     .child(
                         div()
-                            .rounded_xl()
                             .bg(theme.bg_surface)
                             .border_1()
                             .border_color(theme.border_subtle)
-                            .overflow_hidden()
-                            // Row 1: Dimensions badge
                             .child(render_setting_row(
-                                t(lang, "Show selection dimensions", "Размеры выделенной области"),
+                                t(
+                                    lang,
+                                    "Show selection dimensions",
+                                    "Размеры выделенной области",
+                                ),
                                 t(
                                     lang,
                                     "Display width and height pixel badge beside selection box (1920 × 1080)",
                                     "Отображать бейдж с шириной и высотой рядом с рамкой",
                                 ),
+                                theme,
                                 render_switch(
                                     "toggle-dimensions",
                                     self.config.show_dimensions,
+                                    theme,
                                     cx.listener(|this, _, _, cx| {
                                         this.config.show_dimensions = !this.config.show_dimensions;
                                         this.save_settings(cx);
@@ -730,7 +919,6 @@ impl SettingsWindowView {
                                 ),
                             ))
                             .child(render_card_divider(theme))
-                            // Row 2: Loupe & Pixel magnifier
                             .child(render_setting_row(
                                 t(lang, "Pixel magnifier & loupe", "Экранная пиксельная лупа"),
                                 t(
@@ -738,9 +926,11 @@ impl SettingsWindowView {
                                     "Display zoomed pixel grid, coordinates and HEX color near the cursor",
                                     "Отображать увеличенную сетку пикселей, координаты и HEX-код цвета",
                                 ),
+                                theme,
                                 render_switch(
                                     "toggle-magnifier",
                                     self.config.show_magnifier,
+                                    theme,
                                     cx.listener(|this, _, _, cx| {
                                         this.config.show_magnifier = !this.config.show_magnifier;
                                         this.save_settings(cx);
@@ -748,17 +938,22 @@ impl SettingsWindowView {
                                 ),
                             ))
                             .child(render_card_divider(theme))
-                            // Row 3: Window snapping
                             .child(render_setting_row(
-                                t(lang, "Window snapping & auto-detection", "Привязка к окнам (Window Snapping)"),
+                                t(
+                                    lang,
+                                    "Window snapping & auto-detection",
+                                    "Привязка к окнам (Window Snapping)",
+                                ),
                                 t(
                                     lang,
                                     "Automatically highlight and snap to windows on hover and click",
                                     "Автоматически подсвечивать и выбирать границы окон при наведении и клике",
                                 ),
+                                theme,
                                 render_switch(
                                     "toggle-snapping",
                                     self.config.window_snapping,
+                                    theme,
                                     cx.listener(|this, _, _, cx| {
                                         this.config.window_snapping = !this.config.window_snapping;
                                         this.save_settings(cx);
@@ -767,16 +962,17 @@ impl SettingsWindowView {
                             )),
                     ),
             )
-            // Section 2: Text Recognition (OCR)
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap_1p5()
-                    .child(render_section_title(t(lang, "Text Recognition (OCR)", "Распознавание текста (OCR)")))
+                    .child(render_section_title(
+                        t(lang, "TEXT RECOGNITION (OCR)", "РАСПОЗНАВАНИЕ ТЕКСТА (OCR)"),
+                        theme,
+                    ))
                     .child(
                         div()
-                            .rounded_xl()
                             .bg(theme.bg_surface)
                             .border_1()
                             .border_color(theme.border_subtle)
@@ -795,10 +991,14 @@ impl SettingsWindowView {
                                     .gap_0p5()
                                     .child(
                                         div()
+                                            .font_family("Georgia")
                                             .text_sm()
-                                            .font_weight(gpui::FontWeight::MEDIUM)
                                             .text_color(theme.text_primary)
-                                            .child(t(lang, "OCR Recognition Language", "Язык распознавания текста")),
+                                            .child(t(
+                                                lang,
+                                                "OCR Recognition Language",
+                                                "Язык распознавания текста",
+                                            )),
                                     )
                                     .child(
                                         div()
@@ -806,16 +1006,8 @@ impl SettingsWindowView {
                                             .text_color(theme.text_secondary)
                                             .child(t(
                                                 lang,
-                                                if cfg!(windows) {
-                                                    "Windows OCR model for text extraction (supports hybrid mode)"
-                                                } else {
-                                                    "Tesseract OCR model for text extraction (supports hybrid mode)"
-                                                },
-                                                if cfg!(windows) {
-                                                    "Модель Windows OCR (поддерживает гибридный режим RU+EN)"
-                                                } else {
-                                                    "Модель Tesseract OCR (поддерживает гибридный режим RU+EN)"
-                                                },
+                                                "Windows OCR model for text extraction (supports hybrid mode)",
+                                                "Модель Windows OCR (поддерживает гибридный режим RU+EN)",
                                             )),
                                     ),
                             )
@@ -826,14 +1018,14 @@ impl SettingsWindowView {
                                     .items_center()
                                     .gap_1()
                                     .p_1()
-                                    .rounded_lg()
-                                    .bg(theme.bg_secondary)
+                                    .bg(theme.bg_dark)
                                     .border_1()
                                     .border_color(theme.border_subtle)
                                     .child(render_segmented_chip(
                                         "chip-ocr-auto",
                                         t(lang, "Auto (RU+EN)", "Авто (RU+EN)"),
                                         self.config.ocr_language == "auto",
+                                        theme,
                                         cx.listener(|this, _, _, cx| {
                                             this.config.ocr_language = "auto".to_string();
                                             this.save_settings(cx);
@@ -843,6 +1035,7 @@ impl SettingsWindowView {
                                         "chip-ocr-ru",
                                         "Русский",
                                         self.config.ocr_language == "ru",
+                                        theme,
                                         cx.listener(|this, _, _, cx| {
                                             this.config.ocr_language = "ru".to_string();
                                             this.save_settings(cx);
@@ -852,6 +1045,7 @@ impl SettingsWindowView {
                                         "chip-ocr-en",
                                         "English",
                                         self.config.ocr_language == "en",
+                                        theme,
                                         cx.listener(|this, _, _, cx| {
                                             this.config.ocr_language = "en".to_string();
                                             this.save_settings(cx);
@@ -869,19 +1063,31 @@ impl SettingsWindowView {
         let global_shortcuts = [
             (
                 t(lang, "Region Capture", "Снимок области"),
-                t(lang, "Capture selected area with interactive overlay", "Захват выбранной области экрана с панелью инструментов"),
+                t(
+                    lang,
+                    "Capture selected area with interactive overlay",
+                    "Захват выбранной области экрана с панелью инструментов",
+                ),
                 &self.config.hotkey_region,
                 ShortcutRebindTarget::Region,
             ),
             (
                 t(lang, "Fullscreen Capture", "Снимок всего экрана"),
-                t(lang, "Instantly capture entire screen without overlay", "Мгновенный захват экрана целиком без оверлея"),
+                t(
+                    lang,
+                    "Instantly capture entire screen without overlay",
+                    "Мгновенный захват экрана целиком без оверлея",
+                ),
                 &self.config.hotkey_fullscreen,
                 ShortcutRebindTarget::Fullscreen,
             ),
             (
                 t(lang, "Active Window Capture", "Снимок активного окна"),
-                t(lang, "Capture the currently active foreground window directly", "Прямой захват активного окна переднего плана"),
+                t(
+                    lang,
+                    "Capture the currently active foreground window directly",
+                    "Прямой захват активного окна переднего плана",
+                ),
                 &self.config.hotkey_window,
                 ShortcutRebindTarget::Window,
             ),
@@ -894,14 +1100,16 @@ impl SettingsWindowView {
             (t(lang, "Redo Action", "Повторить действие"), "Ctrl + Y"),
             (t(lang, "Confirm / Finish", "Подтвердить"), "Enter"),
             (t(lang, "Cancel / Close", "Закрыть"), "Escape"),
-            (t(lang, "Brush Size Stepper", "Размер кисти"), "Mouse Wheel / [ - ] [ + ]"),
+            (
+                t(lang, "Brush Size Stepper", "Размер кисти"),
+                "Mouse Wheel / [ - ] [ + ]",
+            ),
         ];
 
         div()
             .flex()
             .flex_col()
             .gap_4()
-            // Section 1: Global Rebindable Hotkeys
             .child(
                 div()
                     .flex()
@@ -912,21 +1120,27 @@ impl SettingsWindowView {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .child(render_section_title(t(lang, "Global Hotkeys", "Глобальные горячие клавиши")))
+                            .child(render_section_title(
+                                t(lang, "GLOBAL HOTKEYS", "ГЛОБАЛЬНЫЕ ГОРЯЧИЕ КЛАВИШИ"),
+                                theme,
+                            ))
                             .child(
                                 div()
                                     .id("btn-reset-hotkeys")
                                     .px_2p5()
                                     .py_1()
-                                    .rounded_md()
-                                    .bg(theme.bg_secondary)
+                                    .bg(theme.bg_dark)
                                     .border_1()
                                     .border_color(theme.border_subtle)
-                                    .hover(|s| s.bg(theme.bg_hover))
+                                    .hover(|s| {
+                                        s.bg(theme.bg_hover)
+                                            .border_color(theme.border_strong)
+                                    })
                                     .cursor_pointer()
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.config.hotkey_region = "PrintScreen".to_string();
-                                        this.config.hotkey_fullscreen = "Shift + PrintScreen".to_string();
+                                        this.config.hotkey_fullscreen =
+                                            "Shift + PrintScreen".to_string();
                                         this.config.hotkey_window = "Alt + PrintScreen".to_string();
                                         this.rebinding_target = None;
                                         this.save_settings(cx);
@@ -934,191 +1148,234 @@ impl SettingsWindowView {
                                     .child(
                                         div()
                                             .text_xs()
-                                            .font_weight(gpui::FontWeight::MEDIUM)
                                             .text_color(theme.text_secondary)
-                                            .child(t(lang, "Reset Defaults", "Сбросить по умолчанию")),
+                                            .child(t(
+                                                lang,
+                                                "Reset Defaults",
+                                                "Сбросить по умолчанию",
+                                            )),
                                     ),
                             ),
                     )
                     .child(
                         div()
-                            .rounded_xl()
                             .bg(theme.bg_surface)
                             .border_1()
                             .border_color(theme.border_subtle)
-                            .overflow_hidden()
-                            .children(global_shortcuts.into_iter().enumerate().map(|(idx, (title, desc, key_str, target))| {
-                                let is_rebinding = self.rebinding_target == Some(target);
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .when(idx > 0, |p| p.child(render_card_divider(theme)))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .px_4()
-                                            .py_3()
-                                            .bg(if is_rebinding {
-                                                rgba(0x8174FF12)
-                                            } else {
-                                                theme.bg_surface
-                                            })
-                                            .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_w(px(0.0))
-                                                    .mr_4()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .gap_0p5()
-                                                    .child(
-                                                        div()
-                                                            .text_sm()
-                                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                                            .text_color(theme.text_primary)
-                                                            .child(title),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_xs()
-                                                            .text_color(theme.text_secondary)
-                                                            .child(desc),
-                                                    ),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex_shrink_0()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap_2()
-                                                    .child(
-                                                        div()
-                                                            .px_2p5()
-                                                            .py_1()
-                                                            .rounded_md()
-                                                            .bg(theme.bg_secondary)
-                                                            .border_1()
-                                                            .border_color(if is_rebinding {
-                                                                theme.accent
-                                                            } else {
-                                                                theme.border_subtle
-                                                            })
-                                                            .text_xs()
-                                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                            .text_color(if is_rebinding {
-                                                                theme.accent
-                                                            } else {
-                                                                theme.text_primary
-                                                            })
-                                                            .child(if is_rebinding {
-                                                                t(lang, "Press keys... (Esc)", "Нажмите клавиши... (Esc)").to_string()
-                                                            } else {
-                                                                key_str.clone()
-                                                            }),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .id(match target {
-                                                                ShortcutRebindTarget::Region => "btn-rebind-region",
-                                                                ShortcutRebindTarget::Fullscreen => "btn-rebind-fs",
-                                                                ShortcutRebindTarget::Window => "btn-rebind-win",
-                                                            })
-                                                            .px_2p5()
-                                                            .py_1()
-                                                            .rounded_md()
-                                                            .bg(if is_rebinding {
-                                                                theme.accent
-                                                            } else {
-                                                                theme.bg_surface
-                                                            })
-                                                            .border_1()
-                                                            .border_color(if is_rebinding {
-                                                                theme.accent
-                                                            } else {
-                                                                theme.border_subtle
-                                                            })
-                                                            .hover(|s| s.bg(theme.bg_hover))
-                                                            .cursor_pointer()
-                                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                                let cur_lang = this.config.language.resolve();
-                                                                if this.rebinding_target == Some(target) {
-                                                                    this.rebinding_target = None;
-                                                                    this.status_message = None;
+                            .children(global_shortcuts.into_iter().enumerate().map(
+                                |(idx, (title, desc, key_str, target))| {
+                                    let is_rebinding = self.rebinding_target == Some(target);
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .when(idx > 0, |p| p.child(render_card_divider(theme)))
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .px_4()
+                                                .py_3()
+                                                .bg(if is_rebinding {
+                                                    theme.bg_secondary
+                                                } else {
+                                                    theme.bg_surface
+                                                })
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w(px(0.0))
+                                                        .mr_4()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_0p5()
+                                                        .child(
+                                                            div()
+                                                                .font_family("Georgia")
+                                                                .text_sm()
+                                                                .text_color(theme.text_primary)
+                                                                .child(title),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(theme.text_secondary)
+                                                                .child(desc),
+                                                        ),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_shrink_0()
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap_2()
+                                                        .child(
+                                                            div()
+                                                                .px_2p5()
+                                                                .py_1()
+                                                                .bg(theme.bg_dark)
+                                                                .border_1()
+                                                                .border_color(if is_rebinding {
+                                                                    theme.accent
                                                                 } else {
-                                                                    this.rebinding_target = Some(target);
-                                                                    this.focus_handle.focus(window);
-                                                                    this.status_message = Some(
-                                                                        t(cur_lang, "Press any key combo... (Esc to cancel)", "Нажмите комбинацию клавиш... (Esc для отмены)").to_string(),
-                                                                    );
-                                                                }
-                                                                cx.notify();
-                                                            }))
-                                                            .child(
-                                                                div()
-                                                                    .text_xs()
-                                                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                                                    .text_color(if is_rebinding {
-                                                                        rgb(0xFFFFFF)
-                                                                    } else {
-                                                                        theme.text_secondary
-                                                                    })
-                                                                    .child(if is_rebinding { t(lang, "Listening", "Ожидание") } else { t(lang, "Change", "Изменить") }),
-                                                            ),
-                                                    ),
-                                            ),
-                                    )
-                            })),
+                                                                    theme.border_subtle
+                                                                })
+                                                                .text_xs()
+                                                                .text_color(if is_rebinding {
+                                                                    theme.amber
+                                                                } else {
+                                                                    theme.text_primary
+                                                                })
+                                                                .child(if is_rebinding {
+                                                                    t(
+                                                                        lang,
+                                                                        "Press keys... (Esc)",
+                                                                        "Нажмите клавиши... (Esc)",
+                                                                    )
+                                                                    .to_string()
+                                                                } else {
+                                                                    key_str.clone()
+                                                                }),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .id(match target {
+                                                                    ShortcutRebindTarget::Region => "btn-rebind-region",
+                                                                    ShortcutRebindTarget::Fullscreen => "btn-rebind-fs",
+                                                                    ShortcutRebindTarget::Window => "btn-rebind-win",
+                                                                })
+                                                                .px_2p5()
+                                                                .py_1()
+                                                                .bg(if is_rebinding {
+                                                                    theme.accent
+                                                                } else {
+                                                                    theme.bg_dark
+                                                                })
+                                                                .border_1()
+                                                                .border_color(if is_rebinding {
+                                                                    theme.accent
+                                                                } else {
+                                                                    theme.border_subtle
+                                                                })
+                                                                .hover(|s| {
+                                                                    s.border_color(
+                                                                        theme.border_strong,
+                                                                    )
+                                                                })
+                                                                .cursor_pointer()
+                                                                .on_click(cx.listener(
+                                                                    move |this, _, window, cx| {
+                                                                        let cur_lang = this
+                                                                            .config
+                                                                            .language
+                                                                            .resolve();
+                                                                        if this.rebinding_target
+                                                                            == Some(target)
+                                                                        {
+                                                                            this.rebinding_target =
+                                                                                None;
+                                                                            this.status_message =
+                                                                                None;
+                                                                        } else {
+                                                                            this.rebinding_target =
+                                                                                Some(target);
+                                                                            this.focus_handle
+                                                                                .focus(window);
+                                                                            this.status_message = Some(
+                                                                                t(
+                                                                                    cur_lang,
+                                                                                    "Press any key combo... (Esc to cancel)",
+                                                                                    "Нажмите комбинацию клавиш... (Esc для отмены)",
+                                                                                )
+                                                                                .to_string(),
+                                                                            );
+                                                                        }
+                                                                        cx.notify();
+                                                                    },
+                                                                ))
+                                                                .child(
+                                                                    div()
+                                                                        .text_xs()
+                                                                        .font_weight(
+                                                                            gpui::FontWeight::MEDIUM,
+                                                                        )
+                                                                        .text_color(if is_rebinding {
+                                                                            theme.text_on_accent
+                                                                        } else {
+                                                                            theme.text_secondary
+                                                                        })
+                                                                        .child(if is_rebinding {
+                                                                            t(
+                                                                                lang,
+                                                                                "Listening",
+                                                                                "Ожидание",
+                                                                            )
+                                                                        } else {
+                                                                            t(
+                                                                                lang,
+                                                                                "Change",
+                                                                                "Изменить",
+                                                                            )
+                                                                        }),
+                                                                ),
+                                                        ),
+                                                ),
+                                        )
+                                },
+                            )),
                     ),
             )
-            // Section 2: In-Overlay Editor Shortcuts Reference
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap_1p5()
-                    .child(render_section_title(t(lang, "In-Editor Keybindings", "Горячие клавиши в оверлее")))
+                    .child(render_section_title(
+                        t(
+                            lang,
+                            "IN-EDITOR KEYBINDINGS",
+                            "ГОРЯЧИЕ КЛАВИШИ В ОВЕРЛЕЕ",
+                        ),
+                        theme,
+                    ))
                     .child(
                         div()
-                            .rounded_xl()
                             .bg(theme.bg_surface)
                             .border_1()
                             .border_color(theme.border_subtle)
-                            .overflow_hidden()
-                            .children(editor_shortcuts.into_iter().enumerate().map(|(idx, (action, key))| {
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .when(idx > 0, |p| p.child(render_card_divider(theme)))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .px_4()
-                                            .py_2()
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(theme.text_secondary)
-                                                    .child(action),
-                                            )
-                                            .child(
-                                                div()
-                                                    .px_2()
-                                                    .py_0p5()
-                                                    .rounded_md()
-                                                    .bg(theme.bg_secondary)
-                                                    .border_1()
-                                                    .border_color(theme.border_subtle)
-                                                    .text_xs()
-                                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                                    .text_color(theme.accent)
-                                                    .child(key),
-                                            ),
-                                    )
-                            })),
+                            .children(editor_shortcuts.into_iter().enumerate().map(
+                                |(idx, (action, key))| {
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .when(idx > 0, |p| p.child(render_card_divider(theme)))
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .px_4()
+                                                .py_2()
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(theme.text_secondary)
+                                                        .child(action),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .px_2()
+                                                        .py_0p5()
+                                                        .bg(theme.bg_dark)
+                                                        .border_1()
+                                                        .border_color(theme.border_subtle)
+                                                        .text_xs()
+                                                        .text_color(theme.text_primary)
+                                                        .child(key),
+                                                ),
+                                        )
+                                },
+                            )),
                     ),
             )
     }
@@ -1131,111 +1388,84 @@ impl SettingsWindowView {
             .flex()
             .flex_col()
             .gap_4()
-            // Section 1: Hero Info Card
+            // Hero Info Card
             .child(
                 div()
-                    .rounded_xl()
                     .bg(theme.bg_surface)
                     .border_1()
                     .border_color(theme.border_subtle)
-                    .p_4()
+                    .p_5()
                     .flex()
-                    .items_center()
-                    .gap_3p5()
+                    .flex_col()
+                    .gap_1p5()
                     .child(
                         div()
-                            .size(px(48.0))
-                            .flex_shrink_0()
-                            .rounded_xl()
-                            .overflow_hidden()
+                            .flex()
+                            .items_baseline()
+                            .gap_2p5()
                             .child(
-                                img("icons/app-icon.png")
-                                    .size(px(48.0)),
+                                div()
+                                    .font_family("Georgia")
+                                    .text_size(px(30.0))
+                                    .text_color(theme.text_primary)
+                                    .child("Pixora"),
+                            )
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .bg(theme.bg_dark)
+                                    .border_1()
+                                    .border_color(theme.border_subtle)
+                                    .text_xs()
+                                    .text_color(theme.text_secondary)
+                                    .child(concat!("v", env!("CARGO_PKG_VERSION"))),
                             ),
                     )
                     .child(
                         div()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .gap_0p5()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                            .text_color(theme.text_primary)
-                                            .child("Pixora"),
-                                    )
-                                    .child(
-                                        div()
-                                            .px_2()
-                                            .py_0p5()
-                                            .rounded_full()
-                                            .bg(rgba(0x8174FF1A))
-                                            .text_xs()
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .text_color(theme.accent)
-                                            .child(concat!("v", env!("CARGO_PKG_VERSION"))),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.text_secondary)
-                                    .child(t(
-                                        lang,
-                                        if cfg!(windows) {
-                                            "GPU-Accelerated Screen Capture & Annotation Studio for Windows 10 & 11"
-                                        } else {
-                                            "GPU-Accelerated Screen Capture & Annotation Studio for Linux (Wayland & X11)"
-                                        },
-                                        if cfg!(windows) {
-                                            "GPU-ускоренная студия создания скриншотов и аннотаций для Windows 10 и 11"
-                                        } else {
-                                            "GPU-ускоренная студия создания скриншотов и аннотаций для Linux (Wayland и X11)"
-                                        },
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.text_muted)
-                                    .child(t(
-                                        lang,
-                                        if cfg!(windows) {
-                                            "Built with pure Rust & GPUI (DirectX) • Author: Onzi • 2026"
-                                        } else {
-                                            "Built with pure Rust & GPUI (Vulkan) • Author: Onzi • 2026"
-                                        },
-                                        if cfg!(windows) {
-                                            "Разработано на чистом Rust и GPUI (DirectX) • Автор: Onzi • 2026"
-                                        } else {
-                                            "Разработано на чистом Rust и GPUI (Vulkan) • Автор: Onzi • 2026"
-                                        },
-                                    )),
-                            ),
+                            .font_family("Georgia")
+                            .italic()
+                            .text_xs()
+                            .text_color(theme.text_secondary)
+                            .child("φῶς καὶ τάξις"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.text_secondary)
+                            .child(t(
+                                lang,
+                                "GPU-Accelerated Screen Capture & Annotation Studio for Windows 10 & 11",
+                                "GPU-ускоренная студия создания скриншотов и аннотаций для Windows 10 и 11",
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .child(t(
+                                lang,
+                                "Built with pure Rust & GPUI (DirectX) • Author: Onzi • 2026",
+                                "Разработано на чистом Rust и GPUI (DirectX) • Автор: Onzi • 2026",
+                            )),
                     ),
             )
-            // Section 2: Repository & Updates
+            // Source & Updates
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap_1p5()
-                    .child(render_section_title(t(lang, "Source & Updates", "Исходный код и обновления")))
+                    .child(render_section_title(
+                        t(lang, "SOURCE & UPDATES", "ИСХОДНЫЙ КОД И ОБНОВЛЕНИЯ"),
+                        theme,
+                    ))
                     .child(
                         div()
-                            .rounded_xl()
                             .bg(theme.bg_surface)
                             .border_1()
                             .border_color(theme.border_subtle)
-                            .overflow_hidden()
-                            // Row 1: GitHub Link
                             .child(
                                 div()
                                     .px_4()
@@ -1253,15 +1483,19 @@ impl SettingsWindowView {
                                             .gap_0p5()
                                             .child(
                                                 div()
+                                                    .font_family("Georgia")
                                                     .text_sm()
-                                                    .font_weight(gpui::FontWeight::MEDIUM)
                                                     .text_color(theme.text_primary)
-                                                    .child(t(lang, "GitHub Repository", "Репозиторий GitHub")),
+                                                    .child(t(
+                                                        lang,
+                                                        "GitHub Repository",
+                                                        "Репозиторий GitHub",
+                                                    )),
                                             )
                                             .child(
                                                 div()
                                                     .text_xs()
-                                                    .text_color(theme.accent)
+                                                    .text_color(theme.text_secondary)
                                                     .child(GITHUB_REPO_URL),
                                             ),
                                     )
@@ -1271,11 +1505,13 @@ impl SettingsWindowView {
                                             .flex_shrink_0()
                                             .px_3()
                                             .py_1p5()
-                                            .rounded_md()
-                                            .bg(theme.bg_secondary)
+                                            .bg(theme.bg_dark)
                                             .border_1()
                                             .border_color(theme.border_subtle)
-                                            .hover(|s| s.bg(theme.bg_hover))
+                                            .hover(|s| {
+                                                s.bg(theme.bg_hover)
+                                                    .border_color(theme.border_strong)
+                                            })
                                             .cursor_pointer()
                                             .on_click(cx.listener(|_, _, _, _| {
                                                 open_url(GITHUB_REPO_URL);
@@ -1283,14 +1519,16 @@ impl SettingsWindowView {
                                             .child(
                                                 div()
                                                     .text_xs()
-                                                    .font_weight(gpui::FontWeight::MEDIUM)
                                                     .text_color(theme.text_primary)
-                                                    .child(t(lang, "Open in Browser", "Открыть в браузере")),
+                                                    .child(t(
+                                                        lang,
+                                                        "Open in Browser",
+                                                        "Открыть в браузере",
+                                                    )),
                                             ),
                                     ),
                             )
                             .child(render_card_divider(theme))
-                            // Row 2: Check Updates
                             .child(
                                 div()
                                     .px_4()
@@ -1308,21 +1546,60 @@ impl SettingsWindowView {
                                             .gap_0p5()
                                             .child(
                                                 div()
+                                                    .font_family("Georgia")
                                                     .text_sm()
-                                                    .font_weight(gpui::FontWeight::MEDIUM)
                                                     .text_color(theme.text_primary)
-                                                    .child(t(lang, "Release Updates", "Проверка обновлений")),
+                                                    .child(t(
+                                                        lang,
+                                                        "Release Updates",
+                                                        "Проверка обновлений",
+                                                    )),
                                             )
                                             .child(
                                                 div()
                                                     .text_xs()
                                                     .text_color(theme.text_secondary)
                                                     .child(match &self.update_status {
-                                                        UpdateStatus::Checking => t(lang, "Checking for latest release...", "Проверка наличия обновлений...").to_string(),
-                                                        UpdateStatus::UpToDate { version } => format!("{}: v{}", t(lang, "Latest version installed", "Установлена последняя версия"), version),
-                                                        UpdateStatus::Available { latest, .. } => format!("{}: v{}", t(lang, "New release available", "Доступен новый релиз"), latest),
-                                                        UpdateStatus::Error(_) => t(lang, "Unable to check updates", "Не удалось проверить обновления").to_string(),
-                                                        UpdateStatus::Idle => t(lang, "Check GitHub for new releases", "Проверить наличие новых версий на GitHub").to_string(),
+                                                        UpdateStatus::Checking => t(
+                                                            lang,
+                                                            "Checking for latest release...",
+                                                            "Проверка наличия обновлений...",
+                                                        )
+                                                        .to_string(),
+                                                        UpdateStatus::UpToDate { version } => {
+                                                            format!(
+                                                                "{}: v{}",
+                                                                t(
+                                                                    lang,
+                                                                    "Latest version installed",
+                                                                    "Установлена последняя версия",
+                                                                ),
+                                                                version
+                                                            )
+                                                        }
+                                                        UpdateStatus::Available {
+                                                            latest, ..
+                                                        } => format!(
+                                                            "{}: v{}",
+                                                            t(
+                                                                lang,
+                                                                "New release available",
+                                                                "Доступен новый релиз",
+                                                            ),
+                                                            latest
+                                                        ),
+                                                        UpdateStatus::Error(_) => t(
+                                                            lang,
+                                                            "Unable to check updates",
+                                                            "Не удалось проверить обновления",
+                                                        )
+                                                        .to_string(),
+                                                        UpdateStatus::Idle => t(
+                                                            lang,
+                                                            "Check GitHub for new releases",
+                                                            "Проверить наличие новых версий на GitHub",
+                                                        )
+                                                        .to_string(),
                                                     }),
                                             ),
                                     )
@@ -1332,8 +1609,9 @@ impl SettingsWindowView {
                                             .flex_shrink_0()
                                             .px_3()
                                             .py_1p5()
-                                            .rounded_md()
                                             .bg(theme.accent)
+                                            .border_1()
+                                            .border_color(theme.accent)
                                             .hover(|s| s.bg(theme.accent_hover))
                                             .cursor_pointer()
                                             .on_click(cx.listener(|this, _, _, cx| {
@@ -1342,9 +1620,13 @@ impl SettingsWindowView {
                                             .child(
                                                 div()
                                                     .text_xs()
-                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                    .text_color(rgb(0xFFFFFF))
-                                                    .child(t(lang, "Check Now", "Проверить сейчас")),
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .text_color(theme.text_on_accent)
+                                                    .child(t(
+                                                        lang,
+                                                        "Check Now",
+                                                        "Проверить сейчас",
+                                                    )),
                                             ),
                                     ),
                             ),
@@ -1353,24 +1635,21 @@ impl SettingsWindowView {
     }
 }
 
-fn render_section_title(title: &'static str) -> impl IntoElement {
+fn render_section_title(title: &'static str, theme: PixoraTheme) -> impl IntoElement {
     div()
-        .text_xs()
-        .font_weight(gpui::FontWeight::BOLD)
-        .text_color(rgb(0x8A8A99))
+        .text_size(px(10.0))
+        .text_color(theme.text_muted)
         .child(title)
 }
 
 fn render_card_divider(theme: PixoraTheme) -> impl IntoElement {
-    div()
-        .h(px(1.0))
-        .w_full()
-        .bg(theme.border_subtle)
+    div().h(px(1.0)).w_full().bg(theme.border_subtle)
 }
 
 fn render_setting_row(
     title: &'static str,
     desc: &'static str,
+    theme: PixoraTheme,
     control: impl IntoElement,
 ) -> impl IntoElement {
     div()
@@ -1389,15 +1668,15 @@ fn render_setting_row(
                 .gap_0p5()
                 .child(
                     div()
+                        .font_family("Georgia")
                         .text_sm()
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(rgb(0xF2F2F5))
+                        .text_color(theme.text_primary)
                         .child(title),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0x8A8A99))
+                        .text_color(theme.text_secondary)
                         .child(desc),
                 ),
         )
@@ -1409,12 +1688,9 @@ fn render_sidebar_tab(
     icon_path: &'static str,
     label: &'static str,
     is_active: bool,
+    theme: PixoraTheme,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    let active_bg = rgba(0x8174FF1F);
-    let active_text = rgb(0x8174FF);
-    let inactive_text = rgb(0xA2A2B0);
-
     div()
         .id(id)
         .flex()
@@ -1422,16 +1698,36 @@ fn render_sidebar_tab(
         .gap_2p5()
         .px_3()
         .py_2()
-        .rounded_lg()
-        .bg(if is_active { active_bg } else { rgba(0x00000000) })
-        .hover(|s| s.bg(if is_active { active_bg } else { rgb(0x22222C) }))
+        .bg(if is_active {
+            theme.bg_secondary
+        } else {
+            rgba(0x00000000)
+        })
+        .border_1()
+        .border_color(if is_active {
+            theme.border_strong
+        } else {
+            rgba(0x00000000)
+        })
+        .hover(|s| {
+            if is_active {
+                s.bg(theme.bg_secondary)
+            } else {
+                s.bg(theme.bg_hover)
+                    .border_color(theme.border_subtle)
+            }
+        })
         .cursor_pointer()
         .on_click(on_click)
         .child(
             svg()
                 .path(icon_path)
-                .size(px(16.0))
-                .text_color(if is_active { active_text } else { inactive_text }),
+                .size(px(15.0))
+                .text_color(if is_active {
+                    theme.text_primary
+                } else {
+                    theme.text_muted
+                }),
         )
         .child(
             div()
@@ -1439,9 +1735,13 @@ fn render_sidebar_tab(
                 .font_weight(if is_active {
                     gpui::FontWeight::SEMIBOLD
                 } else {
-                    gpui::FontWeight::MEDIUM
+                    gpui::FontWeight::NORMAL
                 })
-                .text_color(if is_active { active_text } else { inactive_text })
+                .text_color(if is_active {
+                    theme.text_primary
+                } else {
+                    theme.text_secondary
+                })
                 .child(label),
         )
 }
@@ -1449,30 +1749,40 @@ fn render_sidebar_tab(
 fn render_switch(
     id: &'static str,
     is_on: bool,
+    theme: PixoraTheme,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     div()
         .id(id)
         .flex_shrink_0()
-        .w(px(38.0))
-        .h(px(22.0))
-        .p_0p5()
-        .rounded_full()
+        .w(px(40.0))
+        .h(px(20.0))
+        .p(px(2.0))
         .bg(if is_on {
-            rgb(0x8174FF)
+            theme.bg_secondary
         } else {
-            rgb(0x282834)
+            theme.bg_dark
         })
+        .border_1()
+        .border_color(if is_on {
+            theme.accent
+        } else {
+            theme.border_subtle
+        })
+        .hover(|s| s.border_color(theme.border_strong))
         .cursor_pointer()
         .on_click(on_click)
         .flex()
         .items_center()
         .child(
             div()
-                .size_4()
-                .rounded_full()
-                .bg(rgb(0xFFFFFF))
-                .shadow_sm()
+                .w(px(14.0))
+                .h(px(14.0))
+                .bg(if is_on {
+                    theme.accent
+                } else {
+                    theme.text_muted
+                })
                 .when(is_on, |s| s.ml_auto()),
         )
 }
@@ -1481,6 +1791,7 @@ fn render_segmented_chip(
     id: &'static str,
     label: impl Into<gpui::SharedString>,
     is_selected: bool,
+    theme: PixoraTheme,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     div()
@@ -1488,27 +1799,38 @@ fn render_segmented_chip(
         .flex_shrink_0()
         .px_2p5()
         .py_1()
-        .rounded_md()
         .bg(if is_selected {
-            rgb(0x8174FF)
+            theme.accent
         } else {
             rgba(0x00000000)
         })
-        .hover(|s| s.bg(if is_selected { rgb(0x8174FF) } else { rgb(0x282834) }))
+        .border_1()
+        .border_color(if is_selected {
+            theme.accent
+        } else {
+            rgba(0x00000000)
+        })
+        .hover(|s| {
+            if is_selected {
+                s.bg(theme.accent_hover)
+            } else {
+                s.bg(theme.bg_hover)
+            }
+        })
         .cursor_pointer()
         .on_click(on_click)
         .child(
             div()
                 .text_xs()
                 .font_weight(if is_selected {
-                    gpui::FontWeight::SEMIBOLD
+                    gpui::FontWeight::BOLD
                 } else {
-                    gpui::FontWeight::MEDIUM
+                    gpui::FontWeight::NORMAL
                 })
                 .text_color(if is_selected {
-                    rgb(0xFFFFFF)
+                    theme.text_on_accent
                 } else {
-                    rgb(0xA2A2B0)
+                    theme.text_secondary
                 })
                 .child(label.into()),
         )

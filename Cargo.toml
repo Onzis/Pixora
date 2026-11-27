@@ -1,6 +1,6 @@
 [package]
 name = "pixora"
-version = "0.22.1"
+version = "0.22.2"
 edition = "2024"
 authors = ["Onzi"]
 description = "Pixora - Screen Capture & Annotation"
@@ -62,15 +62,6 @@ features = [
     "Win32_System_WinRT_Direct3D11",
 ]
 
-[target.'cfg(target_os = "linux")'.dependencies]
-ashpd = { version = "0.12", default-features = false, features = ["async-std"] }
-futures-lite = "2"
-x11-clipboard = "0.9"
-x11rb = { version = "0.13", features = ["allow-unsafe-code", "shm", "randr"] }
-zbus = "5"
-
-[patch.crates-io]
-xattr = { path = "patches/xattr" }
 
 [profile.release]
 opt-level = 3

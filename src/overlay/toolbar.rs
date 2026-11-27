@@ -167,9 +167,9 @@ pub fn render_toolbar_button(
     on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let bg_color = if is_active {
-        rgba(0x8174FF33)
+        theme.accent_muted
     } else {
-        theme.bg_secondary
+        theme.bg_dark
     };
 
     let text_color = if is_active {
@@ -190,11 +190,10 @@ pub fn render_toolbar_button(
         .items_center()
         .justify_center()
         .size(px(32.0))
-        .rounded_lg()
         .bg(bg_color)
         .border_1()
         .border_color(border_color)
-        .hover(|s| s.bg(theme.bg_hover).border_color(theme.border_focus))
+        .hover(|s| s.bg(theme.bg_hover).border_color(theme.border_strong))
         .cursor_pointer()
         .on_hover(on_hover)
         .on_click(on_click)
@@ -215,9 +214,9 @@ pub fn render_toolbar_text_button(
     on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let bg_color = if is_active {
-        rgba(0x8174FF33)
+        theme.accent_muted
     } else {
-        theme.bg_secondary
+        theme.bg_dark
     };
 
     let text_color = if is_active {
@@ -239,16 +238,16 @@ pub fn render_toolbar_text_button(
         .justify_center()
         .h(px(32.0))
         .px_2()
-        .rounded_lg()
         .bg(bg_color)
         .border_1()
         .border_color(border_color)
-        .hover(|s| s.bg(theme.bg_hover).border_color(theme.border_focus))
+        .hover(|s| s.bg(theme.bg_hover).border_color(theme.border_strong))
         .cursor_pointer()
         .on_hover(on_hover)
         .on_click(on_click)
         .child(
             div()
+                .font_family("Cascadia Mono")
                 .text_xs()
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(text_color)
@@ -265,9 +264,9 @@ pub fn render_toolbar_dropdown_button(
     on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let bg_color = if is_active {
-        rgba(0x8174FF33)
+        theme.accent_muted
     } else {
-        theme.bg_secondary
+        theme.bg_dark
     };
 
     let text_color = if is_active {
@@ -296,11 +295,10 @@ pub fn render_toolbar_dropdown_button(
         .gap(px(3.0))
         .px(px(6.0))
         .h(px(32.0))
-        .rounded_lg()
         .bg(bg_color)
         .border_1()
         .border_color(border_color)
-        .hover(|s| s.bg(theme.bg_hover).border_color(theme.border_focus))
+        .hover(|s| s.bg(theme.bg_hover).border_color(theme.border_strong))
         .cursor_pointer()
         .on_hover(on_hover)
         .on_click(on_click)
@@ -333,9 +331,9 @@ pub fn render_color_swatch(
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let border = if is_selected {
-        rgb(0xFFFFFF)
+        rgb(0xDDD7CA)
     } else {
-        rgba(0xFFFFFF22)
+        rgb(0x262522)
     };
 
     div()
@@ -344,17 +342,15 @@ pub fn render_color_swatch(
         .items_center()
         .justify_center()
         .size(px(22.0))
-        .rounded_full()
         .cursor_pointer()
         .on_click(on_click)
         .child(
             div()
                 .size(px(18.0))
-                .rounded_full()
                 .bg(color)
                 .border_2()
                 .border_color(border)
-                .hover(|s| s.border_color(rgb(0xFFFFFF))),
+                .hover(|s| s.border_color(rgb(0xDDD7CA))),
         )
 }
 
@@ -365,34 +361,34 @@ pub fn render_blur_preset(
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let bg = if is_active {
-        rgba(0x8174FF33)
+        rgba(0xDDD7CA26)
     } else {
-        rgb(0x1C1C22)
+        rgb(0x0A0A0B)
     };
     let text_c = if is_active {
-        rgb(0x8174FF)
+        rgb(0xDDD7CA)
     } else {
-        rgb(0xA2A2B0)
+        rgb(0x8E8A82)
     };
     let border = if is_active {
-        rgb(0x8174FF)
+        rgb(0xDDD7CA)
     } else {
-        rgb(0x282832)
+        rgb(0x262522)
     };
 
     div()
         .id(id)
         .px_2()
         .py_0p5()
-        .rounded_md()
         .bg(bg)
         .border_1()
         .border_color(border)
-        .hover(|s| s.bg(rgb(0x282838)))
+        .hover(|s| s.bg(rgb(0x1E1D1B)))
         .cursor_pointer()
         .on_click(on_click)
         .child(
             div()
+                .font_family("Cascadia Mono")
                 .text_xs()
                 .font_weight(gpui::FontWeight::MEDIUM)
                 .text_color(text_c)

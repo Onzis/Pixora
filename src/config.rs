@@ -175,32 +175,19 @@ impl AppConfig {
     }
 
     pub fn config_path() -> PathBuf {
-        #[cfg(target_os = "linux")]
-        {
-            if let Some(adj) = Self::adjacent_config_path() {
-                if adj.exists() {
-                    return adj;
-                }
-            }
-            return Self::appdata_config_path();
-        }
-
-        #[cfg(not(target_os = "linux"))]
-        {
-            if let Some(adj) = Self::adjacent_config_path() {
-                if adj.exists() {
-                    return adj;
-                }
-            }
-            let appdata = Self::appdata_config_path();
-            if appdata.exists() {
-                return appdata;
-            }
-            if let Some(adj) = Self::adjacent_config_path() {
+        if let Some(adj) = Self::adjacent_config_path() {
+            if adj.exists() {
                 return adj;
             }
-            appdata
         }
+        let appdata = Self::appdata_config_path();
+        if appdata.exists() {
+            return appdata;
+        }
+        if let Some(adj) = Self::adjacent_config_path() {
+            return adj;
+        }
+        appdata
     }
 
     pub fn load_from_str(data: &str) -> Result<Self, String> {

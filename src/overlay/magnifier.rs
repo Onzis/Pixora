@@ -123,24 +123,22 @@ pub fn render_magnifier(
         .top(px(y))
         .w(px(mag_w))
         .h(px(mag_h))
-        .bg(rgba(0x131317FA))
+        .bg(rgba(0x0A0A0BFA))
         .border_1()
-        .border_color(rgba(0xFFFFFF28))
-        .rounded_xl()
-        .shadow_md()
+        .border_color(rgb(0x4A4740))
         .p(px(padding))
         .flex()
         .flex_col()
         .items_center()
         .gap_1p5()
+        .font_family("Cascadia Mono")
         // 1. Magnified Pixel Grid (Canvas)
         .child(
             div()
                 .w(px(LOUPE_GRID_PX))
                 .h(px(LOUPE_GRID_PX))
-                .rounded_md()
                 .border_1()
-                .border_color(rgba(0xFFFFFF35))
+                .border_color(rgb(0x262522))
                 .child(
                     canvas(
                         |_, _, _| (),
@@ -251,16 +249,15 @@ pub fn render_magnifier(
                                     div()
                                         .w(px(14.0))
                                         .h(px(14.0))
-                                        .rounded_sm()
                                         .border_1()
-                                        .border_color(rgba(0xFFFFFF50))
+                                        .border_color(rgb(0xDDD7CA))
                                         .bg(info.color),
                                 )
                                 .child(
                                     div()
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(rgb(0xF2F2F5))
+                                        .text_color(rgb(0xDDD7CA))
                                         .child(hex_label),
                                 ),
                         )
@@ -268,7 +265,7 @@ pub fn render_magnifier(
                             div()
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(rgb(0xA2A2B0))
+                                .text_color(rgb(0x8E8A82))
                                 .child(format!("{},{},{}", info.r, info.g, info.b)),
                         ),
                 )

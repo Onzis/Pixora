@@ -309,15 +309,14 @@ impl Render for PinnedScreenshotView {
                         .gap_2()
                         .px_2p5()
                         .py(px(4.0))
-                        .rounded_md()
-                        .bg(rgba(0x121216EE))
+                        .bg(rgba(0x0A0A0BF2))
                         .border_1()
-                        .border_color(rgba(0x8174FF66))
-                        .shadow_lg()
+                        .border_color(rgb(0x4A4740))
+                        .font_family("Cascadia Mono")
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(rgb(0xEDEDED))
+                                .text_color(rgb(0xDDD7CA))
                                 .child(format!("{}%", zoom_pct)),
                         )
                         .child(
@@ -327,9 +326,10 @@ impl Render for PinnedScreenshotView {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .rounded_sm()
-                                .bg(rgba(0xFFFFFF15))
-                                .hover(|s| s.bg(rgba(0xFF453A88)))
+                                .bg(rgb(0x161618))
+                                .border_1()
+                                .border_color(rgb(0x262522))
+                                .hover(|s| s.bg(rgb(0xB85D53)))
                                 .cursor_pointer()
                                 .on_mouse_down(MouseButton::Left, cx.listener(|_, _, window, cx| {
                                     cx.stop_propagation();
@@ -461,14 +461,6 @@ pub fn open_pinned_screenshot(cx: &mut gpui::App, image: RgbaImage, initial_orig
             }
         }
 
-        #[cfg(target_os = "linux")]
-        {
-            if let Some(win_id) = crate::system::windows::extract_x11_window_id(window) {
-                crate::system::windows::set_linux_x11_window_flags(win_id, true, true, None);
-                crate::system::windows::raise_linux_x11_window(win_id);
-            }
-            window.activate_window();
-        }
 
         let view = cx.new(|cx| PinnedScreenshotView::new(image, window, cx));
         window.focus(&view.read(cx).focus_handle);

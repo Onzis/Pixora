@@ -4,16 +4,16 @@
 
 # Pixora
 
-**GPU-ускоренная студия создания скриншотов и аннотаций для Windows и Linux**
+**GPU-ускоренная студия создания скриншотов и аннотаций для Windows**
 
 *Молниеносная альтернатива CleanShot X, разработанная на чистом Rust и GPUI.*
 
 [English](README.md) • [Русский](README.ru.md)
 
 [![Language](https://img.shields.io/badge/Язык-Rust%202024-orange.svg?style=flat-square&logo=rust)](https://www.rust-lang.org/)
-[![UI Framework](https://img.shields.io/badge/UI-GPUI%20(DirectX%20%7C%20Vulkan)-blueviolet.svg?style=flat-square)](https://github.com/zed-industries/zed)
-[![Platform](https://img.shields.io/badge/Платформа-Windows%20%7C%20Linux%20(Wayland%20%26%20X11)-0078D6.svg?style=flat-square)](https://github.com/Onzis/Pixora)
-[![Version](https://img.shields.io/badge/Версия-0.22.1-8174FF.svg?style=flat-square)](https://github.com/Onzis/Pixora/releases)
+[![UI Framework](https://img.shields.io/badge/UI-GPUI%20(DirectX)-blueviolet.svg?style=flat-square)](https://github.com/zed-industries/zed)
+[![Platform](https://img.shields.io/badge/Платформа-Windows%2010%20%26%2011-0078D6.svg?style=flat-square&logo=windows)](https://www.microsoft.com/windows)
+[![Version](https://img.shields.io/badge/Версия-0.22.2-8174FF.svg?style=flat-square)](https://github.com/Onzis/Pixora/releases)
 [![Author](https://img.shields.io/badge/Автор-Onzi-cyan.svg?style=flat-square)](https://github.com/Onzis)
 [![License](https://img.shields.io/badge/Лицензия-Apache--2.0-green.svg?style=flat-square)](https://www.apache.org/licenses/LICENSE-2.0)
 
@@ -28,7 +28,7 @@
 </div>
 
 ## О проекте
-**Pixora** - профессиональная, высокопроизводительная утилита для создания скриншотов и аннотаций, созданная для **Windows (10 и 11)** и **Linux (Wayland и X11)**. Вдохновленная легкостью и эстетикой CleanShot X на macOS, Pixora объединяет пиксельную точность, богатый набор векторных инструментов рисования, локальный OCR, умную привязку к элементам интерфейса и мгновенную работу с буфером обмена в компактном нативном приложении.
+**Pixora** - профессиональная, высокопроизводительная утилита для создания скриншотов и аннотаций, созданная специально для **Windows 10 и 11**. Вдохновленная легкостью и эстетикой CleanShot X на macOS, Pixora объединяет пиксельную точность, богатый набор векторных инструментов рисования, локальный OCR, умную привязку к элементам интерфейса и мгновенную работу с буфером обмена в компактном нативном приложении.
 
 Pixora работает **на 100% локально и автономно**. Без облачных серверов, скрытой телеметрии, веб-надстроек и отправки данных в сеть.
 
@@ -38,20 +38,14 @@ Pixora работает **на 100% локально и автономно**. Б
 Архитектура Pixora спроектирована для максимальной производительности, мгновенного отклика и минимального потребления памяти:
 
 - **Язык разработки:** **Чистый Rust (Edition 2024)** - безопасность памяти, отсутствие сборок мусора (GC), высочайшая скорость машинного кода.
-- **Графический UI-фреймворк:** **[GPUI](https://github.com/zed-industries/zed)** - гибридный GPU-ускоренный движок рендеринга редактора Zed, работающий через DirectX 11/12 на Windows и Vulkan на Linux. Обеспечивает стабильные 60+ FPS, векторную отрисовку и отклик на действия мыши с минимальной задержкой.
-- **Системный слой Windows:** Прямой **Win32 & WinRT API** (`windows-rs` 0.61):
+- **Графический UI-фреймворк:** **[GPUI](https://github.com/zed-industries/zed)** - гибридный GPU-ускоренный движок рендеринга редактора Zed, работающий поверх DirectX 11/12. Обеспечивает стабильные 60+ FPS, векторную отрисовку и отклик на действия мыши с минимальной задержкой.
+- **Нативный системный слой:** Прямой **Win32 & WinRT API** (`windows-rs` 0.61):
   - **Windows.Graphics.Capture (WGC):** Аппаратно-ускоренный захват через DirectX 11, поддержка защищенного контента, мультимониторная композиция и аппаратное исключение окна Pixora из кадра через `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`.
   - **GDI BitBlt Fallback:** Мгновенный fallback для виртуального рабочего стола любой конфигурации.
   - **Windows Runtime OCR (`Windows.Media.Ocr`):** Локальное распознавание текста на устройстве.
   - **Per-Monitor V2 HiDPI:** Идеальная резкость при масштабировании от 100% до 300%.
   - **Shell NotifyIcon & RegisterHotKey:** Системный трей и глобальные горячие клавиши.
-- **Системный слой Linux:**
-  - **Движки захвата:** Прямой захват корневого окна X11 на чистом Rust через `x11rb` (`ZPixmap` BGRA -> RGBA) с задержкой 0 мс; поддержка Wayland через `grim`, `gnome-screenshot` и `spectacle`; автоматический fallback на `scrot`, `maim`, ImageMagick `import`.
-  - **Буфер обмена:** Асинхронная передача через `wl-clipboard` (`wl-copy`, `wl-paste`), нативный `x11-clipboard` и `xclip` для PNG-изображений и текста.
-  - **OCR:** Интеграция с локальным Tesseract OCR с извлечением макета слов и строк из TSV (`rus+eng`).
-  - **IPC и CLI демон:** Локальный сокет (`/tmp/pixora-<uid>.sock`) для вызова захвата из системных горячих клавиш через CLI (`pixora --capture`).
-  - **Интеграция с окружением:** Стандартный XDG `.desktop` ярлык, автозапуск `~/.config/autostart`, выбор папок через `zenity`/`kdialog` и уведомления через `notify-send`.
-- **Размер и ресурсы:** Единый автономный бинарный файл. **Полный отказ от Electron, Tauri, WebView, Chromium, Python и Node.js.** Потребление оперативной памяти в фоне - менее 40 МБ.
+- **Размер и ресурсы:** Единый автономный бинарный файл. **Полный отказ от Electron, Tauri, WebView, Chromium, .NET Runtime и Node.js.** Потребление оперативной памяти в фоне - менее 40 МБ.
 
 ---
 
@@ -61,7 +55,7 @@ Pixora работает **на 100% локально и автономно**. Б
 - **Захват произвольной области:** Интерактивное выделение мышью с выводом актуальных размеров (Ш x В в пикселях).
 - **Полноэкранный снимок:** Мгновенный снимок всего виртуального экрана со всеми подключенными дисплеями (`Shift + PrintScreen`).
 - **Снимок активного окна:** Фиксация окна, находящегося в фокусе (`Alt + PrintScreen`).
-- **Умная привязка к окнам и элементам:** Распознавание границ окон, дочерних элементов и визуальных панелей через Windows UI Automation, дерево клиентов X11 и пиксельный алгоритм детекции разделителей (`detect_visual_panes`).
+- **Умная привязка к окнам и элементам:** Распознавание границ окон, дочерних элементов и визуальных панелей через Windows UI Automation и пиксельный алгоритм детекции разделителей (`detect_visual_panes`).
 - **Аппаратное исключение из захвата:** Окна оверлея Pixora не попадают в итоговый кадр благодаря `WDA_EXCLUDEFROMCAPTURE`.
 - **Мультимониторность:** Корректная поддержка мониторов с разным разрешением, ориентацией и отрицательными координатами.
 
@@ -94,28 +88,24 @@ Pixora работает **на 100% локально и автономно**. Б
 - **Быстрые цвета:** Палитра эталонных дизайнерских оттенков для мгновенного выбора.
 
 ### 5. Локальный OCR (Распознавание текста)
-- Встроенное автономное оптическое распознавание на базе Windows Runtime OCR на Windows и Tesseract OCR на Linux.
+- Встроенное автономное оптическое распознавание на базе Windows Runtime (`Windows.Media.Ocr`).
 - Распознает русский, английский и смешанный текст без интернета.
 - Интерактивное окно с объединением строк в одну строку, форматированием таблиц с табуляцией и сохранением отступов кода.
 - Копирование распознанного текста в буфер обмена в один клик.
 
 ### 6. Экспорт и мгновенная вставка
-- **Копирование в буфер (`Ctrl + C` / Enter):** Запись нативных форматов (CF_DIBV5 и PNG на Windows, PNG на Linux). Изображение со всеми аннотациями вставляется в Telegram, Discord, Photoshop, браузеры и мессенджеры нажатием `Ctrl + V`.
+- **Копирование в буфер (`Ctrl + C` / Enter):** Запись одновременно двух нативных форматов (`CF_DIBV5` + `PNG`) в буфер обмена Windows. Изображение со всеми аннотациями вставляется в Telegram, Discord, Photoshop, браузеры и мессенджеры нажатием `Ctrl + V`.
 - **Сохранение в PNG (`Ctrl + S`):** Беспотерьное сжатие PNG с автоматической генерацией имени по времени: `Pixora_YYYY-MM-DD_HHMMSS.png`.
-- **Звук затвора:** Щелчок камеры при захвате с поддержкой PipeWire, PulseAudio и ALSA на Linux.
-- **Всплывающие уведомления (Toasts):** Информативные уведомления об операциях.
+- **Звук затвора:** Ненавязчивый щелчок камеры при захвате.
+- **Всплывающие уведомления (Toasts):** Нативные Windows-уведомления о копировании и сохранении.
 
-### 7. Системный трей, демоны и горячие клавиши
-- Работает в фоновом режиме в системном трее без лишних консольных окон.
-- CLI-команды вызова для Linux:
-  - `pixora --capture` / `pixora -c` (Захват области)
-  - `pixora --fullscreen` / `pixora -f` (Полноэкранный снимок)
-  - `pixora --window` / `pixora -w` (Снимок активного окна)
-- Управление горячими клавишами через системные хуки на Windows и X11/IPC на Linux.
+### 7. Системный трей и глобальные горячие клавиши
+- Работает в фоновом режиме в области уведомлений Windows (`NotifyIcon`) без консольных окон.
+- Регистрация глобальных сочетаний клавиш средствами Win32 API.
 
 ### 8. Нативный центр настроек
 - GPUI-окно конфигурации.
-- **Основные:** Автозапуск через реестр Windows или XDG autostart, автокопирование в буфер, звуки затвора, папка сохранения снимков.
+- **Основные:** Автозапуск с Windows, автокопирование в буфер, звуки затвора, папка сохранения снимков.
 - **Захват:** Настройка лупы, отображения размеров и базовой толщины пера.
 - **Горячие клавиши:** Интерактивное переназначение сочетаний клавиш прямо из интерфейса.
 - **О программе:** Информация о версии, архитектуре и авторе.
@@ -141,27 +131,12 @@ Pixora работает **на 100% локально и автономно**. Б
 ## Сборка из исходного кода
 
 ### Системные требования
-
-#### Windows
 - Windows 10 или 11 (x64)
 - Rust toolchain (stable, edition 2024)
 
-#### Linux (Ubuntu / Debian / Fedora / Arch)
-- Rust toolchain (stable, edition 2024)
-- Системные пакеты:
-  ```bash
-  # Ubuntu / Debian
-  sudo apt-get update
-  sudo apt-get install -y pkg-config libvulkan-dev libwayland-dev wayland-protocols \
-    libxkbcommon-dev libxkbcommon-x11-dev libx11-dev libasound2-dev libfontconfig1-dev \
-    libfreetype6-dev libssl-dev libdbus-1-dev libx11-xcb-dev libxcb-randr0-dev \
-    libxcb-shape0-dev libxcb-xfixes0-dev libxcursor-dev libxi-dev libxrandr-dev \
-    tesseract-ocr tesseract-ocr-rus wl-clipboard xclip
-  ```
-
 ### Команды сборки
 
-```bash
+```powershell
 # Клонирование репозитория
 git clone https://github.com/Onzis/Pixora.git
 cd Pixora
@@ -176,9 +151,7 @@ cargo test
 cargo build --release
 ```
 
-Готовый бинарный файл формируется в:
-- **Windows:** `target/release/Pixora.exe`
-- **Linux:** `target/release/Pixora`
+Готовый автономный файл формируется в `target/release/Pixora.exe`.
 
 ---
 
