@@ -6,7 +6,7 @@
 
 **Next-Generation, GPU-Accelerated Screen Capture & Annotation Studio for Windows**
 
-*A clean, blisteringly fast CleanShot X alternative built with pure Rust & GPUI.*
+*A clean, blisteringly fast built with pure Rust & GPUI.*
 
 [English](README.md) • [Русский](README.ru.md)
 
