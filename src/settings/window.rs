@@ -261,18 +261,21 @@ impl Render for SettingsWindowView {
                                     .child(
                                         div()
                                             .flex()
-                                            .items_baseline()
+                                            .items_center()
                                             .gap_2()
                                             .child(
                                                 div()
                                                     .font_family("Georgia")
                                                     .text_xl()
+                                                    .line_height(px(22.0))
                                                     .text_color(theme.text_primary)
                                                     .child("Λ  Pixora"),
                                             )
                                             .child(
                                                 div()
+                                                    .pt(px(2.0))
                                                     .text_size(px(10.0))
+                                                    .line_height(px(12.0))
                                                     .text_color(theme.text_muted)
                                                     .child(concat!("v", env!("CARGO_PKG_VERSION"))),
                                             ),
@@ -1401,23 +1404,29 @@ impl SettingsWindowView {
                     .child(
                         div()
                             .flex()
-                            .items_baseline()
+                            .items_center()
                             .gap_2p5()
                             .child(
                                 div()
                                     .font_family("Georgia")
                                     .text_size(px(30.0))
+                                    .line_height(px(32.0))
                                     .text_color(theme.text_primary)
                                     .child("Pixora"),
                             )
                             .child(
                                 div()
+                                    .mt(px(3.0))
+                                    .h(px(22.0))
                                     .px_2()
-                                    .py_0p5()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
                                     .bg(theme.bg_dark)
                                     .border_1()
                                     .border_color(theme.border_subtle)
                                     .text_xs()
+                                    .line_height(px(12.0))
                                     .text_color(theme.text_secondary)
                                     .child(concat!("v", env!("CARGO_PKG_VERSION"))),
                             ),
